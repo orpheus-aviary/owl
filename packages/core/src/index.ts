@@ -11,3 +11,31 @@ export * as paths from './config/paths.js';
 // Logger
 export { createLogger, createConsoleLogger } from './logger/index.js';
 export type { Logger, LoggerOptions } from './logger/index.js';
+
+// Notes
+export {
+  createNote,
+  getNote,
+  listNotes,
+  updateNote,
+  deleteNote,
+  restoreNote,
+  permanentDeleteNote,
+  batchDeleteNotes,
+  batchRestoreNotes,
+  contentHash,
+} from './notes/index.js';
+export type {
+  NoteWithTags,
+  CreateNoteInput,
+  UpdateNoteInput,
+  ListNotesOptions,
+} from './notes/index.js';
+
+// Tags
+export { parseTag, parseTags, inferDateTime, TAG_TYPES } from './tags/parser.js';
+export type { ParsedTag, TagType } from './tags/parser.js';
+
+// Search
+export { searchNotes, searchNotesWithDetails } from './search/index.js';
+export type { SearchResult } from './search/index.js';

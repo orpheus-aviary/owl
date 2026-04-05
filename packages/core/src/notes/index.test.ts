@@ -1,0 +1,185 @@
+import assert from 'node:assert/strict';
+import { after, before, describe, it } from 'node:test';
+import type Database from 'better-sqlite3';
+import { createDatabase } from '../db/index.js';
+import type { OwlDatabase } from '../db/index.js';
+import { searchNotes, searchNotesWithDetails } from '../search/index.js';
+import {
+  batchDeleteNotes,
+  batchRestoreNotes,
+  createNote,
+  deleteNote,
+  getNote,
+  listNotes,
+  permanentDeleteNote,
+  restoreNote,
+  updateNote,
+} from './index.js';
+
+describe('notes CRUD', () => {
+  let db: OwlDatabase;
+  let sqlite: Database.Database;
+
+  before(() => {
+    const result = createDatabase({ dbPath: ':memory:' });
+    db = result.db;
+    sqlite = result.sqlite;
+  });
+
+  after(() => {
+    sqlite.close();
+  });
+
+  it('creates a note', () => {
+    const note = createNote(db, sqlite, { content: '# Test Note\n\nHello world' });
+    assert.ok(note.id);
+    assert.equal(note.content, '# Test Note\n\nHello world');
+    assert.equal(note.trashLevel, 0);
+    assert.ok(note.contentHash);
+  });
+
+  it('creates a note with tags', () => {
+    const note = createNote(db, sqlite, {
+      content: 'Tagged note',
+      tags: [
+        { tagType: '#', tagValue: '工作' },
+        { tagType: '#', tagValue: '重要' },
+      ],
+    });
+    assert.equal(note.tags.length, 2);
+    assert.ok(note.tags.some((t) => t.tagValue === '工作'));
+  });
+
+  it('gets a note by id', () => {
+    const created = createNote(db, sqlite, { content: 'Get me' });
+    const found = getNote(db, created.id);
+    assert.ok(found);
+    assert.equal(found.id, created.id);
+  });
+
+  it('returns null for non-existent note', () => {
+    assert.equal(getNote(db, 'non-existent-id'), null);
+  });
+
+  it('lists notes with pagination', () => {
+    // Create several notes
+    for (let i = 0; i < 5; i++) {
+      createNote(db, sqlite, { content: `Paginated note ${i}` });
+    }
+
+    const page1 = listNotes(db, sqlite, { limit: 3, page: 1 });
+    assert.equal(page1.items.length, 3);
+    assert.ok(page1.total >= 5);
+
+    const page2 = listNotes(db, sqlite, { limit: 3, page: 2 });
+    assert.ok(page2.items.length > 0);
+  });
+
+  it('updates note content', () => {
+    const note = createNote(db, sqlite, { content: 'Original' });
+    const updated = updateNote(db, sqlite, note.id, { content: 'Updated content' });
+    assert.ok(updated);
+    assert.equal(updated.content, 'Updated content');
+    assert.notEqual(updated.contentHash, note.contentHash);
+  });
+
+  it('updates note tags', () => {
+    const note = createNote(db, sqlite, {
+      content: 'Tag update test',
+      tags: [{ tagType: '#', tagValue: 'old' }],
+    });
+    assert.equal(note.tags.length, 1);
+
+    const updated = updateNote(db, sqlite, note.id, {
+      tags: [
+        { tagType: '#', tagValue: 'new1' },
+        { tagType: '#', tagValue: 'new2' },
+      ],
+    });
+    assert.ok(updated);
+    assert.equal(updated.tags.length, 2);
+    assert.ok(updated.tags.every((t) => t.tagValue !== 'old'));
+  });
+
+  it('soft deletes a note', () => {
+    const note = createNote(db, sqlite, { content: 'Delete me' });
+    assert.ok(deleteNote(db, note.id));
+
+    const deleted = getNote(db, note.id);
+    assert.ok(deleted);
+    assert.equal(deleted.trashLevel, 1);
+  });
+
+  it('restores a note', () => {
+    const note = createNote(db, sqlite, { content: 'Restore me' });
+    deleteNote(db, note.id);
+    assert.ok(restoreNote(db, note.id));
+
+    const restored = getNote(db, note.id);
+    assert.ok(restored);
+    assert.equal(restored.trashLevel, 0);
+  });
+
+  it('permanently deletes a note', () => {
+    const note = createNote(db, sqlite, { content: 'Perm delete' });
+    assert.ok(permanentDeleteNote(db, note.id));
+    assert.equal(getNote(db, note.id), null);
+  });
+
+  it('batch deletes notes', () => {
+    const n1 = createNote(db, sqlite, { content: 'Batch 1' });
+    const n2 = createNote(db, sqlite, { content: 'Batch 2' });
+    const count = batchDeleteNotes(db, [n1.id, n2.id]);
+    assert.equal(count, 2);
+  });
+
+  it('batch restores notes', () => {
+    const n1 = createNote(db, sqlite, { content: 'Batch restore 1' });
+    const n2 = createNote(db, sqlite, { content: 'Batch restore 2' });
+    batchDeleteNotes(db, [n1.id, n2.id]);
+    const count = batchRestoreNotes(db, [n1.id, n2.id]);
+    assert.equal(count, 2);
+  });
+});
+
+describe('search', () => {
+  let db: OwlDatabase;
+  let sqlite: Database.Database;
+
+  before(() => {
+    const result = createDatabase({ dbPath: ':memory:' });
+    db = result.db;
+    sqlite = result.sqlite;
+    createNote(db, sqlite, { content: 'TypeScript programming tutorial' });
+    createNote(db, sqlite, { content: 'Python machine learning guide' });
+    createNote(db, sqlite, {
+      content: 'JavaScript basics',
+      tags: [{ tagType: '#', tagValue: 'coding' }],
+    });
+  });
+
+  after(() => {
+    sqlite.close();
+  });
+
+  it('searches by content', () => {
+    const results = searchNotes(sqlite, 'programming');
+    assert.equal(results.length, 1);
+  });
+
+  it('returns full notes with details', () => {
+    const results = searchNotesWithDetails(db, sqlite, 'JavaScript');
+    assert.equal(results.length, 1);
+    assert.ok(results[0].tags.length > 0);
+  });
+
+  it('searches tags_text', () => {
+    const results = searchNotes(sqlite, 'coding');
+    assert.equal(results.length, 1);
+  });
+
+  it('returns empty for no match', () => {
+    const results = searchNotes(sqlite, 'nonexistent_keyword_xyz');
+    assert.equal(results.length, 0);
+  });
+});
