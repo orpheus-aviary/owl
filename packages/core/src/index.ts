@@ -33,7 +33,13 @@ export type {
 } from './notes/index.js';
 
 // Tags
-export { parseTag, parseTags, inferDateTime, TAG_TYPES } from './tags/parser.js';
+export {
+  parseTag,
+  parseTags,
+  extractTagsFromContent,
+  inferDateTime,
+  TAG_TYPES,
+} from './tags/parser.js';
 export type { ParsedTag, TagType } from './tags/parser.js';
 
 // Search
