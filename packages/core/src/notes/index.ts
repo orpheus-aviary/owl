@@ -107,20 +107,27 @@ export function listNotes(
 
   let matchingIds: string[] | null = null;
 
-  // FTS search
+  // FTS search (trigram requires >= 3 chars, fallback to LIKE)
   if (q) {
-    const ftsResults = sqlite
-      .prepare('SELECT rowid FROM notes_fts WHERE notes_fts MATCH ? ORDER BY rank')
-      .all(q) as { rowid: number }[];
+    if (q.length < 3) {
+      const likeRows = sqlite
+        .prepare('SELECT id FROM notes WHERE content LIKE ?')
+        .all(`%${q}%`) as { id: string }[];
+      matchingIds = likeRows.map((r) => r.id);
+    } else {
+      const ftsResults = sqlite
+        .prepare('SELECT rowid FROM notes_fts WHERE notes_fts MATCH ? ORDER BY rank')
+        .all(q) as { rowid: number }[];
 
-    const rowids = ftsResults.map((r) => r.rowid);
-    if (rowids.length === 0) return { items: [], total: 0 };
+      const rowids = ftsResults.map((r) => r.rowid);
+      if (rowids.length === 0) return { items: [], total: 0 };
 
-    const idRows = sqlite
-      .prepare(`SELECT id FROM notes WHERE rowid IN (${rowids.map(() => '?').join(',')})`)
-      .all(...rowids) as { id: string }[];
+      const idRows = sqlite
+        .prepare(`SELECT id FROM notes WHERE rowid IN (${rowids.map(() => '?').join(',')})`)
+        .all(...rowids) as { id: string }[];
 
-    matchingIds = idRows.map((r) => r.id);
+      matchingIds = idRows.map((r) => r.id);
+    }
     if (matchingIds.length === 0) return { items: [], total: 0 };
   }
 

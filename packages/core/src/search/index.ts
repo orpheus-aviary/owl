@@ -11,8 +11,18 @@ export interface SearchResult {
 /**
  * Full-text search across notes content and tags.
  * Returns note IDs ranked by relevance.
+ *
+ * Uses FTS5 trigram for queries >= 3 chars, LIKE fallback for shorter queries.
  */
 export function searchNotes(sqlite: Database.Database, query: string, limit = 20): SearchResult[] {
+  // Trigram tokenizer requires at least 3 characters
+  if (query.length < 3) {
+    const rows = sqlite
+      .prepare('SELECT id FROM notes WHERE content LIKE ? LIMIT ?')
+      .all(`%${query}%`, limit) as { id: string }[];
+    return rows.map((r, i) => ({ id: r.id, rank: -i }));
+  }
+
   const results = sqlite
     .prepare(
       `SELECT rowid, rank FROM notes_fts

@@ -11,7 +11,8 @@ const FTS_TABLE = `
     content,
     tags_text,
     content=notes,
-    content_rowid=rowid
+    content_rowid=rowid,
+    tokenize='trigram'
   );
 `;
 
