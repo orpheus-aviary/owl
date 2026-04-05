@@ -52,7 +52,10 @@ export function parseTag(raw: string): ParsedTag | null {
   if (trimmed.startsWith('/time') || trimmed.startsWith('/alarm')) {
     const isAlarm = trimmed.startsWith('/alarm');
     const tagType: TagType = isAlarm ? '/alarm' : '/time';
-    const dateStr = trimmed.slice(isAlarm ? 6 : 5).trim();
+    const dateStr = trimmed
+      .slice(isAlarm ? 6 : 5)
+      .replace(/^:/, '')
+      .trim();
 
     if (!dateStr) return { tagType, tagValue: '' };
 
@@ -122,8 +125,8 @@ export function inferDateTime(input: string): string | null {
 
   const now = new Date();
 
-  // Try to split into date and time parts
-  const parts = trimmed.split(/\s+/);
+  // Try to split into date and time parts (space or T separator)
+  const parts = trimmed.split(/[\sT]+/);
 
   let datePart: string | null = null;
   let timePart: string | null = null;

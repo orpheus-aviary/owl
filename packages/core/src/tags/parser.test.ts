@@ -39,6 +39,20 @@ describe('parseTag', () => {
     assert.deepEqual(result, { tagType: '/time', tagValue: '' });
   });
 
+  it('parses /time: colon format', () => {
+    const result = parseTag('/time:2026-04-07 15:00');
+    assert.ok(result);
+    assert.equal(result.tagType, '/time');
+    assert.equal(result.tagValue, '2026-04-07T15:00:00');
+  });
+
+  it('parses /alarm: colon format', () => {
+    const result = parseTag('/alarm:2026-12-25 09:00');
+    assert.ok(result);
+    assert.equal(result.tagType, '/alarm');
+    assert.equal(result.tagValue, '2026-12-25T09:00:00');
+  });
+
   it('returns null for empty input', () => {
     assert.equal(parseTag(''), null);
     assert.equal(parseTag('  '), null);
@@ -113,6 +127,11 @@ describe('inferDateTime', () => {
 
   it('parses YY-MM-DD with 20xx prefix', () => {
     assert.equal(inferDateTime('26-04-10 14:30'), '2026-04-10T14:30:00');
+  });
+
+  it('parses ISO 8601 with T separator', () => {
+    assert.equal(inferDateTime('2026-04-07T15:00'), '2026-04-07T15:00:00');
+    assert.equal(inferDateTime('2026-04-07T15:00:30'), '2026-04-07T15:00:30');
   });
 
   it('returns null for invalid input', () => {
