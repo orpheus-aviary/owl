@@ -1,0 +1,27 @@
+{
+  "name": "@owl/daemon",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "node --watch dist/cli.js daemon",
+    "test": "node --test dist/**/*.test.js"
+  },
+  "dependencies": {
+    "@owl/core": "workspace:*",
+    "fastify": "^5.2.0",
+    "commander": "^13.1.0",
+    "node-notifier": "^10.0.1"
+  },
+  "devDependencies": {
+    "@types/node-notifier": "^8.0.5",
+    "typescript": "^5.7.0"
+  }
+}
