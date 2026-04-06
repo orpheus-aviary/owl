@@ -1,12 +1,26 @@
+import { MarkdownEditor } from '@/components/MarkdownEditor';
 import { NoteList } from '@/components/NoteList';
-import { useCallback, useState } from 'react';
+import * as api from '@/lib/api';
+import { useCallback, useEffect, useState } from 'react';
 
 export function EditorPage() {
   const [activeNoteId, setActiveNoteId] = useState<string | null>(null);
+  const [content, setContent] = useState('');
 
   const handleSelectNote = useCallback((noteId: string) => {
     setActiveNoteId(noteId);
   }, []);
+
+  // Load note content when active note changes
+  useEffect(() => {
+    if (!activeNoteId) {
+      setContent('');
+      return;
+    }
+    api.getNote(activeNoteId).then((res) => {
+      if (res.data) setContent(res.data.content);
+    });
+  }, [activeNoteId]);
 
   return (
     <div className="flex h-full">
@@ -15,12 +29,14 @@ export function EditorPage() {
         <NoteList activeNoteId={activeNoteId} onSelectNote={handleSelectNote} />
       </div>
 
-      {/* Editor area — placeholder for P1-3+ */}
-      <div className="flex-1 flex items-center justify-center">
+      {/* Editor area */}
+      <div className="flex-1">
         {activeNoteId ? (
-          <p className="text-sm text-muted-foreground">编辑器（P1-3 实现）— {activeNoteId}</p>
+          <MarkdownEditor value={content} onChange={setContent} />
         ) : (
-          <p className="text-sm text-muted-foreground">选择或新建笔记</p>
+          <div className="flex items-center justify-center h-full">
+            <p className="text-sm text-muted-foreground">选择或新建笔记</p>
+          </div>
         )}
       </div>
     </div>
