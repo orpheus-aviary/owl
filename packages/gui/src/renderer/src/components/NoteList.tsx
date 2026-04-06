@@ -33,7 +33,7 @@ export function NoteList({ activeNoteId, onSelectNote }: NoteListProps) {
   }, [createNote, onSelectNote]);
 
   return (
-    <div className="flex flex-col h-full border-r border-border">
+    <div className="flex flex-col h-full min-h-0 border-r border-border">
       {/* Header: new + search */}
       <div className="flex items-center gap-1 p-2 border-b border-border">
         <Button variant="ghost" size="icon" className="shrink-0 size-8" onClick={handleCreate}>
@@ -51,7 +51,7 @@ export function NoteList({ activeNoteId, onSelectNote }: NoteListProps) {
       </div>
 
       {/* List */}
-      <ScrollArea className="flex-1">
+      <ScrollArea className="flex-1 min-h-0">
         {loading && notes.length === 0 ? (
           <div className="p-4 text-center text-xs text-muted-foreground">加载中...</div>
         ) : notes.length === 0 ? (
