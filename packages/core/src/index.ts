@@ -36,7 +36,6 @@ export type {
 export {
   parseTag,
   parseTags,
-  extractTagsFromContent,
   inferDateTime,
   TAG_TYPES,
 } from './tags/parser.js';

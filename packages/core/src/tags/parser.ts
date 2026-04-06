@@ -81,32 +81,6 @@ export function parseTags(rawTags: string[]): ParsedTag[] {
 }
 
 /**
- * Extract raw tag strings from note content.
- *
- * Finds: #hashtags, /time ..., /alarm ..., /daily, /weekly, /monthly, /yearly
- */
-export function extractTagsFromContent(content: string): string[] {
-  const tags: string[] = [];
-
-  // Hashtags: #word (Unicode word chars, no spaces)
-  for (const m of content.matchAll(/(^|[\s,;])#([\p{L}\p{N}_\-]+)/gu)) {
-    tags.push(`#${m[2]}`);
-  }
-
-  // Time/alarm tags: /time ... or /alarm ... (consume until end of line or next tag)
-  for (const m of content.matchAll(/(?:^|[\s])(\/(?:time|alarm))[\s:]+([^\n#/]+)/gm)) {
-    tags.push(`${m[1]} ${m[2].trim()}`);
-  }
-
-  // Frequency modifiers
-  for (const m of content.matchAll(/(?:^|[\s])(\/(?:daily|weekly|monthly|yearly))(?=[\s,;]|$)/gm)) {
-    tags.push(m[1]);
-  }
-
-  return tags;
-}
-
-/**
  * Infer a full ISO 8601 datetime from a potentially abbreviated input.
  *
  * Supported formats:

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { extractTagsFromContent, inferDateTime, parseTag, parseTags } from './parser.js';
+import { inferDateTime, parseTag, parseTags } from './parser.js';
 
 describe('parseTag', () => {
   it('parses hashtags', () => {
@@ -74,41 +74,6 @@ describe('parseTags', () => {
   it('skips invalid tags', () => {
     const results = parseTags(['#valid', 'invalid', '#']);
     assert.equal(results.length, 1);
-  });
-});
-
-describe('extractTagsFromContent', () => {
-  it('extracts hashtags from content', () => {
-    const tags = extractTagsFromContent('Hello #工作 world #学习');
-    assert.deepEqual(tags, ['#工作', '#学习']);
-  });
-
-  it('extracts /time tags', () => {
-    const tags = extractTagsFromContent('Meeting /time 2026-04-07 15:00');
-    assert.equal(tags.length, 1);
-    assert.equal(tags[0], '/time 2026-04-07 15:00');
-  });
-
-  it('extracts /alarm tags', () => {
-    const tags = extractTagsFromContent('Reminder /alarm 2026-04-07 15:00 #工作');
-    assert.ok(tags.includes('#工作'));
-    assert.ok(tags.some((t) => t.startsWith('/alarm')));
-  });
-
-  it('extracts frequency modifiers', () => {
-    const tags = extractTagsFromContent('Daily check /daily #routine');
-    assert.ok(tags.includes('/daily'));
-    assert.ok(tags.includes('#routine'));
-  });
-
-  it('returns empty for content without tags', () => {
-    const tags = extractTagsFromContent('Just plain text');
-    assert.equal(tags.length, 0);
-  });
-
-  it('handles hashtag at start of line', () => {
-    const tags = extractTagsFromContent('#日记\nSome text');
-    assert.deepEqual(tags, ['#日记']);
   });
 });
 

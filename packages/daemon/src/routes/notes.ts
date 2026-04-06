@@ -3,7 +3,6 @@ import {
   batchRestoreNotes,
   createNote,
   deleteNote,
-  extractTagsFromContent,
   getNote,
   listNotes,
   parseTags,
@@ -52,7 +51,7 @@ export function registerNoteRoutes(app: FastifyInstance, ctx: AppContext): void 
     const body = req.body as { content: string; folder_id?: string; tags?: string[] };
     if (!body.content) return fail(reply, 400, 'Content is required', 'MISSING_CONTENT');
 
-    const rawTags = body.tags ?? extractTagsFromContent(body.content);
+    const rawTags = body.tags ?? [];
     const note = createNote(ctx.db, ctx.sqlite, {
       content: body.content,
       folderId: body.folder_id ?? null,
@@ -68,7 +67,7 @@ export function registerNoteRoutes(app: FastifyInstance, ctx: AppContext): void 
     const { id } = req.params as { id: string };
     const body = req.body as { content: string; tags?: string[] };
 
-    const rawTags = body.tags ?? (body.content ? extractTagsFromContent(body.content) : []);
+    const rawTags = body.tags ?? [];
     const note = updateNote(ctx.db, ctx.sqlite, id, {
       content: body.content,
       tags: parseTags(rawTags),
@@ -87,9 +86,7 @@ export function registerNoteRoutes(app: FastifyInstance, ctx: AppContext): void 
     const updates: Parameters<typeof updateNote>[3] = { deviceId: ctx.deviceId };
     if (body.content !== undefined) updates.content = body.content;
     if (body.folder_id !== undefined) updates.folderId = body.folder_id;
-    const patchRawTags =
-      body.tags ?? (body.content ? extractTagsFromContent(body.content) : undefined);
-    if (patchRawTags !== undefined) updates.tags = parseTags(patchRawTags);
+    if (body.tags !== undefined) updates.tags = parseTags(body.tags);
 
     const note = updateNote(ctx.db, ctx.sqlite, id, updates);
     if (!note) return fail(reply, 404, 'Note not found', 'NOTE_NOT_FOUND');
