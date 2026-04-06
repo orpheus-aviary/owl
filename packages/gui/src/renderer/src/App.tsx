@@ -53,7 +53,7 @@ export function App() {
         </nav>
 
         {/* Main content */}
-        <main className="flex-1 overflow-auto">
+        <main className="flex-1 overflow-hidden">
           <Routes>
             <Route path="/" element={<EditorPage />} />
             <Route path="/browser" element={<BrowserPage />} />

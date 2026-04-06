@@ -40,5 +40,25 @@ just dev-daemon   # 启动 daemon dev
 遵循上级 `orpheus-aviary/.claude/CLAUDE.md` 中的 Conventional Commits 规范。
 Scope: `db` / `config` / `notes` / `tags` / `daemon` / `gui` / `editor` / `browser` / `trash` / `reminders` / `ai` / `todo` / `settings` / `cli`
 
+## 手动测试规范
+
+前端 GUI 变更完成后，必须输出手动测试清单，格式如下：
+
+```
+### 手动测试：<组件/功能名>
+
+测试步骤：
+1. <操作> → 预期：<结果>
+2. <操作> → 预期：<结果>
+...
+```
+
+**规则：**
+- 每个测试步骤包含具体操作和预期效果
+- Claude 在后台启动 daemon（`just dev-daemon`）并维护其生命周期
+- Claude 通过 daemon API 创建/编辑适配本次测试的笔记数据
+- 用户手动 `just dev` 拉起前端进行视觉验证
+- 测试完成后用户反馈结果，再决定是否继续
+
 ## 当前进度
 见 `PROCESS.md`，完整计划见 `docs/plans/COEDIT_PLAN.md`。

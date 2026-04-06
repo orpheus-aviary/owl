@@ -22,10 +22,19 @@ function createWindow(): void {
     mainWindow?.show();
   });
 
-  // Open external links in browser
+  // Open external links in system browser
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url);
     return { action: 'deny' };
+  });
+
+  // Prevent in-app navigation for external URLs
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    const rendererUrl = process.env.ELECTRON_RENDERER_URL ?? '';
+    if (is.dev && rendererUrl && url.startsWith(rendererUrl)) return;
+    if (url.startsWith('file://')) return;
+    event.preventDefault();
+    shell.openExternal(url);
   });
 
   if (is.dev && process.env.ELECTRON_RENDERER_URL) {

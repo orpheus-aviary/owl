@@ -2,10 +2,18 @@
 
 @custom-variant dark (&:is(.dark *));
 
+html,
 body {
   margin: 0;
+  height: 100%;
+  overflow: hidden;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial,
     sans-serif;
+}
+
+#root {
+  height: 100%;
+  overflow: hidden;
 }
 
 @theme inline {
@@ -82,4 +90,338 @@ body {
   --sidebar-accent-foreground: oklch(0.985 0 0);
   --sidebar-border: oklch(0.269 0 0);
   --sidebar-ring: oklch(0.556 0 0);
+}
+
+/* ─── Markdown Preview ────────────────────────────────── */
+
+.markdown-preview {
+  color: #e2e8f0;
+  line-height: 1.7;
+  word-wrap: break-word;
+}
+
+/* Headings */
+.markdown-preview h1 {
+  font-size: 2em;
+  font-weight: 700;
+  margin: 1em 0 0.5em;
+  padding-bottom: 0.3em;
+  border-bottom: 1px solid oklch(0.269 0 0);
+}
+.markdown-preview h2 {
+  font-size: 1.5em;
+  font-weight: 700;
+  margin: 0.8em 0 0.4em;
+  padding-bottom: 0.25em;
+  border-bottom: 1px solid oklch(0.269 0 0);
+}
+.markdown-preview h3 {
+  font-size: 1.25em;
+  font-weight: 600;
+  margin: 0.6em 0 0.3em;
+}
+.markdown-preview h4 {
+  font-size: 1.1em;
+  font-weight: 600;
+  margin: 0.5em 0 0.25em;
+}
+.markdown-preview h5 {
+  font-size: 1em;
+  font-weight: 600;
+  margin: 0.4em 0 0.2em;
+}
+.markdown-preview h6 {
+  font-size: 0.9em;
+  font-weight: 600;
+  margin: 0.4em 0 0.2em;
+  color: #94a3b8;
+}
+
+/* Paragraph & spacing */
+.markdown-preview p {
+  margin: 0.6em 0;
+}
+
+/* Links */
+.markdown-preview a {
+  color: #60a5fa;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.markdown-preview a:hover {
+  color: #93bbfd;
+}
+
+/* Strong & em */
+.markdown-preview strong {
+  color: #f8fafc;
+  font-weight: 600;
+}
+.markdown-preview em {
+  font-style: italic;
+}
+.markdown-preview del {
+  color: #94a3b8;
+}
+
+/* Inline code */
+.markdown-preview :not(pre) > code {
+  background: oklch(0.22 0 0);
+  color: #a78bfa;
+  padding: 0.15em 0.4em;
+  border-radius: 4px;
+  font-size: 0.9em;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+}
+
+/* Code blocks */
+.markdown-preview pre {
+  background: oklch(0.18 0 0);
+  border: 1px solid oklch(0.269 0 0);
+  border-radius: 6px;
+  padding: 1em;
+  overflow-x: auto;
+  margin: 0.8em 0;
+  font-size: 0.875em;
+  line-height: 1.5;
+}
+.markdown-preview pre code {
+  background: transparent;
+  color: #e2e8f0;
+  padding: 0;
+  border-radius: 0;
+  font-size: inherit;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+}
+
+/* Blockquote */
+.markdown-preview blockquote {
+  border-left: 3px solid oklch(0.4 0 0);
+  padding: 0.2em 1em;
+  margin: 0.6em 0;
+  color: #94a3b8;
+  font-style: italic;
+}
+.markdown-preview blockquote p {
+  margin: 0.3em 0;
+}
+
+/* Lists */
+.markdown-preview ul {
+  list-style: disc;
+  padding-left: 1.5em;
+  margin: 0.5em 0;
+}
+.markdown-preview ol {
+  list-style: decimal;
+  padding-left: 1.5em;
+  margin: 0.5em 0;
+}
+.markdown-preview li > ol {
+  list-style: lower-alpha;
+}
+.markdown-preview li > ol > li > ol {
+  list-style: lower-roman;
+}
+.markdown-preview li {
+  margin: 0.2em 0;
+}
+.markdown-preview li > ul,
+.markdown-preview li > ol {
+  margin: 0.1em 0;
+}
+
+/* Task list (GFM) */
+.markdown-preview li:has(> input[type="checkbox"]) {
+  list-style: none;
+  margin-left: -1.2em;
+}
+.markdown-preview input[type="checkbox"] {
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border: 2px solid oklch(0.45 0 0);
+  border-radius: 3px;
+  background: oklch(0.2 0 0);
+  vertical-align: middle;
+  margin-right: 0.4em;
+  cursor: default;
+  position: relative;
+}
+.markdown-preview input[type="checkbox"]:checked {
+  background: #3b82f6;
+  border-color: #3b82f6;
+}
+.markdown-preview input[type="checkbox"]:checked::after {
+  content: "";
+  position: absolute;
+  left: 3px;
+  top: 0px;
+  width: 5px;
+  height: 9px;
+  border: solid #fff;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+
+/* Table */
+.markdown-preview .table-wrapper {
+  overflow-x: auto;
+  margin: 0.8em 0;
+  max-width: 100%;
+  scrollbar-width: thin;
+  scrollbar-color: oklch(0.35 0 0) oklch(0.18 0 0);
+}
+.markdown-preview .table-wrapper::-webkit-scrollbar {
+  height: 8px;
+}
+.markdown-preview .table-wrapper::-webkit-scrollbar-track {
+  background: oklch(0.18 0 0);
+  border-radius: 4px;
+}
+.markdown-preview .table-wrapper::-webkit-scrollbar-thumb {
+  background: oklch(0.35 0 0);
+  border-radius: 4px;
+}
+.markdown-preview .table-wrapper::-webkit-scrollbar-thumb:hover {
+  background: oklch(0.45 0 0);
+}
+.markdown-preview table {
+  border-collapse: collapse;
+  white-space: nowrap;
+}
+.markdown-preview th {
+  background: oklch(0.2 0 0);
+  font-weight: 600;
+  text-align: left;
+  padding: 0.5em 0.75em;
+  border: 1px solid oklch(0.3 0 0);
+}
+.markdown-preview td {
+  padding: 0.5em 0.75em;
+  border: 1px solid oklch(0.269 0 0);
+}
+.markdown-preview tr:nth-child(even) {
+  background: oklch(0.17 0 0);
+}
+
+/* Horizontal rule */
+.markdown-preview hr {
+  border: none;
+  border-top: 1px solid oklch(0.3 0 0);
+  margin: 1.5em 0;
+}
+
+/* Images */
+.markdown-preview img {
+  max-width: 100%;
+  border-radius: 6px;
+  margin: 0.5em 0;
+}
+
+/* Footnotes (remark-gfm) */
+.markdown-preview .footnotes {
+  border-top: 1px solid oklch(0.269 0 0);
+  margin-top: 2em;
+  padding-top: 1em;
+  font-size: 0.9em;
+  color: #94a3b8;
+}
+.markdown-preview sup a {
+  color: #60a5fa;
+  text-decoration: none;
+  font-size: 0.8em;
+}
+.markdown-preview .footnotes a {
+  color: #60a5fa;
+}
+
+/* KaTeX — center display math (override Tailwind preflight) */
+.markdown-preview .katex-display {
+  display: block !important;
+  text-align: center !important;
+  margin: 1em 0 !important;
+  overflow-x: auto;
+}
+.markdown-preview .katex-display > .katex {
+  display: inline-block;
+  text-align: center;
+}
+.markdown-preview .katex-html {
+  text-align: center;
+}
+
+/* highlight.js theme override for dark */
+.markdown-preview .hljs {
+  background: transparent;
+  color: #e2e8f0;
+}
+.markdown-preview .hljs-keyword {
+  color: #c084fc;
+}
+.markdown-preview .hljs-string {
+  color: #86efac;
+}
+.markdown-preview .hljs-number {
+  color: #fbbf24;
+}
+.markdown-preview .hljs-comment {
+  color: #64748b;
+  font-style: italic;
+}
+.markdown-preview .hljs-function {
+  color: #60a5fa;
+}
+.markdown-preview .hljs-variable {
+  color: #67e8f9;
+}
+.markdown-preview .hljs-type {
+  color: #fca5a5;
+}
+.markdown-preview .hljs-built_in {
+  color: #67e8f9;
+}
+.markdown-preview .hljs-title {
+  color: #60a5fa;
+}
+.markdown-preview .hljs-params {
+  color: #e2e8f0;
+}
+.markdown-preview .hljs-attr {
+  color: #fbbf24;
+}
+.markdown-preview .hljs-selector-class {
+  color: #86efac;
+}
+.markdown-preview .hljs-selector-tag {
+  color: #fca5a5;
+}
+.markdown-preview .hljs-tag {
+  color: #fca5a5;
+}
+.markdown-preview .hljs-name {
+  color: #fca5a5;
+}
+.markdown-preview .hljs-attribute {
+  color: #fbbf24;
+}
+.markdown-preview .hljs-literal {
+  color: #fbbf24;
+}
+.markdown-preview .hljs-meta {
+  color: #94a3b8;
+}
+.markdown-preview .hljs-regexp {
+  color: #f87171;
+}
+.markdown-preview .hljs-symbol {
+  color: #a78bfa;
+}
+.markdown-preview .hljs-addition {
+  color: #86efac;
+  background: oklch(0.2 0.05 145 / 0.2);
+}
+.markdown-preview .hljs-deletion {
+  color: #fca5a5;
+  background: oklch(0.2 0.05 25 / 0.2);
 }

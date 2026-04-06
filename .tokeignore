@@ -1,0 +1,34 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+out/
+*.tsbuildinfo
+
+# Lock file
+pnpm-lock.yaml
+
+# Generated shadcn/ui components (vendor code)
+packages/gui/src/renderer/src/components/ui/
+
+# Docs & plans
+docs/
+*.md
+
+# Config & meta
+*.json
+*.toml
+*.yaml
+*.yml
+!justfile
+
+# Screenshots & images
+*.png
+*.jpg
+*.jpeg
+*.svg
+*.ico
+
+# Playwright MCP artifacts
+.playwright-mcp/
