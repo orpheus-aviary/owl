@@ -20,7 +20,7 @@
 | P1-3 | CodeMirror 6 编辑器 + 语法高亮 + 列表续行 | `fadc527` |
 | P1-4 | Markdown 渲染组件 + 外部链接 + 脚注 + 数学公式 | `eaebf96` |
 | P1-5a | 编辑页面 — 三栏布局 + 多标签 + 模式切换 | `4aaaf9c` |
-| P1-5b | 快捷键 + 手动保存 + 脏标记 + 未保存弹窗 | `pending` |
+| P1-5b | 快捷键 + 手动保存 + 脏标记 + 未保存弹窗 | `577b2fe` |
 
 - 测试：65 个全部通过（core 50 + daemon 15）
 - Lint + Typecheck：零错误（4 个 pre-existing complexity warnings）
