@@ -11,7 +11,10 @@ export function buildServer(ctx: AppContext) {
   });
 
   // CORS — allow GUI dev server and Electron renderer
-  app.register(cors, { origin: true });
+  app.register(cors, {
+    origin: true,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  });
 
   // Register routes
   registerNoteRoutes(app, ctx);

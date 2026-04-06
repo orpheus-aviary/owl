@@ -76,10 +76,12 @@ const owlDarkTheme = EditorView.theme(
       color: 'oklch(0.5 0 0)',
       borderRight: '1px solid oklch(0.269 0 0)',
     },
-    '.cm-selectionBackground': { backgroundColor: 'oklch(0.35 0.05 260 / 0.4) !important' },
+    '.cm-selectionBackground': { backgroundColor: '#3b5998 !important' },
     '&.cm-focused .cm-selectionBackground': {
-      backgroundColor: 'oklch(0.35 0.05 260 / 0.4) !important',
+      backgroundColor: '#3b5998 !important',
     },
+    '& .cm-line ::selection': { backgroundColor: '#3b5998 !important' },
+    '& .cm-line::selection': { backgroundColor: '#3b5998 !important' },
     '.cm-searchMatch': { backgroundColor: 'oklch(0.5 0.15 80 / 0.3)' },
     '.cm-searchMatch.cm-searchMatch-selected': { backgroundColor: 'oklch(0.5 0.15 80 / 0.5)' },
     '.cm-panels': {

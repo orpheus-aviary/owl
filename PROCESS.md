@@ -20,11 +20,12 @@
 | P1-3 | CodeMirror 6 编辑器 + 语法高亮 + 列表续行 | `fadc527` |
 | P1-4 | Markdown 渲染组件 + 外部链接 + 脚注 + 数学公式 | `eaebf96` |
 | P1-5a | 编辑页面 — 三栏布局 + 多标签 + 模式切换 | `4aaaf9c` |
+| P1-5b | 快捷键 + 手动保存 + 脏标记 + 未保存弹窗 | `pending` |
 
 - 测试：65 个全部通过（core 50 + daemon 15）
 - Lint + Typecheck：零错误（4 个 pre-existing complexity warnings）
 
-### 下一步：P1-5b（编辑页面 — 快捷键 + 手动保存 + 脏标记）
+### 下一步：P1-6（标签栏 Tag Bar）
 
 P1 目标：完整的笔记管理 GUI，解决 Go 版所有渲染问题。
 
@@ -57,7 +58,7 @@ P1 commit 分解（12 步）：
 ### 实施阶段总览
 
 ```
-P0 ✅ → P1（P1-0~P1-5a ✅，P1-5b 下一步） → P2（待办+设置+文件夹+AI+分屏拖拽） → P3（CLI+外部调用） → P4（Migration）
+P0 ✅ → P1（P1-0~P1-5b ✅，P1-6 下一步） → P2（待办+设置+文件夹+AI+分屏拖拽） → P3（CLI+外部调用） → P4（Migration）
 ```
 
 **P2 范围预览：**

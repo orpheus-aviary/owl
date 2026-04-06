@@ -22,6 +22,8 @@ interface EditorState {
   setActiveTab: (noteId: string) => void;
   updateContent: (noteId: string, content: string) => void;
   markSaved: (noteId: string, content: string) => void;
+  saveNote: (noteId: string) => Promise<boolean>;
+  saveActiveNote: () => Promise<boolean>;
   cycleMode: () => void;
   setMode: (mode: EditorMode) => void;
 }
@@ -98,6 +100,24 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         t.noteId === noteId ? { ...t, originalContent: content, dirty: false } : t,
       ),
     }));
+  },
+
+  saveNote: async (noteId: string) => {
+    const tab = get().tabs.find((t) => t.noteId === noteId);
+    if (!tab || !tab.dirty) return true;
+    try {
+      await api.updateNote(tab.noteId, { content: tab.content });
+      get().markSaved(tab.noteId, tab.content);
+      return true;
+    } catch {
+      return false;
+    }
+  },
+
+  saveActiveNote: async () => {
+    const { activeTabId } = get();
+    if (!activeTabId) return true;
+    return get().saveNote(activeTabId);
   },
 
   cycleMode: () => {

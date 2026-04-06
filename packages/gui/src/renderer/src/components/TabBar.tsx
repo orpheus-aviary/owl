@@ -2,20 +2,23 @@ import { useEditorStore } from '@/stores/editor-store';
 import { X } from 'lucide-react';
 import { useCallback } from 'react';
 
-export function TabBar() {
+interface TabBarProps {
+  onCloseTab: (noteId: string) => void;
+}
+
+export function TabBar({ onCloseTab }: TabBarProps) {
   const tabs = useEditorStore((s) => s.tabs);
   const activeTabId = useEditorStore((s) => s.activeTabId);
   const setActiveTab = useEditorStore((s) => s.setActiveTab);
-  const closeTab = useEditorStore((s) => s.closeTab);
 
   const handleMiddleClick = useCallback(
     (e: React.MouseEvent, noteId: string) => {
       if (e.button === 1) {
         e.preventDefault();
-        closeTab(noteId);
+        onCloseTab(noteId);
       }
     },
-    [closeTab],
+    [onCloseTab],
   );
 
   if (tabs.length === 0) return null;
@@ -45,7 +48,7 @@ export function TabBar() {
               tabIndex={-1}
               onClick={(e) => {
                 e.stopPropagation();
-                closeTab(tab.noteId);
+                onCloseTab(tab.noteId);
               }}
               className="ml-auto opacity-0 group-hover:opacity-100 hover:bg-muted rounded p-0.5 shrink-0"
             >
