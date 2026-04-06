@@ -1,6 +1,6 @@
 # 开发进度
 
-## 当前状态：P1 设计完成，准备实施
+## 当前状态：P1 实施中（P1-0 ~ P1-3 完成）
 
 ### 已完成
 
@@ -14,11 +14,15 @@
 | P0-6 | @owl/gui Electron 空壳 (7 页面占位) | `840c164` |
 | - | justfile | `8bbcf0d` |
 | bugfix | 自动提取标签 + FTS5 trigram 中文搜索 + /time: 冒号格式 | `ead7014` `0ae1f83` `3dfc4b1` |
+| P1-0 | 回滚 extractTagsFromContent，标签栏为唯一标签源 | `25bec4b` |
+| P1-1 | shadcn/ui + API 调用层 + lucide-react 侧边栏 | `b9f4bb8` |
+| P1-2 | zustand stores + 笔记列表 + CORS | `9b9a946` |
+| P1-3 | CodeMirror 6 编辑器 + 语法高亮 + 列表续行 | `fadc527` |
 
-- 测试：56 个全部通过
-- Lint + Typecheck：零错误（4 个 complexity warnings 可接受）
+- 测试：65 个全部通过（core 50 + daemon 15）
+- Lint + Typecheck：零错误（4 个 pre-existing complexity warnings）
 
-### 下一步：P1 编辑器 + 浏览 + 回收站 + 提醒
+### 下一步：P1-4（Markdown 渲染组件）
 
 P1 目标：完整的笔记管理 GUI，解决 Go 版所有渲染问题。
 
@@ -51,7 +55,7 @@ P1 commit 分解（12 步）：
 ### 实施阶段总览
 
 ```
-P0 ✅ → P1（设计完成，待实施） → P2（待办+设置+文件夹+AI+分屏拖拽） → P3（CLI+外部调用） → P4（Migration）
+P0 ✅ → P1（P1-0~P1-3 ✅，P1-4 下一步） → P2（待办+设置+文件夹+AI+分屏拖拽） → P3（CLI+外部调用） → P4（Migration）
 ```
 
 **P2 范围预览：**
