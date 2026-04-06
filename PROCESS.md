@@ -18,7 +18,7 @@
 | P1-1 | shadcn/ui + API 调用层 + lucide-react 侧边栏 | `b9f4bb8` |
 | P1-2 | zustand stores + 笔记列表 + CORS | `9b9a946` |
 | P1-3 | CodeMirror 6 编辑器 + 语法高亮 + 列表续行 | `fadc527` |
-| P1-4 | Markdown 渲染组件 + 外部链接 + 脚注 + 数学公式 | `pending` |
+| P1-4 | Markdown 渲染组件 + 外部链接 + 脚注 + 数学公式 | `eaebf96` |
 
 - 测试：65 个全部通过（core 50 + daemon 15）
 - Lint + Typecheck：零错误（4 个 pre-existing complexity warnings）
