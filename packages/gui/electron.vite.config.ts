@@ -29,6 +29,11 @@ export default defineConfig({
   renderer: {
     root: resolve(__dirname, 'src/renderer'),
     plugins: [react(), tailwindcss()],
+    resolve: {
+      alias: {
+        '@': resolve(__dirname, 'src/renderer/src'),
+      },
+    },
     build: {
       outDir: resolve(__dirname, 'out/renderer'),
       rollupOptions: {

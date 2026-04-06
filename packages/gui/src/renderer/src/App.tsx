@@ -1,3 +1,13 @@
+import {
+  Bell,
+  Bot,
+  CheckSquare,
+  type LucideIcon,
+  PenSquare,
+  Search,
+  Settings,
+  Trash2,
+} from 'lucide-react';
 import { HashRouter, NavLink, Route, Routes } from 'react-router-dom';
 import { AIPage } from './pages/AIPage';
 import { BrowserPage } from './pages/BrowserPage';
@@ -7,39 +17,43 @@ import { SettingsPage } from './pages/SettingsPage';
 import { TodoPage } from './pages/TodoPage';
 import { TrashPage } from './pages/TrashPage';
 
-const NAV_ITEMS = [
-  { path: '/', label: '编辑', page: 'editor' },
-  { path: '/browser', label: '浏览', page: 'browser' },
-  { path: '/trash', label: '回收站', page: 'trash' },
-  { path: '/reminders', label: '提醒', page: 'reminders' },
-  { path: '/ai', label: 'AI', page: 'ai' },
-  { path: '/todo', label: '待办', page: 'todo' },
-  { path: '/settings', label: '设置', page: 'settings' },
-] as const;
+const NAV_ITEMS: { path: string; label: string; icon: LucideIcon }[] = [
+  { path: '/', label: '编辑', icon: PenSquare },
+  { path: '/browser', label: '浏览', icon: Search },
+  { path: '/trash', label: '回收站', icon: Trash2 },
+  { path: '/reminders', label: '提醒', icon: Bell },
+  { path: '/ai', label: 'AI', icon: Bot },
+  { path: '/todo', label: '待办', icon: CheckSquare },
+  { path: '/settings', label: '设置', icon: Settings },
+];
 
 export function App() {
   return (
     <HashRouter>
-      <div className="flex h-screen">
+      <div className="flex h-screen bg-background text-foreground">
         {/* Sidebar */}
-        <nav className="flex flex-col w-16 bg-zinc-900 text-zinc-400 border-r border-zinc-800">
+        <nav className="flex flex-col w-16 shrink-0 border-r border-border bg-sidebar text-sidebar-foreground">
           {NAV_ITEMS.map((item) => (
             <NavLink
               key={item.path}
               to={item.path}
+              end={item.path === '/'}
               className={({ isActive }) =>
-                `flex items-center justify-center h-14 text-xs transition-colors hover:text-white ${
-                  isActive ? 'text-white bg-zinc-800' : ''
+                `flex flex-col items-center justify-center gap-0.5 h-14 text-[10px] transition-colors ${
+                  isActive
+                    ? 'text-sidebar-primary-foreground bg-sidebar-accent'
+                    : 'text-muted-foreground hover:text-sidebar-foreground hover:bg-sidebar-accent/50'
                 }`
               }
             >
+              <item.icon className="size-4" />
               {item.label}
             </NavLink>
           ))}
         </nav>
 
         {/* Main content */}
-        <main className="flex-1 overflow-auto bg-zinc-950 text-zinc-100">
+        <main className="flex-1 overflow-auto">
           <Routes>
             <Route path="/" element={<EditorPage />} />
             <Route path="/browser" element={<BrowserPage />} />
