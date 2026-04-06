@@ -1,3 +1,4 @@
+import cors from '@fastify/cors';
 import Fastify from 'fastify';
 import type { AppContext } from './context.js';
 import { registerNoteRoutes } from './routes/notes.js';
@@ -8,6 +9,9 @@ export function buildServer(ctx: AppContext) {
   const app = Fastify({
     logger: false, // We use our own pino logger
   });
+
+  // CORS — allow GUI dev server and Electron renderer
+  app.register(cors, { origin: true });
 
   // Register routes
   registerNoteRoutes(app, ctx);

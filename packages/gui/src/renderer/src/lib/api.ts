@@ -10,27 +10,27 @@ export interface ApiResponse<T = unknown> {
 
 export interface NoteTag {
   id: string;
-  tag_type: string;
-  tag_value: string | null;
+  tagType: string;
+  tagValue: string | null;
 }
 
 export interface Note {
   id: string;
   content: string;
-  folder_id: string | null;
-  trash_level: number;
-  created_at: number;
-  updated_at: number;
-  trashed_at: number | null;
-  device_id: string | null;
-  content_hash: string | null;
+  folderId: string | null;
+  trashLevel: number;
+  createdAt: string;
+  updatedAt: string;
+  trashedAt: string | null;
+  deviceId: string | null;
+  contentHash: string | null;
   tags: NoteTag[];
 }
 
 export interface Tag {
   id: string;
-  tag_type: string;
-  tag_value: string;
+  tagType: string;
+  tagValue: string;
 }
 
 export interface FrequentTag extends Tag {
