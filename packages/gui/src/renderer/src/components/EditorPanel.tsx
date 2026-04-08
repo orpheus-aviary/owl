@@ -1,5 +1,6 @@
 import { MarkdownEditor } from '@/components/MarkdownEditor';
 import { MarkdownPreview } from '@/components/MarkdownPreview';
+import { TagBar } from '@/components/TagBar';
 import { type EditorMode, useActiveTab, useEditorStore } from '@/stores/editor-store';
 import { Columns2, Eye, Pencil } from 'lucide-react';
 
@@ -37,6 +38,7 @@ export function EditorPanel() {
   const tab = useActiveTab();
   const mode = useEditorStore((s) => s.mode);
   const updateContent = useEditorStore((s) => s.updateContent);
+  const updateTags = useEditorStore((s) => s.updateTags);
 
   if (!tab) {
     return (
@@ -78,6 +80,9 @@ export function EditorPanel() {
           </>
         )}
       </div>
+
+      {/* Tag Bar */}
+      <TagBar tags={tab.tags} onTagsChange={(tags) => updateTags(tab.noteId, tags)} />
     </div>
   );
 }

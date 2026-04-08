@@ -28,6 +28,14 @@ const SHORTCUTS: Record<string, ShortcutAction> = {
   'meta+alt+KeyV': () => {
     useEditorStore.getState().cycleMode();
   },
+  'meta+KeyL': () => {
+    const tagInput = document.querySelector<HTMLInputElement>('[data-tag-input]');
+    if (tagInput) tagInput.focus();
+  },
+  'meta+KeyE': () => {
+    const cmEditor = document.querySelector<HTMLElement>('.cm-content');
+    if (cmEditor) cmEditor.focus();
+  },
 };
 
 function getShortcutKey(e: KeyboardEvent): string | null {
