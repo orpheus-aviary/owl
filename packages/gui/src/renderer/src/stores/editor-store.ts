@@ -1,6 +1,7 @@
-import type { Note } from '@/lib/api';
+import type { Note, NoteTag } from '@/lib/api';
 import * as api from '@/lib/api';
 import { create } from 'zustand';
+import { useNoteStore } from './note-store';
 
 export type EditorMode = 'edit' | 'split' | 'preview';
 
@@ -9,7 +10,27 @@ export interface TabState {
   title: string;
   content: string;
   originalContent: string;
+  tags: NoteTag[];
+  originalTags: NoteTag[];
   dirty: boolean;
+}
+
+/** Compare two NoteTag arrays by tagType:tagValue pairs (order-insensitive). */
+function tagsEqual(a: NoteTag[], b: NoteTag[]): boolean {
+  if (a.length !== b.length) return false;
+  const key = (t: NoteTag) => `${t.tagType}:${t.tagValue ?? ''}`;
+  const setA = new Set(a.map(key));
+  return b.every((t) => setA.has(key(t)));
+}
+
+/** Serialize NoteTag[] to raw tag strings for the daemon API. */
+function serializeTags(tags: NoteTag[]): string[] {
+  return tags.map((t) => {
+    if (t.tagType === '#') return `#${t.tagValue}`;
+    if (['/daily', '/weekly', '/monthly', '/yearly'].includes(t.tagType)) return t.tagType;
+    // /time, /alarm — tagType + space + tagValue (ISO datetime)
+    return `${t.tagType} ${t.tagValue}`;
+  });
 }
 
 interface EditorState {
@@ -21,7 +42,8 @@ interface EditorState {
   closeTab: (noteId: string) => void;
   setActiveTab: (noteId: string) => void;
   updateContent: (noteId: string, content: string) => void;
-  markSaved: (noteId: string, content: string) => void;
+  updateTags: (noteId: string, tags: NoteTag[]) => void;
+  markSaved: (noteId: string, content: string, tags: NoteTag[]) => void;
   saveNote: (noteId: string) => Promise<boolean>;
   saveActiveNote: () => Promise<boolean>;
   cycleMode: () => void;
@@ -47,11 +69,14 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       set({ activeTabId: note.id });
       return;
     }
+    const tags = note.tags ?? [];
     const newTab: TabState = {
       noteId: note.id,
       title: extractTitle(note.content),
       content: note.content,
       originalContent: note.content,
+      tags,
+      originalTags: tags,
       dirty: false,
     };
     set({ tabs: [...tabs, newTab], activeTabId: note.id });
@@ -87,17 +112,33 @@ export const useEditorStore = create<EditorState>((set, get) => ({
               ...t,
               content,
               title: extractTitle(content),
-              dirty: content !== t.originalContent,
+              dirty: content !== t.originalContent || !tagsEqual(t.tags, t.originalTags),
             }
           : t,
       ),
     }));
   },
 
-  markSaved: (noteId: string, content: string) => {
+  updateTags: (noteId: string, tags: NoteTag[]) => {
     set((state) => ({
       tabs: state.tabs.map((t) =>
-        t.noteId === noteId ? { ...t, originalContent: content, dirty: false } : t,
+        t.noteId === noteId
+          ? {
+              ...t,
+              tags,
+              dirty: t.content !== t.originalContent || !tagsEqual(tags, t.originalTags),
+            }
+          : t,
+      ),
+    }));
+  },
+
+  markSaved: (noteId: string, content: string, tags: NoteTag[]) => {
+    set((state) => ({
+      tabs: state.tabs.map((t) =>
+        t.noteId === noteId
+          ? { ...t, originalContent: content, originalTags: tags, dirty: false }
+          : t,
       ),
     }));
   },
@@ -106,8 +147,12 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     const tab = get().tabs.find((t) => t.noteId === noteId);
     if (!tab || !tab.dirty) return true;
     try {
-      await api.updateNote(tab.noteId, { content: tab.content });
-      get().markSaved(tab.noteId, tab.content);
+      const rawTags = serializeTags(tab.tags);
+      const res = await api.updateNote(tab.noteId, { content: tab.content, tags: rawTags });
+      const savedTags = res.data?.tags ?? tab.tags;
+      get().markSaved(tab.noteId, tab.content, savedTags);
+      // Refresh note list so left sidebar shows updated tags
+      useNoteStore.getState().fetchNotes();
       return true;
     } catch {
       return false;
