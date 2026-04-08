@@ -50,12 +50,10 @@ export function EditorPanel() {
 
   return (
     <div className="flex flex-col h-full min-h-0">
-      {/* Toolbar */}
       <div className="flex items-center justify-end px-2 py-1 border-b border-border shrink-0">
         <ModeToggle />
       </div>
 
-      {/* Content area */}
       <div className="flex-1 flex min-h-0">
         {mode === 'edit' && (
           <div className="flex-1 min-h-0">
@@ -81,7 +79,6 @@ export function EditorPanel() {
         )}
       </div>
 
-      {/* Tag Bar */}
       <TagBar tags={tab.tags} onTagsChange={(tags) => updateTags(tab.noteId, tags)} />
     </div>
   );

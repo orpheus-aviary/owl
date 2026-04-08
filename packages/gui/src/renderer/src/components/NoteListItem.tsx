@@ -2,7 +2,6 @@ import { Badge } from '@/components/ui/badge';
 import type { Note } from '@/lib/api';
 import { cn } from '@/lib/utils';
 
-/** Max visible tags in the note list item. */
 const MAX_VISIBLE_TAGS = 3;
 
 /** Extract display title from note content. First `# ` heading, or first non-empty line. */

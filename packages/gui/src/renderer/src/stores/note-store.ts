@@ -25,8 +25,6 @@ export const useNoteStore = create<NoteState>((set, get) => ({
     const { query, page } = get();
     set({ loading: true });
     try {
-      // If query starts with #, strip it and search via tags param
-      // (daemon filters by tag value from note_tags table)
       let q: string | undefined;
       let tags: string | undefined;
       if (query.startsWith('#') && query.length > 1) {
@@ -56,7 +54,6 @@ export const useNoteStore = create<NoteState>((set, get) => ({
       const res = await api.createNote({ content: '# \n\n' });
       const note = res.data ?? null;
       if (note) {
-        // Refresh list so the new note appears
         await get().fetchNotes();
       }
       return note;

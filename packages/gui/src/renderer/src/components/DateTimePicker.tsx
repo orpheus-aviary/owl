@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { Calendar } from '@/components/ui/calendar';
@@ -40,7 +40,6 @@ function DateTimePicker({
     }
   }, [open, initialDate, initialTime]);
 
-  // Close on outside click
   useEffect(() => {
     if (!open) return;
     function onClick(e: MouseEvent) {
@@ -48,7 +47,6 @@ function DateTimePicker({
         onOpenChange(false);
       }
     }
-    // Delay to avoid closing on the same click that opened
     const timer = setTimeout(() => document.addEventListener('mousedown', onClick), 0);
     return () => {
       clearTimeout(timer);
@@ -56,16 +54,15 @@ function DateTimePicker({
     };
   }, [open, onOpenChange]);
 
-  function handleConfirm() {
+  const handleConfirm = useCallback(() => {
     if (!selectedDate) return;
     const [hours, minutes] = timeValue.split(':').map(Number);
     const result = new Date(selectedDate);
     result.setHours(hours ?? 0, minutes ?? 0, 0, 0);
     onConfirm(result);
     onOpenChange(false);
-  }
+  }, [selectedDate, timeValue, onConfirm, onOpenChange]);
 
-  // Global keyboard listener: Enter to confirm, Escape to cancel
   useEffect(() => {
     if (!open) return;
     function onKey(e: KeyboardEvent) {
@@ -78,13 +75,12 @@ function DateTimePicker({
         handleConfirm();
       }
     }
-    window.addEventListener('keydown', onKey, true); // capture phase
+    window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
-  });
+  }, [open, onOpenChange, handleConfirm]);
 
   if (!open) return null;
 
-  // Position above the anchor
   const anchor = anchorRef.current;
   const style: React.CSSProperties = {
     position: 'fixed',

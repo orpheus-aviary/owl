@@ -1,12 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { DateTimePicker } from '@/components/DateTimePicker';
 import { TagChip } from '@/components/TagChip';
 import { Input } from '@/components/ui/input';
 import type { NoteTag, Tag } from '@/lib/api';
 import * as api from '@/lib/api';
-
-// ─── Constants ──────────────────────────────────────────
 
 const FREQUENCY_OPTIONS = [
   { type: '/time', label: '/time (过期时间)', needsPicker: true },
@@ -17,7 +15,6 @@ const FREQUENCY_OPTIONS = [
   { type: '/yearly', label: '/yearly (每年)', needsPicker: false },
 ] as const;
 
-/** Sort priority: lower = first */
 const TAG_TYPE_ORDER: Record<string, number> = {
   '/time': 0,
   '/alarm': 1,
@@ -30,8 +27,6 @@ const TAG_TYPE_ORDER: Record<string, number> = {
 
 type TimeTagType = '/time' | '/alarm';
 
-// ─── Helpers ────────────────────────────────────────────
-
 function formatDateISO(date: Date): string {
   const y = date.getFullYear();
   const mo = String(date.getMonth() + 1).padStart(2, '0');
@@ -41,21 +36,18 @@ function formatDateISO(date: Date): string {
   return `${y}-${mo}-${d}T${h}:${mi}:00`;
 }
 
-/** Types that only allow one tag per type (new replaces old). */
 const UNIQUE_TYPES = new Set(['/time', '/daily', '/weekly', '/monthly', '/yearly']);
 
 function makeTempId(): string {
   return `temp-${Date.now()}`;
 }
 
-/** Strip one leading '#' from input to get the actual tag value. */
 function normalizeHashtagInput(raw: string): string {
   const trimmed = raw.trim();
   if (trimmed.startsWith('#')) return trimmed.slice(1);
   return trimmed;
 }
 
-/** Sort tags by type priority, preserving order within same type. */
 function sortTags(tags: NoteTag[]): NoteTag[] {
   return [...tags].sort((a, b) => {
     const oa = TAG_TYPE_ORDER[a.tagType] ?? 9;
@@ -64,11 +56,6 @@ function sortTags(tags: NoteTag[]): NoteTag[] {
   });
 }
 
-/**
- * Try to parse a flexible date/time string for pre-filling the date picker.
- * Supports: 4-21, 3.15, 20260503, 2026-05-03, MM-DD HH:MM, YYYYMMDD HH, etc.
- * Returns { date?: Date, time?: string (HH:MM) } with whatever was parsed.
- */
 function parseDateTimeHint(input: string): { date?: Date; time?: string } {
   const trimmed = input.trim();
   if (!trimmed) return {};
@@ -133,8 +120,6 @@ function parseDateTimeHint(input: string): { date?: Date; time?: string } {
   return result;
 }
 
-// ─── Component ──────────────────────────────────────────
-
 interface TagBarProps {
   tags: NoteTag[];
   onTagsChange: (tags: NoteTag[]) => void;
@@ -147,7 +132,6 @@ export function TagBar({ tags, onTagsChange }: TagBarProps) {
   const [showFrequency, setShowFrequency] = useState(false);
   const [hasNavigated, setHasNavigated] = useState(false);
 
-  // DateTimePicker state
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pickerTagType, setPickerTagType] = useState<TimeTagType>('/time');
   const [pickerInitialDate, setPickerInitialDate] = useState<Date | undefined>(undefined);
@@ -157,17 +141,18 @@ export function TagBar({ tags, onTagsChange }: TagBarProps) {
   const blurTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inputContainerRef = useRef<HTMLDivElement>(null);
 
-  // ── Autocomplete for hashtags ─────────────────────────
-  // Trigger on any non-/ text input (auto-prefix # behavior)
+  useEffect(() => {
+    return () => {
+      if (blurTimerRef.current) clearTimeout(blurTimerRef.current);
+    };
+  }, []);
 
   useEffect(() => {
     const trimmed = input.trim();
-    // Skip if empty, or if it's a slash command
     if (!trimmed || trimmed.startsWith('/')) {
       setSuggestions([]);
       return;
     }
-    // Normalize: strip leading # for search query
     const query = normalizeHashtagInput(trimmed);
     if (!query) {
       setSuggestions([]);
@@ -175,54 +160,51 @@ export function TagBar({ tags, onTagsChange }: TagBarProps) {
     }
 
     let cancelled = false;
-    api.listTags(query).then((res) => {
-      if (cancelled) return;
-      const existing = new Set(tags.filter((t) => t.tagType === '#').map((t) => t.tagValue));
-      const filtered = (res.data ?? []).filter(
-        (t) => t.tagType === '#' && !existing.has(t.tagValue),
-      );
-      setSuggestions(filtered);
-      setSelectedIndex(0);
-      setHasNavigated(false);
-    });
+    const timer = setTimeout(() => {
+      api.listTags(query).then((res) => {
+        if (cancelled) return;
+        const existing = new Set(tags.filter((t) => t.tagType === '#').map((t) => t.tagValue));
+        const filtered = (res.data ?? []).filter(
+          (t) => t.tagType === '#' && !existing.has(t.tagValue),
+        );
+        setSuggestions(filtered);
+        setSelectedIndex(0);
+        setHasNavigated(false);
+      });
+    }, 200);
     setShowFrequency(false);
     return () => {
       cancelled = true;
+      clearTimeout(timer);
     };
   }, [input, tags]);
 
-  // ── Show slash command dropdown when input starts with "/" ─────────
-
-  type FreqOption = (typeof FREQUENCY_OPTIONS)[number];
-  const [filteredFrequency, setFilteredFrequency] = useState<FreqOption[]>([...FREQUENCY_OPTIONS]);
+  const filteredFrequency = useMemo(() => {
+    if (!input.startsWith('/')) return [];
+    const q = input.toLowerCase();
+    return FREQUENCY_OPTIONS.filter(
+      (o) => o.type.startsWith(q) || o.label.toLowerCase().includes(q),
+    );
+  }, [input]);
 
   useEffect(() => {
     if (input.startsWith('/')) {
-      const q = input.toLowerCase();
-      const filtered = FREQUENCY_OPTIONS.filter(
-        (o) => o.type.startsWith(q) || o.label.toLowerCase().includes(q),
-      );
-      setFilteredFrequency(filtered);
-      setShowFrequency(filtered.length > 0);
+      setShowFrequency(filteredFrequency.length > 0);
       setSuggestions([]);
       setSelectedIndex(0);
       setHasNavigated(false);
     } else {
       setShowFrequency(false);
     }
-  }, [input]);
-
-  // ── Tag operations ────────────────────────────────────
+  }, [input, filteredFrequency]);
 
   const addTag = useCallback(
     (tagType: string, tagValue: string | null) => {
       const newTag: NoteTag = { id: makeTempId(), tagType, tagValue };
       if (UNIQUE_TYPES.has(tagType)) {
-        // Replace existing tag of same type
         const filtered = tags.filter((t) => t.tagType !== tagType);
         onTagsChange([...filtered, newTag]);
       } else {
-        // Dedup for # tags by tagType:tagValue
         if (tags.some((t) => t.tagType === tagType && t.tagValue === tagValue)) return;
         onTagsChange([...tags, newTag]);
       }
@@ -243,8 +225,6 @@ export function TagBar({ tags, onTagsChange }: TagBarProps) {
     },
     [tags, onTagsChange],
   );
-
-  // ── DateTimePicker handlers ───────────────────────────
 
   function openPickerForNew(type: TimeTagType, dateHint?: string) {
     setPickerTagType(type);
@@ -273,7 +253,6 @@ export function TagBar({ tags, onTagsChange }: TagBarProps) {
   function handlePickerConfirm(date: Date) {
     const iso = formatDateISO(date);
     if (editingTagId) {
-      // Verify the tag still exists before updating
       if (tags.some((t) => t.id === editingTagId)) {
         updateTag(editingTagId, iso);
       } else {
@@ -285,8 +264,6 @@ export function TagBar({ tags, onTagsChange }: TagBarProps) {
     setEditingTagId(null);
     setInput('');
   }
-
-  // ── KeyDown sub-handlers ──────────────────────────────
 
   function handleArrowKey(key: string) {
     const maxIndex =
@@ -306,7 +283,6 @@ export function TagBar({ tags, onTagsChange }: TagBarProps) {
   }
 
   function handleEnterWithSuggestions() {
-    // Only use suggestion if user explicitly navigated with arrow keys
     if (hasNavigated) {
       const tag = suggestions[selectedIndex];
       if (tag) {
@@ -316,7 +292,6 @@ export function TagBar({ tags, onTagsChange }: TagBarProps) {
         return;
       }
     }
-    // Otherwise, use exact input as a new hashtag
     addHashtagDirect();
   }
 
@@ -345,7 +320,6 @@ export function TagBar({ tags, onTagsChange }: TagBarProps) {
     const trimmed = input.trim();
     if (!trimmed) return;
 
-    // Exact frequency match (e.g. /daily, /weekly)
     const freqMatch = FREQUENCY_OPTIONS.find((o) => o.type === trimmed);
     if (freqMatch) {
       if (freqMatch.needsPicker) {
@@ -357,7 +331,6 @@ export function TagBar({ tags, onTagsChange }: TagBarProps) {
       return;
     }
 
-    // /time or /alarm (possibly with date/time hint after)
     if (trimmed.startsWith('/time') || trimmed.startsWith('/alarm')) {
       const isAlarm = trimmed.startsWith('/alarm');
       const type: TimeTagType = isAlarm ? '/alarm' : '/time';
@@ -367,14 +340,10 @@ export function TagBar({ tags, onTagsChange }: TagBarProps) {
       return;
     }
 
-    // Otherwise it's a hashtag (plain text, auto-prefix #)
     addHashtagDirect();
   }
 
-  // ── Input handlers ────────────────────────────────────
-
   function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
-    // When date picker is open, it handles its own keyboard events
     if (pickerOpen) return;
 
     if (e.key === 'Escape') {
@@ -417,8 +386,6 @@ export function TagBar({ tags, onTagsChange }: TagBarProps) {
     if (input.startsWith('/')) setShowFrequency(true);
   }
 
-  // ── Dropdown click handlers ───────────────────────────
-
   function handleSuggestionClick(tag: Tag) {
     addTag(tag.tagType, tag.tagValue);
     setInput('');
@@ -435,13 +402,10 @@ export function TagBar({ tags, onTagsChange }: TagBarProps) {
     setShowFrequency(false);
   }
 
-  // ── Render ────────────────────────────────────────────
-
   const sorted = sortTags(tags);
 
   return (
     <div className="flex shrink-0 flex-col gap-1.5 border-t px-3 py-2" style={{ minHeight: 40 }}>
-      {/* Input row (top) */}
       <div ref={inputContainerRef} className="relative">
         <Input
           data-tag-input
@@ -454,7 +418,6 @@ export function TagBar({ tags, onTagsChange }: TagBarProps) {
           className="h-7 border-none bg-transparent text-xs shadow-none focus-visible:ring-0"
         />
 
-        {/* DateTimePicker — positioned above input */}
         <DateTimePicker
           open={pickerOpen}
           onOpenChange={setPickerOpen}
@@ -464,7 +427,6 @@ export function TagBar({ tags, onTagsChange }: TagBarProps) {
           onConfirm={handlePickerConfirm}
         />
 
-        {/* Hashtag autocomplete dropdown (above input) */}
         {suggestions.length > 0 && (
           <div className="absolute bottom-full left-0 z-50 mb-1 max-h-48 w-56 overflow-y-auto rounded-md border bg-popover p-1 shadow-md">
             {suggestions.map((tag, i) => (
@@ -487,7 +449,6 @@ export function TagBar({ tags, onTagsChange }: TagBarProps) {
           </div>
         )}
 
-        {/* Slash command dropdown (above input) */}
         {showFrequency && (
           <div className="absolute bottom-full left-0 z-50 mb-1 w-56 rounded-md border bg-popover p-1 shadow-md">
             {filteredFrequency.map((opt, i) => (
@@ -509,7 +470,6 @@ export function TagBar({ tags, onTagsChange }: TagBarProps) {
         )}
       </div>
 
-      {/* Tag chips row (below, sorted by type) */}
       {sorted.length > 0 && (
         <div className="flex flex-wrap items-center gap-1.5">
           {sorted.map((tag) => (
