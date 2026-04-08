@@ -2,6 +2,9 @@ import { Badge } from '@/components/ui/badge';
 import type { Note } from '@/lib/api';
 import { cn } from '@/lib/utils';
 
+/** Max visible tags in the note list item. */
+const MAX_VISIBLE_TAGS = 3;
+
 /** Extract display title from note content. First `# ` heading, or first non-empty line. */
 export function extractTitle(content: string): string {
   for (const line of content.split('\n')) {
@@ -40,6 +43,8 @@ export function NoteListItem({ note, isActive, onClick }: NoteListItemProps) {
   const title = extractTitle(note.content);
   const preview = extractPreview(note.content);
   const hashtags = note.tags.filter((t) => t.tagType === '#');
+  const visible = hashtags.slice(0, MAX_VISIBLE_TAGS);
+  const overflow = hashtags.length - MAX_VISIBLE_TAGS;
 
   return (
     <button
@@ -49,19 +54,25 @@ export function NoteListItem({ note, isActive, onClick }: NoteListItemProps) {
         'w-full text-left px-3 py-2 border-b border-border transition-colors',
         'hover:bg-accent/50',
         isActive && 'bg-accent',
+        'h-[72px]',
       )}
     >
       <div className="text-sm font-medium truncate">{title}</div>
-      {preview && <div className="text-xs text-muted-foreground truncate mt-0.5">{preview}</div>}
-      {hashtags.length > 0 && (
-        <div className="flex gap-1 mt-1 flex-wrap">
-          {hashtags.map((tag) => (
-            <Badge key={tag.id} variant="secondary" className="text-[10px] px-1.5 py-0">
-              #{tag.tagValue}
-            </Badge>
-          ))}
-        </div>
-      )}
+      <div className="text-xs text-muted-foreground truncate mt-0.5 min-h-[16px]">
+        {preview || '\u00A0'}
+      </div>
+      <div className="flex gap-1 mt-1 min-h-[18px]">
+        {visible.map((tag) => (
+          <Badge key={tag.id} variant="secondary" className="text-[10px] px-1.5 py-0 shrink-0">
+            #{tag.tagValue}
+          </Badge>
+        ))}
+        {overflow > 0 && (
+          <Badge variant="outline" className="text-[10px] px-1 py-0 shrink-0">
+            +{overflow}
+          </Badge>
+        )}
+      </div>
     </button>
   );
 }
