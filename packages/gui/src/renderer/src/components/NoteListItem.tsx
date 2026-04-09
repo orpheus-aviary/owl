@@ -70,9 +70,9 @@ export function NoteListItem({
       onClick={onClick}
       onDoubleClick={onDoubleClick}
       className={cn(
-        'w-full text-left px-3 py-2 border-b border-border transition-colors',
+        'w-full text-left px-3 py-2 border-b border-border transition-colors outline-none',
         'hover:bg-accent/50',
-        isActive && 'bg-accent',
+        isActive && 'bg-accent border-l-2 border-l-primary',
       )}
     >
       <div className="flex items-start gap-2">

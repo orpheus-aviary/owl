@@ -315,6 +315,18 @@ export function batchRestoreNotes(db: OwlDatabase, ids: string[]): number {
   return count;
 }
 
+/** Batch permanent delete */
+export function batchPermanentDeleteNotes(db: OwlDatabase, ids: string[]): number {
+  if (ids.length === 0) return 0;
+  let count = 0;
+
+  for (const id of ids) {
+    if (permanentDeleteNote(db, id)) count++;
+  }
+
+  return count;
+}
+
 // ─── Tag Sync ──────────────────────────────────────────
 
 function syncNoteTags(

@@ -10,9 +10,10 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import * as api from '@/lib/api';
 import { type SortKey, useBrowserStore } from '@/stores/browser-store';
 import { openNoteById } from '@/stores/editor-store';
-import { ArrowDownAZ, Search, X } from 'lucide-react';
+import { ArrowDownAZ, Search, Trash2, X } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
@@ -102,6 +103,67 @@ export function BrowserPage() {
     [navigate],
   );
 
+  const deleteNoteRef = useRef<string | null>(null);
+
+  const handleDeleteNote = useCallback(
+    (noteId: string) => {
+      console.log('[BrowserPage] deleting note:', noteId);
+      deleteNoteRef.current = noteId;
+      api
+        .deleteNote(noteId)
+        .then(() => {
+          console.log('[BrowserPage] delete success');
+          setSelectedNoteId((prev) => (prev === noteId ? null : prev));
+          return fetchNotes();
+        })
+        .catch((err) => {
+          console.error('[BrowserPage] delete failed:', err);
+        });
+    },
+    [fetchNotes],
+  );
+
+  // Backspace / Delete key to delete selected note
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const id = selectedNoteId;
+      if (!id) return;
+      const tag = (e.target as HTMLElement)?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+      if (e.key === 'Backspace' || e.key === 'Delete') {
+        e.preventDefault();
+        e.stopPropagation();
+        console.log('[BrowserPage] keyboard delete triggered for:', id);
+        handleDeleteNote(id);
+      }
+    };
+    document.addEventListener('keydown', handler, true);
+    return () => document.removeEventListener('keydown', handler, true);
+  }, [selectedNoteId, handleDeleteNote]);
+
+  // Context menu state
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; noteId: string } | null>(
+    null,
+  );
+
+  const handleContextMenu = useCallback((e: React.MouseEvent, noteId: string) => {
+    e.preventDefault();
+    setSelectedNoteId(noteId);
+    setContextMenu({ x: e.clientX, y: e.clientY, noteId });
+  }, []);
+
+  // Close context menu on any click outside
+  useEffect(() => {
+    if (!contextMenu) return;
+    const close = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (target.closest('[data-context-menu]')) return;
+      setContextMenu(null);
+    };
+    document.addEventListener('mousedown', close, true);
+    return () => document.removeEventListener('mousedown', close, true);
+  }, [contextMenu]);
+
   // Extract sort field from sortKey (e.g. 'updated_desc' -> 'updated')
   const activeSort = sortKey.startsWith('created') ? ('created' as const) : ('updated' as const);
 
@@ -184,18 +246,41 @@ export function BrowserPage() {
           <>
             <div className="px-3 py-1.5 text-xs text-muted-foreground">共 {total} 条笔记</div>
             {notes.map((note) => (
-              <NoteListItem
-                key={note.id}
-                note={note}
-                isActive={note.id === selectedNoteId}
-                onClick={() => setSelectedNoteId(note.id)}
-                onDoubleClick={() => handleOpenNote(note.id)}
-                activeSort={activeSort}
-              />
+              <div key={note.id} onContextMenu={(e) => handleContextMenu(e, note.id)}>
+                <NoteListItem
+                  note={note}
+                  isActive={note.id === selectedNoteId}
+                  onClick={() => setSelectedNoteId(note.id)}
+                  onDoubleClick={() => handleOpenNote(note.id)}
+                  activeSort={activeSort}
+                />
+              </div>
             ))}
           </>
         )}
       </ScrollArea>
+
+      {/* Context menu */}
+      {contextMenu && (
+        <div
+          data-context-menu
+          className="fixed z-50 min-w-32 rounded-md border border-border bg-popover py-1 shadow-md"
+          style={{ left: contextMenu.x, top: contextMenu.y }}
+        >
+          <button
+            type="button"
+            className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-destructive hover:bg-accent transition-colors"
+            onClick={() => {
+              const noteId = contextMenu.noteId;
+              setContextMenu(null);
+              handleDeleteNote(noteId);
+            }}
+          >
+            <Trash2 className="size-3.5" />
+            删除
+          </button>
+        </div>
+      )}
     </div>
   );
 }

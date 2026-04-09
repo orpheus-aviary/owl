@@ -72,11 +72,11 @@ async function request<T>(
   retries = 2,
 ): Promise<ApiResponse<T>> {
   const url = `${baseUrl()}${path}`;
-  const init: RequestInit = {
-    method,
-    headers: { 'Content-Type': 'application/json' },
-  };
-  if (body !== undefined) init.body = JSON.stringify(body);
+  const init: RequestInit = { method };
+  if (body !== undefined) {
+    init.headers = { 'Content-Type': 'application/json' };
+    init.body = JSON.stringify(body);
+  }
 
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
@@ -151,6 +151,9 @@ export const batchDeleteNotes = (ids: string[]) =>
 
 export const batchRestoreNotes = (ids: string[]) =>
   request<{ count: number }>('POST', '/notes/batch-restore', { ids });
+
+export const batchPermanentDeleteNotes = (ids: string[]) =>
+  request<{ count: number }>('POST', '/notes/batch-permanent-delete', { ids });
 
 // Tags
 export const listTags = (search?: string) => {

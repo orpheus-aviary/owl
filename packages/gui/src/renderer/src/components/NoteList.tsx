@@ -1,9 +1,10 @@
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import * as api from '@/lib/api';
 import { useNoteStore } from '@/stores/note-store';
 import { Plus, Search } from 'lucide-react';
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { NoteListItem } from './NoteListItem';
 
 interface NoteListProps {
@@ -14,6 +15,7 @@ interface NoteListProps {
 export function NoteList({ activeNoteId, onSelectNote }: NoteListProps) {
   const { notes, query, loading, fetchNotes, setQuery, createNote } = useNoteStore();
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
 
   useEffect(() => {
     fetchNotes();
@@ -31,6 +33,34 @@ export function NoteList({ activeNoteId, onSelectNote }: NoteListProps) {
     const note = await createNote();
     if (note) onSelectNote(note.id);
   }, [createNote, onSelectNote]);
+
+  const handleDelete = useCallback(
+    async (noteId: string) => {
+      await api.deleteNote(noteId);
+      if (selectedId === noteId) setSelectedId(null);
+      fetchNotes();
+    },
+    [selectedId, fetchNotes],
+  );
+
+  // Keyboard delete for selected note
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (!selectedId) return;
+      const tag = (e.target as HTMLElement)?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+      if (e.key === 'Backspace' || e.key === 'Delete') {
+        e.preventDefault();
+        e.stopPropagation();
+        handleDelete(selectedId);
+      }
+    };
+    document.addEventListener('keydown', handler, true);
+    return () => document.removeEventListener('keydown', handler, true);
+  }, [selectedId, handleDelete]);
+
+  // The visually active note is the one open in editor OR the selected one
+  const displayActiveId = activeNoteId ?? selectedId;
 
   return (
     <div className="flex flex-col h-full min-h-0 border-r border-border">
@@ -63,8 +93,9 @@ export function NoteList({ activeNoteId, onSelectNote }: NoteListProps) {
             <NoteListItem
               key={note.id}
               note={note}
-              isActive={note.id === activeNoteId}
-              onClick={() => onSelectNote(note.id)}
+              isActive={note.id === displayActiveId}
+              onClick={() => setSelectedId(note.id)}
+              onDoubleClick={() => onSelectNote(note.id)}
             />
           ))
         )}

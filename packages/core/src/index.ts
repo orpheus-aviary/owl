@@ -23,6 +23,7 @@ export {
   permanentDeleteNote,
   batchDeleteNotes,
   batchRestoreNotes,
+  batchPermanentDeleteNotes,
   contentHash,
 } from './notes/index.js';
 export type {

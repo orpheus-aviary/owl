@@ -1,5 +1,6 @@
 import {
   batchDeleteNotes,
+  batchPermanentDeleteNotes,
   batchRestoreNotes,
   createNote,
   deleteNote,
@@ -134,5 +135,13 @@ export function registerNoteRoutes(app: FastifyInstance, ctx: AppContext): void 
     if (!body.ids?.length) return fail(reply, 400, 'IDs required', 'MISSING_IDS');
     const count = batchRestoreNotes(ctx.db, body.ids);
     ok(reply, { count }, `${count} notes restored`);
+  });
+
+  // POST /notes/batch-permanent-delete
+  app.post('/notes/batch-permanent-delete', async (req, reply) => {
+    const body = req.body as { ids: string[] };
+    if (!body.ids?.length) return fail(reply, 400, 'IDs required', 'MISSING_IDS');
+    const count = batchPermanentDeleteNotes(ctx.db, body.ids);
+    ok(reply, { count }, `${count} notes permanently deleted`);
   });
 }
