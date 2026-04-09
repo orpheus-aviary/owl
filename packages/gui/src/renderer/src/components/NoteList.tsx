@@ -2,6 +2,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import * as api from '@/lib/api';
+import { useEditorStore } from '@/stores/editor-store';
 import { useNoteStore } from '@/stores/note-store';
 import { Plus, Search } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -37,6 +38,11 @@ export function NoteList({ activeNoteId, onSelectNote }: NoteListProps) {
   const handleDelete = useCallback(
     async (noteId: string) => {
       await api.deleteNote(noteId);
+      // Close the tab if this note is open in editor
+      const editorState = useEditorStore.getState();
+      if (editorState.tabs.some((t) => t.noteId === noteId)) {
+        editorState.closeTab(noteId);
+      }
       if (selectedId === noteId) setSelectedId(null);
       fetchNotes();
     },
@@ -58,6 +64,14 @@ export function NoteList({ activeNoteId, onSelectNote }: NoteListProps) {
     document.addEventListener('keydown', handler, true);
     return () => document.removeEventListener('keydown', handler, true);
   }, [selectedId, handleDelete]);
+
+  // Auto-scroll to the active note when tab switches
+  const listRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!activeNoteId || !listRef.current) return;
+    const el = listRef.current.querySelector(`[data-note-id="${activeNoteId}"]`);
+    if (el) el.scrollIntoView({ block: 'nearest' });
+  }, [activeNoteId]);
 
   // The visually active note is the one open in editor OR the selected one
   const displayActiveId = activeNoteId ?? selectedId;
@@ -82,23 +96,26 @@ export function NoteList({ activeNoteId, onSelectNote }: NoteListProps) {
 
       {/* List */}
       <ScrollArea className="flex-1 min-h-0">
-        {loading && notes.length === 0 ? (
-          <div className="p-4 text-center text-xs text-muted-foreground">加载中...</div>
-        ) : notes.length === 0 ? (
-          <div className="p-4 text-center text-xs text-muted-foreground">
-            {query ? '无搜索结果' : '暂无笔记'}
-          </div>
-        ) : (
-          notes.map((note) => (
-            <NoteListItem
-              key={note.id}
-              note={note}
-              isActive={note.id === displayActiveId}
-              onClick={() => setSelectedId(note.id)}
-              onDoubleClick={() => onSelectNote(note.id)}
-            />
-          ))
-        )}
+        <div ref={listRef}>
+          {loading && notes.length === 0 ? (
+            <div className="p-4 text-center text-xs text-muted-foreground">加载中...</div>
+          ) : notes.length === 0 ? (
+            <div className="p-4 text-center text-xs text-muted-foreground">
+              {query ? '无搜索结果' : '暂无笔记'}
+            </div>
+          ) : (
+            notes.map((note) => (
+              <div key={note.id} data-note-id={note.id}>
+                <NoteListItem
+                  note={note}
+                  isActive={note.id === displayActiveId}
+                  onClick={() => setSelectedId(note.id)}
+                  onDoubleClick={() => onSelectNote(note.id)}
+                />
+              </div>
+            ))
+          )}
+        </div>
       </ScrollArea>
     </div>
   );
