@@ -19,6 +19,7 @@ import {
   highlightActiveLineGutter,
   keymap,
   lineNumbers,
+  scrollPastEnd,
 } from '@codemirror/view';
 import { tags } from '@lezer/highlight';
 import { useEffect, useRef } from 'react';
@@ -206,7 +207,7 @@ export function MarkdownEditor({ value, onChange, className }: MarkdownEditorPro
     if (!containerRef.current) return;
 
     const extensions: Extension[] = [
-      lineNumbers(),
+      lineNumbers({ formatNumber: (n) => String(n).padStart(3, ' ') }),
       highlightActiveLineGutter(),
       highlightActiveLine(),
       history(),
@@ -229,6 +230,7 @@ export function MarkdownEditor({ value, onChange, className }: MarkdownEditorPro
         }
       }),
       EditorView.lineWrapping,
+      scrollPastEnd(),
     ];
 
     const state = EditorState.create({ doc: value, extensions });
