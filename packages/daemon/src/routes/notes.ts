@@ -22,6 +22,8 @@ export function registerNoteRoutes(app: FastifyInstance, ctx: AppContext): void 
       folder_id?: string;
       trash_level?: string;
       tags?: string;
+      sort_by?: string;
+      sort_order?: string;
       page?: string;
       limit?: string;
     };
@@ -31,6 +33,8 @@ export function registerNoteRoutes(app: FastifyInstance, ctx: AppContext): void 
       folderId: query.folder_id === 'null' ? null : query.folder_id,
       trashLevel: query.trash_level ? Number(query.trash_level) : 0,
       tagValues: query.tags ? query.tags.split(',') : undefined,
+      sortBy: query.sort_by === 'created' ? 'created' : 'updated',
+      sortOrder: query.sort_order === 'asc' ? 'asc' : 'desc',
       page: query.page ? Number(query.page) : 1,
       limit: query.limit ? Number(query.limit) : 20,
     });

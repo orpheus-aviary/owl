@@ -1,7 +1,201 @@
+import { NoteListItem } from '@/components/NoteListItem';
+import { TagFilterPopover } from '@/components/TagFilterPopover';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import { Input } from '@/components/ui/input';
+import { ScrollArea } from '@/components/ui/scroll-area';
+import { type SortKey, useBrowserStore } from '@/stores/browser-store';
+import { openNoteById } from '@/stores/editor-store';
+import { ArrowDownAZ, Search, X } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+
+const SORT_LABELS: Record<SortKey, string> = {
+  updated_desc: '修改时间 ↓',
+  updated_asc: '修改时间 ↑',
+  created_desc: '创建时间 ↓',
+  created_asc: '创建时间 ↑',
+};
+
 export function BrowserPage() {
+  const {
+    query,
+    activeTags,
+    sortKey,
+    notes,
+    total,
+    loading,
+    setQuery,
+    addTag,
+    removeTag,
+    setSortKey,
+    fetchNotes,
+    resetFilters,
+  } = useBrowserStore();
+
+  const navigate = useNavigate();
+  const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [searchValue, setSearchValue] = useState(query);
+
+  useEffect(() => {
+    fetchNotes();
+  }, [fetchNotes]);
+
+  // Clean up debounce on unmount
+  useEffect(() => {
+    return () => clearTimeout(debounceRef.current);
+  }, []);
+
+  // Cmd+R to reset filters
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.metaKey && e.key === 'r') {
+        e.preventDefault();
+        setSearchValue('');
+        resetFilters();
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [resetFilters]);
+
+  const handleSearch = useCallback(
+    (value: string) => {
+      setSearchValue(value);
+      clearTimeout(debounceRef.current);
+      debounceRef.current = setTimeout(() => setQuery(value), 300);
+    },
+    [setQuery],
+  );
+
+  const handleClearSearch = useCallback(() => {
+    setSearchValue('');
+    setQuery('');
+  }, [setQuery]);
+
+  const handleToggleTag = useCallback(
+    (tag: string) => {
+      const current = useBrowserStore.getState().activeTags;
+      if (current.includes(tag)) {
+        removeTag(tag);
+      } else {
+        addTag(tag);
+      }
+    },
+    [addTag, removeTag],
+  );
+
+  const [selectedNoteId, setSelectedNoteId] = useState<string | null>(null);
+
+  const handleOpenNote = useCallback(
+    (noteId: string) => {
+      openNoteById(noteId);
+      navigate('/');
+    },
+    [navigate],
+  );
+
+  // Extract sort field from sortKey (e.g. 'updated_desc' -> 'updated')
+  const activeSort = sortKey.startsWith('created') ? ('created' as const) : ('updated' as const);
+
   return (
-    <div className="flex items-center justify-center h-full">
-      <h1 className="text-2xl text-zinc-500">Browser</h1>
+    <div className="flex flex-col h-full">
+      {/* Action bar */}
+      <div className="shrink-0 p-3 border-b border-border space-y-2">
+        <div className="flex items-center gap-2">
+          {/* Search */}
+          <div className="relative flex-1">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground" />
+            <Input
+              ref={inputRef}
+              placeholder="搜索笔记..."
+              value={searchValue}
+              onChange={(e) => handleSearch(e.target.value)}
+              className="h-8 pl-8 pr-7 text-xs"
+            />
+            {searchValue && (
+              <button
+                type="button"
+                onClick={handleClearSearch}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+              >
+                <X className="size-3.5" />
+              </button>
+            )}
+          </div>
+
+          {/* Tag filter */}
+          <TagFilterPopover activeTags={activeTags} onToggleTag={handleToggleTag} />
+
+          {/* Sort */}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" size="sm" className="h-8 gap-1.5 whitespace-nowrap">
+                <ArrowDownAZ className="size-3.5" />
+                {SORT_LABELS[sortKey]}
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              {(Object.entries(SORT_LABELS) as [SortKey, string][]).map(([key, label]) => (
+                <DropdownMenuItem key={key} onClick={() => setSortKey(key)}>
+                  {label}
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+
+        {/* Active tags */}
+        {activeTags.length > 0 && (
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className="text-xs text-muted-foreground">已筛选:</span>
+            {activeTags.map((tag) => (
+              <Badge key={tag} variant="secondary" className="gap-1 text-xs px-2 py-0.5">
+                #{tag}
+                <button
+                  type="button"
+                  onClick={() => removeTag(tag)}
+                  className="hover:text-destructive"
+                >
+                  <X className="size-3" />
+                </button>
+              </Badge>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Note list */}
+      <ScrollArea className="flex-1 min-h-0">
+        {loading && notes.length === 0 ? (
+          <div className="p-8 text-center text-sm text-muted-foreground">加载中...</div>
+        ) : notes.length === 0 ? (
+          <div className="p-8 text-center text-sm text-muted-foreground">
+            {query || activeTags.length > 0 ? '无匹配结果' : '暂无笔记'}
+          </div>
+        ) : (
+          <>
+            <div className="px-3 py-1.5 text-xs text-muted-foreground">共 {total} 条笔记</div>
+            {notes.map((note) => (
+              <NoteListItem
+                key={note.id}
+                note={note}
+                isActive={note.id === selectedNoteId}
+                onClick={() => setSelectedNoteId(note.id)}
+                onDoubleClick={() => handleOpenNote(note.id)}
+                activeSort={activeSort}
+              />
+            ))}
+          </>
+        )}
+      </ScrollArea>
     </div>
   );
 }

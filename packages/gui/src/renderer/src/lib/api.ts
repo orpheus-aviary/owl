@@ -108,6 +108,8 @@ export function listNotes(params?: {
   folder_id?: string;
   trash_level?: number;
   tags?: string;
+  sort_by?: 'updated' | 'created';
+  sort_order?: 'asc' | 'desc';
   page?: number;
   limit?: number;
 }) {
@@ -116,6 +118,8 @@ export function listNotes(params?: {
   if (params?.folder_id) qs.set('folder_id', params.folder_id);
   if (params?.trash_level !== undefined) qs.set('trash_level', String(params.trash_level));
   if (params?.tags) qs.set('tags', params.tags);
+  if (params?.sort_by) qs.set('sort_by', params.sort_by);
+  if (params?.sort_order) qs.set('sort_order', params.sort_order);
   if (params?.page) qs.set('page', String(params.page));
   if (params?.limit) qs.set('limit', String(params.limit));
   const query = qs.toString();

@@ -41,6 +41,8 @@ export interface ListNotesOptions {
   folderId?: string | null;
   trashLevel?: number;
   tagValues?: string[];
+  sortBy?: 'updated' | 'created';
+  sortOrder?: 'asc' | 'desc';
   page?: number;
   limit?: number;
 }
@@ -102,7 +104,16 @@ export function listNotes(
   sqlite: Database.Database,
   options: ListNotesOptions = {},
 ): { items: NoteWithTags[]; total: number } {
-  const { q, folderId, trashLevel = 0, tagValues, page = 1, limit = 20 } = options;
+  const {
+    q,
+    folderId,
+    trashLevel = 0,
+    tagValues,
+    page = 1,
+    limit = 20,
+    sortBy = 'updated',
+    sortOrder = 'desc',
+  } = options;
   const offset = (page - 1) * limit;
 
   let matchingIds: string[] | null = null;
@@ -131,16 +142,23 @@ export function listNotes(
     if (matchingIds.length === 0) return { items: [], total: 0 };
   }
 
-  // Tag filter
+  // Tag filter (AND: notes must have ALL specified tags)
   if (tagValues?.length) {
     const tagRows = db
-      .select({ noteId: noteTags.noteId })
+      .select({ noteId: noteTags.noteId, tagValue: tags.tagValue })
       .from(noteTags)
       .innerJoin(tags, eq(noteTags.tagId, tags.id))
       .where(and(eq(tags.tagType, '#'), inArray(tags.tagValue, tagValues)))
       .all();
 
-    const tagNoteIds = [...new Set(tagRows.map((r) => r.noteId))];
+    // Group by noteId and keep only those matching ALL requested tags
+    const countByNote = new Map<string, number>();
+    for (const row of tagRows) {
+      countByNote.set(row.noteId, (countByNote.get(row.noteId) ?? 0) + 1);
+    }
+    const tagNoteIds = [...countByNote.entries()]
+      .filter(([, count]) => count >= tagValues.length)
+      .map(([noteId]) => noteId);
     if (tagNoteIds.length === 0) return { items: [], total: 0 };
 
     matchingIds = matchingIds ? matchingIds.filter((id) => tagNoteIds.includes(id)) : tagNoteIds;
@@ -168,11 +186,14 @@ export function listNotes(
   const total = countResult?.count ?? 0;
 
   // Fetch
+  const orderCol = sortBy === 'created' ? notes.createdAt : notes.updatedAt;
+  const orderDir = sortOrder === 'asc' ? sql`ASC` : sql`DESC`;
+
   const rows = db
     .select()
     .from(notes)
     .where(where)
-    .orderBy(sql`${notes.updatedAt} DESC`)
+    .orderBy(sql`${orderCol} ${orderDir}`)
     .limit(limit)
     .offset(offset)
     .all();
