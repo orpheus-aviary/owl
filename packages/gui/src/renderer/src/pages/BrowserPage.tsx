@@ -103,22 +103,15 @@ export function BrowserPage() {
     [navigate],
   );
 
-  const deleteNoteRef = useRef<string | null>(null);
-
   const handleDeleteNote = useCallback(
     (noteId: string) => {
-      console.log('[BrowserPage] deleting note:', noteId);
-      deleteNoteRef.current = noteId;
       api
         .deleteNote(noteId)
         .then(() => {
-          console.log('[BrowserPage] delete success');
           setSelectedNoteId((prev) => (prev === noteId ? null : prev));
           return fetchNotes();
         })
-        .catch((err) => {
-          console.error('[BrowserPage] delete failed:', err);
-        });
+        .catch(() => {});
     },
     [fetchNotes],
   );
@@ -128,12 +121,13 @@ export function BrowserPage() {
     const handler = (e: KeyboardEvent) => {
       const id = selectedNoteId;
       if (!id) return;
-      const tag = (e.target as HTMLElement)?.tagName;
+      const target = e.target as HTMLElement;
+      const tag = target?.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+      if (target?.closest('.cm-editor') || target?.isContentEditable) return;
       if (e.key === 'Backspace' || e.key === 'Delete') {
         e.preventDefault();
         e.stopPropagation();
-        console.log('[BrowserPage] keyboard delete triggered for:', id);
         handleDeleteNote(id);
       }
     };

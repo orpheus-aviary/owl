@@ -53,8 +53,10 @@ export function NoteList({ activeNoteId, onSelectNote }: NoteListProps) {
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (!selectedId) return;
-      const tag = (e.target as HTMLElement)?.tagName;
+      const target = e.target as HTMLElement;
+      const tag = target?.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+      if (target?.closest('.cm-editor') || target?.isContentEditable) return;
       if (e.key === 'Backspace' || e.key === 'Delete') {
         e.preventDefault();
         e.stopPropagation();

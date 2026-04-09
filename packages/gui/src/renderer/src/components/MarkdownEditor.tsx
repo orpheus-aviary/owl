@@ -26,6 +26,7 @@ import { useEffect, useRef } from 'react';
 // ─── Syntax highlight style (dark) ──────────────────────
 
 const owlHighlightStyle = HighlightStyle.define([
+  // Markdown structure
   { tag: tags.heading1, color: '#e2e8f0', fontWeight: 'bold', fontSize: '1.4em' },
   { tag: tags.heading2, color: '#e2e8f0', fontWeight: 'bold', fontSize: '1.2em' },
   { tag: tags.heading3, color: '#e2e8f0', fontWeight: 'bold', fontSize: '1.1em' },
@@ -35,22 +36,35 @@ const owlHighlightStyle = HighlightStyle.define([
   { tag: tags.strikethrough, textDecoration: 'line-through', color: '#94a3b8' },
   { tag: tags.link, color: '#60a5fa', textDecoration: 'underline' },
   { tag: tags.url, color: '#60a5fa' },
-  { tag: [tags.processingInstruction, tags.monospace], color: '#a78bfa' },
   { tag: tags.content, color: '#e2e8f0' },
-  { tag: tags.meta, color: '#64748b' },
   { tag: tags.quote, color: '#94a3b8', fontStyle: 'italic' },
+  // Markdown markers: - * 1. > # ``` etc
   { tag: tags.list, color: '#f59e0b' },
-  // Code
+  { tag: tags.meta, color: '#64748b' },
+  { tag: [tags.processingInstruction, tags.monospace], color: '#a78bfa' },
+  // Code block tokens (both language-specific and plain fenced blocks)
   { tag: tags.keyword, color: '#c084fc' },
   { tag: tags.string, color: '#86efac' },
   { tag: tags.number, color: '#fbbf24' },
   { tag: tags.comment, color: '#64748b', fontStyle: 'italic' },
   { tag: tags.variableName, color: '#67e8f9' },
   { tag: tags.function(tags.variableName), color: '#60a5fa' },
+  { tag: tags.definition(tags.variableName), color: '#67e8f9' },
+  { tag: tags.propertyName, color: '#67e8f9' },
   { tag: tags.typeName, color: '#fca5a5' },
+  { tag: tags.className, color: '#fca5a5' },
   { tag: tags.operator, color: '#94a3b8' },
+  { tag: tags.punctuation, color: '#94a3b8' },
+  { tag: tags.bracket, color: '#94a3b8' },
   { tag: tags.bool, color: '#fbbf24' },
   { tag: tags.null, color: '#94a3b8' },
+  { tag: tags.atom, color: '#fbbf24' },
+  { tag: tags.labelName, color: '#fca5a5' },
+  { tag: tags.attributeName, color: '#67e8f9' },
+  { tag: tags.attributeValue, color: '#86efac' },
+  { tag: tags.regexp, color: '#f59e0b' },
+  { tag: tags.escape, color: '#f59e0b' },
+  { tag: tags.self, color: '#c084fc' },
 ]);
 
 // ─── Dark theme (editor chrome) ─────────────────────────
