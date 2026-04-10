@@ -46,3 +46,16 @@ export type { ParsedTag, TagType } from './tags/parser.js';
 // Search
 export { searchNotes, searchNotesWithDetails } from './search/index.js';
 export type { SearchResult } from './search/index.js';
+
+// Reminders
+export {
+  syncReminders,
+  getPendingReminders,
+  getOverdueReminders,
+  getNextPendingReminder,
+  markFired,
+  getNoteTitle,
+  normalizeFireAt,
+  cleanupExpiredTrash,
+} from './reminders/index.js';
+export type { ReminderRecord } from './reminders/index.js';
