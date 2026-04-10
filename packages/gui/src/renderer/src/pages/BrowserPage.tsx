@@ -11,6 +11,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import * as api from '@/lib/api';
+import type { NoteTag } from '@/lib/api';
 import { type SortKey, useBrowserStore } from '@/stores/browser-store';
 import { openNoteById } from '@/stores/editor-store';
 import { ArrowDownAZ, Search, Trash2, X } from 'lucide-react';
@@ -114,6 +115,15 @@ export function BrowserPage() {
         .catch(() => {});
     },
     [fetchNotes],
+  );
+
+  const handleEditTag = useCallback(
+    (noteId: string, tag: NoteTag, newValue: string) => {
+      const note = notes.find((n) => n.id === noteId);
+      if (!note) return;
+      api.editTagOnNote(note, tag.id, newValue).then(() => fetchNotes()).catch(() => {});
+    },
+    [notes, fetchNotes],
   );
 
   // Backspace / Delete key to delete selected note
@@ -247,6 +257,7 @@ export function BrowserPage() {
                   onClick={() => setSelectedNoteId(note.id)}
                   onDoubleClick={() => handleOpenNote(note.id)}
                   activeSort={activeSort}
+                  onEditTag={(tag, newValue) => handleEditTag(note.id, tag, newValue)}
                 />
               </div>
             ))}

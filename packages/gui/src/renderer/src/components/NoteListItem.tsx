@@ -1,6 +1,8 @@
 import { Badge } from '@/components/ui/badge';
-import type { Note } from '@/lib/api';
+import type { Note, NoteTag } from '@/lib/api';
 import { cn } from '@/lib/utils';
+import { formatTagLabel, tagIcon } from './TagChip';
+import { TimeTagEditPopover } from './TimeTagEditPopover';
 
 const MAX_VISIBLE_TAGS = 5;
 
@@ -42,6 +44,34 @@ function formatTime(dateStr: string): string {
   return `${mm}-${dd} ${hh}:${min}`;
 }
 
+/** Check if a tag is a time-editable type */
+function isTimeTag(tag: NoteTag): boolean {
+  return tag.tagType === '/time' || tag.tagType === '/alarm';
+}
+
+/** Render a single tag chip — time tags are clickable if onEditTag provided */
+function TagDisplay({
+  tag,
+  onEditTag,
+}: {
+  tag: NoteTag;
+  onEditTag?: (tag: NoteTag, newValue: string) => void;
+}) {
+  if (isTimeTag(tag) && onEditTag) {
+    return <TimeTagEditPopover tag={tag} onConfirm={onEditTag} />;
+  }
+
+  const icon = tagIcon(tag.tagType);
+  const label = formatTagLabel(tag);
+
+  return (
+    <Badge variant="secondary" className="gap-1 text-[10px] px-1.5 py-0 shrink-0">
+      {icon}
+      {label}
+    </Badge>
+  );
+}
+
 interface NoteListItemProps {
   note: Note;
   isActive: boolean;
@@ -49,6 +79,8 @@ interface NoteListItemProps {
   onDoubleClick?: () => void;
   /** Which sort field is active, used to highlight the relevant timestamp */
   activeSort?: 'updated' | 'created';
+  /** Called when a /time or /alarm tag is edited via date picker */
+  onEditTag?: (tag: NoteTag, newValue: string) => void;
 }
 
 export function NoteListItem({
@@ -57,12 +89,12 @@ export function NoteListItem({
   onClick,
   onDoubleClick,
   activeSort,
+  onEditTag,
 }: NoteListItemProps) {
   const title = extractTitle(note.content);
   const preview = extractPreview(note.content);
-  const hashtags = note.tags.filter((t) => t.tagType === '#');
-  const visible = hashtags.slice(0, MAX_VISIBLE_TAGS);
-  const overflow = hashtags.length - MAX_VISIBLE_TAGS;
+  const visible = note.tags.slice(0, MAX_VISIBLE_TAGS);
+  const overflow = note.tags.length - MAX_VISIBLE_TAGS;
 
   return (
     <button
@@ -83,9 +115,7 @@ export function NoteListItem({
           </div>
           <div className="flex gap-1 mt-1 min-h-[18px] flex-wrap">
             {visible.map((tag) => (
-              <Badge key={tag.id} variant="secondary" className="text-[10px] px-1.5 py-0 shrink-0">
-                #{tag.tagValue}
-              </Badge>
+              <TagDisplay key={tag.id} tag={tag} onEditTag={onEditTag} />
             ))}
             {overflow > 0 && (
               <Badge variant="outline" className="text-[10px] px-1 py-0 shrink-0">

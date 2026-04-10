@@ -181,3 +181,22 @@ export const listUpcomingReminders = (withinMinutes?: number) => {
 };
 
 export const listAlarmNotes = () => request<Note[]>('GET', '/reminders/alarms');
+
+// Tag editing helpers
+
+/** Serialize a note's tags array back to raw tag strings for API submission. */
+export function tagsToStrings(tags: NoteTag[]): string[] {
+  return tags.map((t) => {
+    if (t.tagType === '#') return `#${t.tagValue}`;
+    if (t.tagValue) return `${t.tagType} ${t.tagValue}`;
+    return t.tagType;
+  });
+}
+
+/** Update a single tag's value on a note (replaces the tag, keeps all others). */
+export async function editTagOnNote(note: Note, tagId: string, newValue: string): Promise<void> {
+  const updatedTags = note.tags.map((t) =>
+    t.id === tagId ? { ...t, tagValue: newValue } : t,
+  );
+  await updateNote(note.id, { content: note.content, tags: tagsToStrings(updatedTags) });
+}

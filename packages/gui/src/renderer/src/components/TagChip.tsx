@@ -2,7 +2,7 @@ import { Badge } from '@/components/ui/badge';
 import type { NoteTag } from '@/lib/api';
 import { Bell, Clock, Repeat, X } from 'lucide-react';
 
-function formatTagLabel(tag: NoteTag): string {
+export function formatTagLabel(tag: NoteTag): string {
   switch (tag.tagType) {
     case '#':
       return `#${tag.tagValue}`;
@@ -42,7 +42,7 @@ const ICON_COLORS: Record<string, string> = {
   '/yearly': 'text-green-400',
 };
 
-function tagIcon(tagType: string) {
+export function tagIcon(tagType: string) {
   const color = ICON_COLORS[tagType] ?? '';
   switch (tagType) {
     case '/time':
