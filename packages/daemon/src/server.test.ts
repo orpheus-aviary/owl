@@ -252,9 +252,10 @@ describe('daemon API', () => {
       assert.equal(res.statusCode, 201);
       const id = res.json().data.id;
 
-      const rows = sqlite
-        .prepare('SELECT * FROM reminder_status WHERE note_id = ?')
-        .all(id) as { note_id: string; status: string }[];
+      const rows = sqlite.prepare('SELECT * FROM reminder_status WHERE note_id = ?').all(id) as {
+        note_id: string;
+        status: string;
+      }[];
       assert.equal(rows.length, 1);
       assert.equal(rows[0].status, 'pending');
     });
@@ -298,9 +299,7 @@ describe('daemon API', () => {
       const id = r1.json().data.id;
 
       // Verify reminder exists
-      const before = sqlite
-        .prepare('SELECT * FROM reminder_status WHERE note_id = ?')
-        .all(id);
+      const before = sqlite.prepare('SELECT * FROM reminder_status WHERE note_id = ?').all(id);
       assert.equal(before.length, 1);
 
       // Update with no tags
@@ -310,9 +309,7 @@ describe('daemon API', () => {
         payload: { content: 'Alarm remove test', tags: [] },
       });
 
-      const after = sqlite
-        .prepare('SELECT * FROM reminder_status WHERE note_id = ?')
-        .all(id);
+      const after = sqlite.prepare('SELECT * FROM reminder_status WHERE note_id = ?').all(id);
       assert.equal(after.length, 0);
     });
 
@@ -326,9 +323,7 @@ describe('daemon API', () => {
       const id = r1.json().data.id;
 
       // Verify reminder exists
-      const before = sqlite
-        .prepare('SELECT * FROM reminder_status WHERE note_id = ?')
-        .all(id);
+      const before = sqlite.prepare('SELECT * FROM reminder_status WHERE note_id = ?').all(id);
       assert.equal(before.length, 1);
 
       // Permanent delete
@@ -337,9 +332,7 @@ describe('daemon API', () => {
         url: `/notes/${id}/permanent-delete`,
       });
 
-      const after = sqlite
-        .prepare('SELECT * FROM reminder_status WHERE note_id = ?')
-        .all(id);
+      const after = sqlite.prepare('SELECT * FROM reminder_status WHERE note_id = ?').all(id);
       assert.equal(after.length, 0);
     });
   });

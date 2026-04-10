@@ -1,5 +1,5 @@
-import notifier from 'node-notifier';
 import type { Logger } from '@owl/core';
+import notifier from 'node-notifier';
 
 export interface NotifyOptions {
   title: string;
