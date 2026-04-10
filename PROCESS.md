@@ -1,6 +1,6 @@
 # 开发进度
 
-## 当前状态：P1 实施中（P1-0 ~ P1-9 完成）
+## 当前状态：P1 实施中（P1-0 ~ P1-10 完成）
 
 ### 已完成
 
@@ -33,11 +33,12 @@
 | 补充 | 统一标签排序（#拼音→/alarm→/time→频率） | `47ccf9d` |
 | 补充 | 多频率同时生效+频率排序修复 | `f04979b` |
 | 补充 | 代码简化：提取TagDisplay/date-format/useMemo优化 | `03eb7c8` |
+| P1-10 | reminder_status 表 + daemon 提醒调度器 + 系统通知 | `e28c27b`~`948b24b` |
 
-- 测试：69 个全部通过（core 53 + daemon 16）
+- 测试：81 个全部通过（core 61 + daemon 20）
 - Lint + Typecheck：零错误（7 个 pre-existing warnings）
 
-### 下一步：P1-10（reminder_status 表 + daemon 提醒调度器 + 系统通知）
+### 下一步：P2 规划
 
 P1 目标：完整的笔记管理 GUI，解决 Go 版所有渲染问题。
 
@@ -70,7 +71,7 @@ P1 commit 分解（12 步）：
 ### 实施阶段总览
 
 ```
-P0 ✅ → P1（P1-0~P1-9 ✅，P1-10 下一步） → P2（待办+设置+文件夹+AI+分屏拖拽） → P3（CLI+外部调用） → P4（Migration）
+P0 ✅ → P1 ✅ → P2（待办+设置+文件夹+AI+分屏拖拽） → P3（CLI+外部调用） → P4（Migration）
 ```
 
 **P2 范围预览：**
