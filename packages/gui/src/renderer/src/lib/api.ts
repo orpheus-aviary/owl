@@ -179,3 +179,5 @@ export const listUpcomingReminders = (withinMinutes?: number) => {
   const qs = withinMinutes ? `?within_minutes=${withinMinutes}` : '';
   return request<Note[]>('GET', `/reminders/upcoming${qs}`);
 };
+
+export const listAlarmNotes = () => request<Note[]>('GET', '/reminders/alarms');
