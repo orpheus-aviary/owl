@@ -90,6 +90,15 @@ const DDL = `
     key    TEXT PRIMARY KEY,
     value  TEXT
   );
+
+  CREATE TABLE IF NOT EXISTS reminder_status (
+    note_id   TEXT NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+    tag_id    TEXT NOT NULL REFERENCES tags(id),
+    fire_at   INTEGER NOT NULL,
+    status    TEXT NOT NULL DEFAULT 'pending',
+    fired_at  INTEGER,
+    PRIMARY KEY (note_id, tag_id)
+  );
 `;
 
 export { schema };

@@ -62,3 +62,21 @@ export const localMetadata = sqliteTable('local_metadata', {
   key: text('key').primaryKey(),
   value: text('value'),
 });
+
+// ─── Reminder Status (alarm scheduling persistence) ───
+
+export const reminderStatus = sqliteTable(
+  'reminder_status',
+  {
+    noteId: text('note_id')
+      .notNull()
+      .references(() => notes.id, { onDelete: 'cascade' }),
+    tagId: text('tag_id')
+      .notNull()
+      .references(() => tags.id),
+    fireAt: integer('fire_at', { mode: 'number' }).notNull(),
+    status: text('status').notNull().default('pending'),
+    firedAt: integer('fired_at', { mode: 'number' }),
+  },
+  (table) => [primaryKey({ columns: [table.noteId, table.tagId] })],
+);
