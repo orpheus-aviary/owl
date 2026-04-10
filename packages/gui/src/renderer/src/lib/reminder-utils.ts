@@ -27,7 +27,9 @@ export function getNextOccurrence(
     return alarmTime > now ? alarmTime : null;
   }
   const next = new Date(alarmTime);
-  while (next <= now) {
+  let safety = 0;
+  while (next <= now && safety < 10000) {
+    safety++;
     switch (frequency) {
       case '/daily':
         next.setDate(next.getDate() + 1);
@@ -43,7 +45,7 @@ export function getNextOccurrence(
         break;
     }
   }
-  return next;
+  return safety >= 10000 ? null : next;
 }
 
 export interface NearestAlarm {
