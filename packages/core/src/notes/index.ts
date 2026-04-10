@@ -211,6 +211,34 @@ export function listNotes(
   return { items, total };
 }
 
+/** Return all non-trashed notes that have at least one /alarm tag, with full tags attached. */
+export function listAlarmNotes(db: OwlDatabase, _sqlite: Database.Database): NoteWithTags[] {
+  const alarmNoteIds = db
+    .select({ noteId: noteTags.noteId })
+    .from(noteTags)
+    .innerJoin(tags, eq(noteTags.tagId, tags.id))
+    .innerJoin(notes, eq(noteTags.noteId, notes.id))
+    .where(and(eq(tags.tagType, '/alarm'), eq(notes.trashLevel, 0)))
+    .all()
+    .map((r) => r.noteId);
+
+  if (alarmNoteIds.length === 0) return [];
+
+  const uniqueIds = [...new Set(alarmNoteIds)];
+
+  const rows = db.select().from(notes).where(inArray(notes.id, uniqueIds)).all();
+
+  return rows.map((note) => {
+    const noteTags_ = db
+      .select({ id: tags.id, tagType: tags.tagType, tagValue: tags.tagValue })
+      .from(noteTags)
+      .innerJoin(tags, eq(noteTags.tagId, tags.id))
+      .where(eq(noteTags.noteId, note.id))
+      .all();
+    return { ...note, tags: noteTags_ };
+  });
+}
+
 export function updateNote(
   db: OwlDatabase,
   sqlite: Database.Database,

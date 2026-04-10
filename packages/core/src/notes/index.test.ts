@@ -10,6 +10,7 @@ import {
   createNote,
   deleteNote,
   getNote,
+  listAlarmNotes,
   listNotes,
   permanentDeleteNote,
   restoreNote,
@@ -139,6 +140,68 @@ describe('notes CRUD', () => {
     batchDeleteNotes(db, [n1.id, n2.id]);
     const count = batchRestoreNotes(db, [n1.id, n2.id]);
     assert.equal(count, 2);
+  });
+});
+
+describe('listAlarmNotes', () => {
+  let db: OwlDatabase;
+  let sqlite: Database.Database;
+
+  before(() => {
+    const result = createDatabase({ dbPath: ':memory:' });
+    db = result.db;
+    sqlite = result.sqlite;
+  });
+
+  after(() => {
+    sqlite.close();
+  });
+
+  it('returns notes with /alarm tags including all tags', () => {
+    const noteWithAlarm = createNote(db, sqlite, {
+      content: '# Alarm note',
+      tags: [
+        { tagType: '#', tagValue: '工作' },
+        { tagType: '/alarm', tagValue: '2026-05-01T10:00:00' },
+      ],
+    });
+    createNote(db, sqlite, {
+      content: '# Normal note',
+      tags: [{ tagType: '#', tagValue: '学习' }],
+    });
+
+    const result = listAlarmNotes(db, sqlite);
+    assert.equal(result.length, 1);
+    assert.equal(result[0].id, noteWithAlarm.id);
+    assert.equal(result[0].tags.length, 2);
+  });
+
+  it('excludes trashed notes', () => {
+    const note = createNote(db, sqlite, {
+      content: '# Trashed alarm',
+      tags: [{ tagType: '/alarm', tagValue: '2026-05-01T10:00:00' }],
+    });
+    deleteNote(db, note.id);
+
+    const result = listAlarmNotes(db, sqlite);
+    // Only the alarm note from the first test should remain
+    assert.ok(result.every((n) => n.id !== note.id));
+  });
+
+  it('returns notes with multiple /alarm tags', () => {
+    const note = createNote(db, sqlite, {
+      content: '# Multi alarm',
+      tags: [
+        { tagType: '/alarm', tagValue: '2026-05-01T10:00:00' },
+        { tagType: '/alarm', tagValue: '2026-06-01T10:00:00' },
+        { tagType: '/weekly', tagValue: '' },
+      ],
+    });
+
+    const result = listAlarmNotes(db, sqlite);
+    const multiAlarm = result.find((n) => n.id === note.id);
+    assert.ok(multiAlarm);
+    assert.equal(multiAlarm.tags.length, 3);
   });
 });
 

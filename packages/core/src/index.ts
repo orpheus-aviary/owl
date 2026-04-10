@@ -17,6 +17,7 @@ export {
   createNote,
   getNote,
   listNotes,
+  listAlarmNotes,
   updateNote,
   deleteNote,
   restoreNote,
