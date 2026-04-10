@@ -12,6 +12,7 @@ import {
   filterAndSortReminders,
   getFrequencyLabel,
 } from '@/lib/reminder-utils';
+import { sortTags } from '@/lib/tag-sort';
 import { openNoteById } from '@/stores/editor-store';
 import { useReminderStore } from '@/stores/reminder-store';
 import { Bell } from 'lucide-react';
@@ -79,7 +80,7 @@ function ReminderRow({
           <div className="text-sm font-medium truncate">{title}</div>
         </button>
         <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
-          {note.tags.map((tag) => (
+          {sortTags(note.tags).map((tag) => (
             <TagDisplay key={tag.id} tag={tag} onEditTag={onEditTag} />
           ))}
         </div>

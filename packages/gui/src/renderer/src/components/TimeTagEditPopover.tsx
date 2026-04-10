@@ -49,7 +49,10 @@ export function TimeTagEditPopover({ tag, onConfirm }: TimeTagEditPopoverProps) 
     <Popover open={open} onOpenChange={handleOpen}>
       <PopoverTrigger asChild>
         <button type="button" className="cursor-pointer">
-          <Badge variant="secondary" className="gap-1 text-[10px] px-1.5 py-0 shrink-0 hover:bg-accent">
+          <Badge
+            variant="secondary"
+            className="gap-1 text-[10px] px-1.5 py-0 shrink-0 hover:bg-accent"
+          >
             {icon}
             {label}
           </Badge>

@@ -1,5 +1,6 @@
 import { Badge } from '@/components/ui/badge';
 import type { Note, NoteTag } from '@/lib/api';
+import { sortTags } from '@/lib/tag-sort';
 import { cn } from '@/lib/utils';
 import { formatTagLabel, tagIcon } from './TagChip';
 import { TimeTagEditPopover } from './TimeTagEditPopover';
@@ -93,8 +94,9 @@ export function NoteListItem({
 }: NoteListItemProps) {
   const title = extractTitle(note.content);
   const preview = extractPreview(note.content);
-  const visible = note.tags.slice(0, MAX_VISIBLE_TAGS);
-  const overflow = note.tags.length - MAX_VISIBLE_TAGS;
+  const sorted = sortTags(note.tags);
+  const visible = sorted.slice(0, MAX_VISIBLE_TAGS);
+  const overflow = sorted.length - MAX_VISIBLE_TAGS;
 
   return (
     <button

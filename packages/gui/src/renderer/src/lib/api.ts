@@ -195,8 +195,6 @@ export function tagsToStrings(tags: NoteTag[]): string[] {
 
 /** Update a single tag's value on a note (replaces the tag, keeps all others). */
 export async function editTagOnNote(note: Note, tagId: string, newValue: string): Promise<void> {
-  const updatedTags = note.tags.map((t) =>
-    t.id === tagId ? { ...t, tagValue: newValue } : t,
-  );
+  const updatedTags = note.tags.map((t) => (t.id === tagId ? { ...t, tagValue: newValue } : t));
   await updateNote(note.id, { content: note.content, tags: tagsToStrings(updatedTags) });
 }

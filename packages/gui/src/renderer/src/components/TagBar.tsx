@@ -5,6 +5,7 @@ import { TagChip } from '@/components/TagChip';
 import { Input } from '@/components/ui/input';
 import type { NoteTag, Tag } from '@/lib/api';
 import * as api from '@/lib/api';
+import { sortTags } from '@/lib/tag-sort';
 
 const FREQUENCY_OPTIONS = [
   { type: '/time', label: '/time (过期时间)', needsPicker: true },
@@ -14,16 +15,6 @@ const FREQUENCY_OPTIONS = [
   { type: '/monthly', label: '/monthly (每月)', needsPicker: false },
   { type: '/yearly', label: '/yearly (每年)', needsPicker: false },
 ] as const;
-
-const TAG_TYPE_ORDER: Record<string, number> = {
-  '/time': 0,
-  '/alarm': 1,
-  '/daily': 2,
-  '/weekly': 2,
-  '/monthly': 2,
-  '/yearly': 2,
-  '#': 3,
-};
 
 type TimeTagType = '/time' | '/alarm';
 
@@ -46,14 +37,6 @@ function normalizeHashtagInput(raw: string): string {
   const trimmed = raw.trim();
   if (trimmed.startsWith('#')) return trimmed.slice(1);
   return trimmed;
-}
-
-function sortTags(tags: NoteTag[]): NoteTag[] {
-  return [...tags].sort((a, b) => {
-    const oa = TAG_TYPE_ORDER[a.tagType] ?? 9;
-    const ob = TAG_TYPE_ORDER[b.tagType] ?? 9;
-    return oa - ob;
-  });
 }
 
 function parseDateTimeHint(input: string): { date?: Date; time?: string } {

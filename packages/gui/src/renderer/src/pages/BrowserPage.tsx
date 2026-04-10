@@ -121,7 +121,10 @@ export function BrowserPage() {
     (noteId: string, tag: NoteTag, newValue: string) => {
       const note = notes.find((n) => n.id === noteId);
       if (!note) return;
-      api.editTagOnNote(note, tag.id, newValue).then(() => fetchNotes()).catch(() => {});
+      api
+        .editTagOnNote(note, tag.id, newValue)
+        .then(() => fetchNotes())
+        .catch(() => {});
     },
     [notes, fetchNotes],
   );
