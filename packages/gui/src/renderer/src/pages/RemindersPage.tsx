@@ -1,11 +1,10 @@
 import { extractTitle } from '@/components/NoteListItem';
-import { formatTagLabel, tagIcon } from '@/components/TagChip';
-import { TimeTagEditPopover } from '@/components/TimeTagEditPopover';
-import { Badge } from '@/components/ui/badge';
+import { TagDisplay } from '@/components/TagDisplay';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import * as api from '@/lib/api';
 import type { Note, NoteTag } from '@/lib/api';
+import { formatDateCompact } from '@/lib/date-format';
 import { type NearestAlarm, type TimeRange, filterAndSortReminders } from '@/lib/reminder-utils';
 import { sortTags } from '@/lib/tag-sort';
 import { openNoteById } from '@/stores/editor-store';
@@ -23,37 +22,6 @@ const TIME_RANGES: { key: TimeRange; label: string }[] = [
   { key: 'all', label: '全部' },
 ];
 
-function formatAlarmTime(date: Date): string {
-  const mm = String(date.getMonth() + 1).padStart(2, '0');
-  const dd = String(date.getDate()).padStart(2, '0');
-  const hh = String(date.getHours()).padStart(2, '0');
-  const min = String(date.getMinutes()).padStart(2, '0');
-  return `${mm}-${dd} ${hh}:${min}`;
-}
-
-/** Render a single tag chip — time tags as editable popovers, others as plain badges */
-function TagDisplay({
-  tag,
-  onEditTag,
-}: {
-  tag: NoteTag;
-  onEditTag: (tag: NoteTag, newValue: string) => void;
-}) {
-  const isTime = tag.tagType === '/time' || tag.tagType === '/alarm';
-  if (isTime) {
-    return <TimeTagEditPopover tag={tag} onConfirm={onEditTag} />;
-  }
-
-  const icon = tagIcon(tag.tagType);
-  const label = formatTagLabel(tag);
-  return (
-    <Badge variant="secondary" className="gap-1 text-[10px] px-1.5 py-0 shrink-0">
-      {icon}
-      {label}
-    </Badge>
-  );
-}
-
 function ReminderRow({
   note,
   nearest,
@@ -66,25 +34,24 @@ function ReminderRow({
   onEditTag: (tag: NoteTag, newValue: string) => void;
 }) {
   const title = extractTitle(note.content);
+  const sorted = useMemo(() => sortTags(note.tags), [note.tags]);
 
   return (
     <div className="flex items-center px-3 py-2.5 border-b border-border hover:bg-accent/50 transition-colors">
-      {/* Left: clickable note info + all tags */}
       <div className="flex-1 min-w-0">
         <button type="button" className="w-full text-left" onClick={onOpen}>
           <div className="text-sm font-medium truncate">{title}</div>
         </button>
         <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
-          {sortTags(note.tags).map((tag) => (
+          {sorted.map((tag) => (
             <TagDisplay key={tag.id} tag={tag} onEditTag={onEditTag} />
           ))}
         </div>
       </div>
 
-      {/* Right: nearest alarm time (prominent, vertically centered) */}
       <div className="shrink-0 flex items-center gap-1.5 pl-3 text-sm font-medium text-orange-400">
         <Bell className="size-4" />
-        <span>{formatAlarmTime(nearest.time)}</span>
+        <span>{formatDateCompact(nearest.time)}</span>
       </div>
     </div>
   );
@@ -121,7 +88,6 @@ export function RemindersPage() {
 
   return (
     <div className="flex flex-col h-full">
-      {/* Header: time range buttons */}
       <div className="shrink-0 p-3 border-b border-border">
         <div className="flex items-center gap-2">
           <div className="flex gap-1">
@@ -141,7 +107,6 @@ export function RemindersPage() {
         </div>
       </div>
 
-      {/* Reminder list */}
       <ScrollArea className="flex-1 min-h-0">
         {loading && notes.length === 0 ? (
           <div className="p-8 text-center text-sm text-muted-foreground">加载中...</div>

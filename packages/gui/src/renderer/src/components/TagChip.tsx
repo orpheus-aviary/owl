@@ -1,5 +1,6 @@
 import { Badge } from '@/components/ui/badge';
 import type { NoteTag } from '@/lib/api';
+import { formatDateCompact } from '@/lib/date-format';
 import { Bell, Clock, Repeat, X } from 'lucide-react';
 
 export function formatTagLabel(tag: NoteTag): string {
@@ -11,13 +12,7 @@ export function formatTagLabel(tag: NoteTag): string {
       if (!tag.tagValue) return tag.tagType;
       const d = new Date(tag.tagValue);
       if (Number.isNaN(d.getTime())) return tag.tagValue;
-      const yyyy = d.getFullYear();
-      const mm = String(d.getMonth() + 1).padStart(2, '0');
-      const dd = String(d.getDate()).padStart(2, '0');
-      const hh = String(d.getHours()).padStart(2, '0');
-      const min = String(d.getMinutes()).padStart(2, '0');
-      const yearPrefix = yyyy !== new Date().getFullYear() ? `${yyyy}-` : '';
-      return `${yearPrefix}${mm}-${dd} ${hh}:${min}`;
+      return formatDateCompact(d, true);
     }
     case '/daily':
       return '每日';

@@ -3,6 +3,7 @@ import { Calendar } from '@/components/ui/calendar';
 import { Input } from '@/components/ui/input';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import type { NoteTag } from '@/lib/api';
+import { formatDateISO } from '@/lib/date-format';
 import { useState } from 'react';
 import { formatTagLabel, tagIcon } from './TagChip';
 import { Badge } from './ui/badge';
@@ -12,23 +13,22 @@ interface TimeTagEditPopoverProps {
   onConfirm: (tag: NoteTag, newValue: string) => void;
 }
 
+function parseTime(d: Date): string {
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+
 export function TimeTagEditPopover({ tag, onConfirm }: TimeTagEditPopoverProps) {
   const [open, setOpen] = useState(false);
   const initial = tag.tagValue ? new Date(tag.tagValue) : new Date();
   const [date, setDate] = useState<Date>(initial);
-  const [time, setTime] = useState(
-    `${String(initial.getHours()).padStart(2, '0')}:${String(initial.getMinutes()).padStart(2, '0')}`,
-  );
+  const [time, setTime] = useState(parseTime(initial));
 
   const handleOpen = (isOpen: boolean) => {
     setOpen(isOpen);
     if (isOpen) {
-      // Reset to current tag value when opening
       const d = tag.tagValue ? new Date(tag.tagValue) : new Date();
       setDate(d);
-      setTime(
-        `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`,
-      );
+      setTime(parseTime(d));
     }
   };
 
@@ -36,9 +36,7 @@ export function TimeTagEditPopover({ tag, onConfirm }: TimeTagEditPopoverProps) 
     const [hh, mm] = time.split(':').map(Number);
     const result = new Date(date);
     result.setHours(hh, mm, 0, 0);
-    const pad = (n: number, w = 2) => n.toString().padStart(w, '0');
-    const iso = `${pad(result.getFullYear(), 4)}-${pad(result.getMonth() + 1)}-${pad(result.getDate())}T${pad(result.getHours())}:${pad(result.getMinutes())}:00`;
-    onConfirm(tag, iso);
+    onConfirm(tag, formatDateISO(result));
     setOpen(false);
   };
 

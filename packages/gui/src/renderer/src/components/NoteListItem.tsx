@@ -1,9 +1,10 @@
 import { Badge } from '@/components/ui/badge';
 import type { Note, NoteTag } from '@/lib/api';
+import { formatDateCompact } from '@/lib/date-format';
 import { sortTags } from '@/lib/tag-sort';
 import { cn } from '@/lib/utils';
-import { formatTagLabel, tagIcon } from './TagChip';
-import { TimeTagEditPopover } from './TimeTagEditPopover';
+import { useMemo } from 'react';
+import { TagDisplay } from './TagDisplay';
 
 const MAX_VISIBLE_TAGS = 5;
 
@@ -28,49 +29,10 @@ export function extractPreview(content: string): string {
       pastTitle = true;
       continue;
     }
-    // Skip markdown headings in preview
     if (trimmed.startsWith('#')) continue;
     return trimmed.length > 80 ? `${trimmed.slice(0, 80)}…` : trimmed;
   }
   return '';
-}
-
-/** Format date to MM-DD HH:mm */
-function formatTime(dateStr: string): string {
-  const d = new Date(dateStr);
-  const mm = String(d.getMonth() + 1).padStart(2, '0');
-  const dd = String(d.getDate()).padStart(2, '0');
-  const hh = String(d.getHours()).padStart(2, '0');
-  const min = String(d.getMinutes()).padStart(2, '0');
-  return `${mm}-${dd} ${hh}:${min}`;
-}
-
-/** Check if a tag is a time-editable type */
-function isTimeTag(tag: NoteTag): boolean {
-  return tag.tagType === '/time' || tag.tagType === '/alarm';
-}
-
-/** Render a single tag chip — time tags are clickable if onEditTag provided */
-function TagDisplay({
-  tag,
-  onEditTag,
-}: {
-  tag: NoteTag;
-  onEditTag?: (tag: NoteTag, newValue: string) => void;
-}) {
-  if (isTimeTag(tag) && onEditTag) {
-    return <TimeTagEditPopover tag={tag} onConfirm={onEditTag} />;
-  }
-
-  const icon = tagIcon(tag.tagType);
-  const label = formatTagLabel(tag);
-
-  return (
-    <Badge variant="secondary" className="gap-1 text-[10px] px-1.5 py-0 shrink-0">
-      {icon}
-      {label}
-    </Badge>
-  );
 }
 
 interface NoteListItemProps {
@@ -78,9 +40,7 @@ interface NoteListItemProps {
   isActive: boolean;
   onClick: () => void;
   onDoubleClick?: () => void;
-  /** Which sort field is active, used to highlight the relevant timestamp */
   activeSort?: 'updated' | 'created';
-  /** Called when a /time or /alarm tag is edited via date picker */
   onEditTag?: (tag: NoteTag, newValue: string) => void;
 }
 
@@ -94,7 +54,7 @@ export function NoteListItem({
 }: NoteListItemProps) {
   const title = extractTitle(note.content);
   const preview = extractPreview(note.content);
-  const sorted = sortTags(note.tags);
+  const sorted = useMemo(() => sortTags(note.tags), [note.tags]);
   const visible = sorted.slice(0, MAX_VISIBLE_TAGS);
   const overflow = sorted.length - MAX_VISIBLE_TAGS;
 
@@ -132,7 +92,7 @@ export function NoteListItem({
               activeSort === 'created' ? 'text-foreground font-bold' : 'text-muted-foreground',
             )}
           >
-            创建 {formatTime(note.createdAt)}
+            创建 {formatDateCompact(new Date(note.createdAt))}
           </div>
           <div
             className={cn(
@@ -141,7 +101,7 @@ export function NoteListItem({
                 : 'text-muted-foreground',
             )}
           >
-            修改 {formatTime(note.updatedAt)}
+            修改 {formatDateCompact(new Date(note.updatedAt))}
           </div>
         </div>
       </div>
