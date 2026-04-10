@@ -6,12 +6,7 @@ import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import * as api from '@/lib/api';
 import type { Note, NoteTag } from '@/lib/api';
-import {
-  type NearestAlarm,
-  type TimeRange,
-  filterAndSortReminders,
-  getFrequencyLabel,
-} from '@/lib/reminder-utils';
+import { type NearestAlarm, type TimeRange, filterAndSortReminders } from '@/lib/reminder-utils';
 import { sortTags } from '@/lib/tag-sort';
 import { openNoteById } from '@/stores/editor-store';
 import { useReminderStore } from '@/stores/reminder-store';
@@ -73,7 +68,7 @@ function ReminderRow({
   const title = extractTitle(note.content);
 
   return (
-    <div className="flex items-start px-3 py-2.5 border-b border-border hover:bg-accent/50 transition-colors">
+    <div className="flex items-center px-3 py-2.5 border-b border-border hover:bg-accent/50 transition-colors">
       {/* Left: clickable note info + all tags */}
       <div className="flex-1 min-w-0">
         <button type="button" className="w-full text-left" onClick={onOpen}>
@@ -86,17 +81,10 @@ function ReminderRow({
         </div>
       </div>
 
-      {/* Right: nearest alarm time (prominent) */}
-      <div className="shrink-0 flex flex-col items-end pl-3 pt-0.5">
-        <div className="flex items-center gap-1.5 text-sm font-medium text-orange-400">
-          <Bell className="size-4" />
-          <span>{formatAlarmTime(nearest.time)}</span>
-        </div>
-        {nearest.frequency && (
-          <Badge variant="outline" className="text-[10px] px-1.5 py-0 mt-1">
-            {getFrequencyLabel(nearest.frequency)}
-          </Badge>
-        )}
+      {/* Right: nearest alarm time (prominent, vertically centered) */}
+      <div className="shrink-0 flex items-center gap-1.5 pl-3 text-sm font-medium text-orange-400">
+        <Bell className="size-4" />
+        <span>{formatAlarmTime(nearest.time)}</span>
       </div>
     </div>
   );
