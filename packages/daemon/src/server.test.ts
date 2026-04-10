@@ -185,6 +185,50 @@ describe('daemon API', () => {
     assert.equal(res.json().data.tagValue, 'hello');
   });
 
+  // ── Reminders/Alarms ──
+
+  it('GET /reminders/alarms returns only alarm notes', async () => {
+    // Create a note with /alarm tag
+    const r1 = await app.inject({
+      method: 'POST',
+      url: '/notes',
+      payload: { content: 'Alarm note', tags: ['/alarm:2026-04-11T10:00:00'] },
+    });
+    assert.equal(r1.statusCode, 201);
+    const alarmNoteId = r1.json().data.id;
+
+    // Create a note without /alarm tag
+    await app.inject({
+      method: 'POST',
+      url: '/notes',
+      payload: { content: 'Normal note', tags: ['#regular'] },
+    });
+
+    // Fetch alarms
+    const res = await app.inject({ method: 'GET', url: '/reminders/alarms' });
+    assert.equal(res.statusCode, 200);
+    const body = res.json();
+    assert.equal(body.success, true);
+    assert.ok(Array.isArray(body.data));
+
+    // Should contain our alarm note
+    const alarmNote = body.data.find((n: { id: string }) => n.id === alarmNoteId);
+    assert.ok(alarmNote, 'alarm note should be in results');
+    assert.ok(Array.isArray(alarmNote.tags), 'note should have tags array');
+    assert.ok(
+      alarmNote.tags.some((t: { tagType: string }) => t.tagType === '/alarm'),
+      'should have /alarm tag',
+    );
+
+    // Should NOT contain notes without /alarm tags (check none of the results lack /alarm)
+    for (const note of body.data) {
+      assert.ok(
+        note.tags.some((t: { tagType: string }) => t.tagType === '/alarm'),
+        `note ${note.id} should have /alarm tag`,
+      );
+    }
+  });
+
   // ── Error handling ──
 
   it('returns 404 for non-existent note', async () => {

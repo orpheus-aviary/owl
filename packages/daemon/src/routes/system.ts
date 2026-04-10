@@ -30,6 +30,7 @@ export function registerSystemRoutes(app: FastifyInstance): void {
         { method: 'POST', path: '/parse-tag', description: 'Parse a raw tag string' },
         { method: 'GET', path: '/reminders', description: 'Get reminders in date range' },
         { method: 'GET', path: '/reminders/upcoming', description: 'Get upcoming reminders' },
+        { method: 'GET', path: '/reminders/alarms', description: 'Get all notes with alarm tags' },
         { method: 'GET', path: '/status', description: 'Health check' },
         { method: 'GET', path: '/api/capabilities', description: 'List all endpoints' },
       ],

@@ -1,4 +1,4 @@
-import { parseTag, schema } from '@owl/core';
+import { listAlarmNotes, parseTag, schema } from '@owl/core';
 import { and, eq, sql } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import type { AppContext } from '../context.js';
@@ -101,5 +101,11 @@ export function registerTagRoutes(app: FastifyInstance, ctx: AppContext): void {
       .all(fromStr, toStr);
 
     ok(reply, rows);
+  });
+
+  // GET /reminders/alarms — all notes with /alarm tags (standard Note[] format)
+  app.get('/reminders/alarms', async (_req, reply) => {
+    const items = listAlarmNotes(ctx.db, ctx.sqlite);
+    ok(reply, items);
   });
 }
