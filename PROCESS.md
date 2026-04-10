@@ -1,6 +1,6 @@
 # 开发进度
 
-## 当前状态：P1 实施中（P1-0 ~ P1-6 完成）
+## 当前状态：P1 实施中（P1-0 ~ P1-9 完成）
 
 ### 已完成
 
@@ -28,11 +28,16 @@
 | 补充 | 删除关闭Tab + 列表自动滚动到活跃笔记 | `defb0ac` |
 | 补充 | 编辑器Backspace误触修复 + 语法高亮增强 | `2d7b1f9` |
 | 补充 | 行号3位宽度 + 滚动到底(scrollPastEnd) | `7231b81` |
+| P1-9 | 提醒页面（alarm筛选+周期计算+时间范围+编辑） | `997173d`~`03eb7c8` |
+| 补充 | 全页面标签显示增强：所有标签类型+可编辑time/alarm | `3928a05` |
+| 补充 | 统一标签排序（#拼音→/alarm→/time→频率） | `47ccf9d` |
+| 补充 | 多频率同时生效+频率排序修复 | `f04979b` |
+| 补充 | 代码简化：提取TagDisplay/date-format/useMemo优化 | `03eb7c8` |
 
-- 测试：65 个全部通过（core 50 + daemon 15）
-- Lint + Typecheck：零错误（5 个 pre-existing complexity warnings）
+- 测试：69 个全部通过（core 53 + daemon 16）
+- Lint + Typecheck：零错误（7 个 pre-existing warnings）
 
-### 下一步：P1-9（提醒页面）
+### 下一步：P1-10（reminder_status 表 + daemon 提醒调度器 + 系统通知）
 
 P1 目标：完整的笔记管理 GUI，解决 Go 版所有渲染问题。
 
@@ -65,7 +70,7 @@ P1 commit 分解（12 步）：
 ### 实施阶段总览
 
 ```
-P0 ✅ → P1（P1-0~P1-8 ✅，P1-9 下一步） → P2（待办+设置+文件夹+AI+分屏拖拽） → P3（CLI+外部调用） → P4（Migration）
+P0 ✅ → P1（P1-0~P1-9 ✅，P1-10 下一步） → P2（待办+设置+文件夹+AI+分屏拖拽） → P3（CLI+外部调用） → P4（Migration）
 ```
 
 **P2 范围预览：**
