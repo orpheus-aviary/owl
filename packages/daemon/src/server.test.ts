@@ -233,6 +233,117 @@ describe('daemon API', () => {
     }
   });
 
+  // ── Reminder scheduler integration ──
+
+  describe('reminder scheduler integration', () => {
+    const pad = (n: number, w = 2) => n.toString().padStart(w, '0');
+    const makeAlarmTag = (offsetMs: number) => {
+      const d = new Date(Date.now() + offsetMs);
+      return `/alarm ${pad(d.getFullYear(), 4)}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    };
+
+    it('POST /notes with /alarm tag creates pending reminder_status', async () => {
+      const alarmTag = makeAlarmTag(3600_000); // 1 hour
+      const res = await app.inject({
+        method: 'POST',
+        url: '/notes',
+        payload: { content: 'Alarm integration test', tags: [alarmTag] },
+      });
+      assert.equal(res.statusCode, 201);
+      const id = res.json().data.id;
+
+      const rows = sqlite
+        .prepare('SELECT * FROM reminder_status WHERE note_id = ?')
+        .all(id) as { note_id: string; status: string }[];
+      assert.equal(rows.length, 1);
+      assert.equal(rows[0].status, 'pending');
+    });
+
+    it('PUT /notes/:id updating alarm tag updates reminder_status', async () => {
+      const alarmTag1 = makeAlarmTag(3600_000); // 1 hour
+      const r1 = await app.inject({
+        method: 'POST',
+        url: '/notes',
+        payload: { content: 'Alarm update test', tags: [alarmTag1] },
+      });
+      const id = r1.json().data.id;
+
+      const before = sqlite
+        .prepare('SELECT fire_at FROM reminder_status WHERE note_id = ?')
+        .all(id) as { fire_at: number }[];
+      assert.equal(before.length, 1);
+      const fireAtBefore = before[0].fire_at;
+
+      const alarmTag2 = makeAlarmTag(7200_000); // 2 hours
+      await app.inject({
+        method: 'PUT',
+        url: `/notes/${id}`,
+        payload: { content: 'Alarm update test', tags: [alarmTag2] },
+      });
+
+      const after = sqlite
+        .prepare('SELECT fire_at FROM reminder_status WHERE note_id = ?')
+        .all(id) as { fire_at: number }[];
+      assert.equal(after.length, 1);
+      assert.notEqual(after[0].fire_at, fireAtBefore, 'fire_at should have changed');
+    });
+
+    it('PUT /notes/:id removing alarm tag removes reminder_status', async () => {
+      const alarmTag = makeAlarmTag(3600_000);
+      const r1 = await app.inject({
+        method: 'POST',
+        url: '/notes',
+        payload: { content: 'Alarm remove test', tags: [alarmTag] },
+      });
+      const id = r1.json().data.id;
+
+      // Verify reminder exists
+      const before = sqlite
+        .prepare('SELECT * FROM reminder_status WHERE note_id = ?')
+        .all(id);
+      assert.equal(before.length, 1);
+
+      // Update with no tags
+      await app.inject({
+        method: 'PUT',
+        url: `/notes/${id}`,
+        payload: { content: 'Alarm remove test', tags: [] },
+      });
+
+      const after = sqlite
+        .prepare('SELECT * FROM reminder_status WHERE note_id = ?')
+        .all(id);
+      assert.equal(after.length, 0);
+    });
+
+    it('permanent delete cascades to reminder_status', async () => {
+      const alarmTag = makeAlarmTag(3600_000);
+      const r1 = await app.inject({
+        method: 'POST',
+        url: '/notes',
+        payload: { content: 'Alarm cascade test', tags: [alarmTag] },
+      });
+      const id = r1.json().data.id;
+
+      // Verify reminder exists
+      const before = sqlite
+        .prepare('SELECT * FROM reminder_status WHERE note_id = ?')
+        .all(id);
+      assert.equal(before.length, 1);
+
+      // Permanent delete
+      await app.inject({
+        method: 'POST',
+        url: `/notes/${id}/permanent-delete`,
+      });
+
+      const after = sqlite
+        .prepare('SELECT * FROM reminder_status WHERE note_id = ?')
+        .all(id);
+      assert.equal(after.length, 0);
+    });
+  });
+
   // ── Error handling ──
 
   it('returns 404 for non-existent note', async () => {
