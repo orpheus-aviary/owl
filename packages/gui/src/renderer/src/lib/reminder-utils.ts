@@ -52,17 +52,35 @@ export interface NearestAlarm {
   frequency: Frequency | null;
 }
 
-/** Get the nearest future alarm for a note, considering frequency modifiers. */
+/** Get the nearest future alarm for a note, considering ALL frequency modifiers.
+ *  Each /alarm × each frequency = candidate. No frequency = raw alarm time only.
+ *  Multiple frequencies all take effect (e.g. /daily + /weekly both generate candidates). */
 export function getNearestAlarm(note: Note, now: Date): NearestAlarm | null {
-  const freqTag = note.tags.find((t) => FREQUENCIES.includes(t.tagType));
-  const frequency = (freqTag?.tagType as Frequency) ?? null;
+  const freqs = note.tags
+    .filter((t) => FREQUENCIES.includes(t.tagType))
+    .map((t) => t.tagType as Frequency);
+  // Deduplicate frequencies
+  const uniqueFreqs = [...new Set(freqs)];
 
   let nearest: NearestAlarm | null = null;
+
   for (const tag of note.tags) {
     if (tag.tagType !== '/alarm' || !tag.tagValue) continue;
-    const next = getNextOccurrence(new Date(tag.tagValue), frequency, now);
-    if (next && (!nearest || next < nearest.time)) {
-      nearest = { time: next, tag, frequency };
+    const alarmTime = new Date(tag.tagValue);
+
+    if (uniqueFreqs.length === 0) {
+      // No frequency — only show if alarm is in the future
+      if (alarmTime > now && (!nearest || alarmTime < nearest.time)) {
+        nearest = { time: alarmTime, tag, frequency: null };
+      }
+    } else {
+      // Try each frequency, pick the one that gives the nearest future time
+      for (const freq of uniqueFreqs) {
+        const next = getNextOccurrence(alarmTime, freq, now);
+        if (next && (!nearest || next < nearest.time)) {
+          nearest = { time: next, tag, frequency: freq };
+        }
+      }
     }
   }
   return nearest;

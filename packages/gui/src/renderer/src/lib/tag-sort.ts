@@ -13,9 +13,9 @@ const TAG_TYPE_ORDER: Record<string, number> = {
   '/alarm': 1,
   '/time': 2,
   '/daily': 3,
-  '/weekly': 3,
-  '/monthly': 3,
-  '/yearly': 3,
+  '/weekly': 4,
+  '/monthly': 5,
+  '/yearly': 6,
 };
 
 export function sortTags(tags: NoteTag[]): NoteTag[] {
