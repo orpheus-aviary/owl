@@ -1,5 +1,6 @@
 import type { Logger, OwlConfig, OwlDatabase } from '@owl/core';
 import type Database from 'better-sqlite3';
+import type { ReminderScheduler } from './scheduler.js';
 
 /** Shared application context passed to all route handlers. */
 export interface AppContext {
@@ -8,4 +9,5 @@ export interface AppContext {
   config: OwlConfig;
   logger: Logger;
   deviceId: string;
+  scheduler: ReminderScheduler;
 }

@@ -11,6 +11,7 @@ import {
 } from '@owl/core';
 import { Command } from 'commander';
 import { isDaemonRunning, readPid, removePid, writePid } from './pid.js';
+import { ReminderScheduler } from './scheduler.js';
 import { buildServer } from './server.js';
 
 const program = new Command();
@@ -41,12 +42,14 @@ program
 
     ensureSpecialNotes(db);
     const deviceId = ensureDeviceId(db);
+    const scheduler = new ReminderScheduler(db, sqlite, logger);
 
-    const server = buildServer({ db, sqlite, config, logger, deviceId });
+    const server = buildServer({ db, sqlite, config, logger, deviceId, scheduler });
 
     // Graceful shutdown
     const shutdown = async () => {
       logger.info('Daemon shutting down...');
+      scheduler.stop();
       removePid();
       await server.close();
       sqlite.close();
@@ -64,6 +67,7 @@ program
       writePid();
       logger.info({ address, pid: process.pid }, 'Daemon started');
       console.log(`Owl daemon running at ${address} (PID: ${process.pid})`);
+      scheduler.start();
     } catch (err) {
       logger.error({ err }, 'Failed to start daemon');
       console.error('Failed to start daemon:', err);

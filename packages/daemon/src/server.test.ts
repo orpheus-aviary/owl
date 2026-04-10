@@ -9,6 +9,7 @@ import {
 } from '@owl/core';
 import type { OwlDatabase } from '@owl/core';
 import type Database from 'better-sqlite3';
+import { ReminderScheduler } from './scheduler.js';
 import { buildServer } from './server.js';
 
 describe('daemon API', () => {
@@ -23,12 +24,15 @@ describe('daemon API', () => {
     ensureSpecialNotes(db);
     const deviceId = ensureDeviceId(db);
 
+    const logger = createConsoleLogger('test', 'silent');
+    const scheduler = new ReminderScheduler(db, sqlite, logger);
     app = buildServer({
       db,
       sqlite,
       config: DEFAULT_CONFIG,
-      logger: createConsoleLogger('test', 'silent'),
+      logger,
       deviceId,
+      scheduler,
     });
     await app.ready();
   });

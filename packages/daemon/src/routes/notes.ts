@@ -64,6 +64,7 @@ export function registerNoteRoutes(app: FastifyInstance, ctx: AppContext): void 
       deviceId: ctx.deviceId,
     });
 
+    ctx.scheduler.onNoteChanged(note.id);
     created(reply, note, 'Note created');
   });
 
@@ -80,6 +81,7 @@ export function registerNoteRoutes(app: FastifyInstance, ctx: AppContext): void 
     });
 
     if (!note) return fail(reply, 404, 'Note not found', 'NOTE_NOT_FOUND');
+    ctx.scheduler.onNoteChanged(note.id);
     ok(reply, note, 'Note updated');
   });
 
@@ -95,6 +97,7 @@ export function registerNoteRoutes(app: FastifyInstance, ctx: AppContext): void 
 
     const note = updateNote(ctx.db, ctx.sqlite, id, updates);
     if (!note) return fail(reply, 404, 'Note not found', 'NOTE_NOT_FOUND');
+    ctx.scheduler.onNoteChanged(note.id);
     ok(reply, note, 'Note updated');
   });
 
@@ -102,6 +105,7 @@ export function registerNoteRoutes(app: FastifyInstance, ctx: AppContext): void 
   app.delete('/notes/:id', async (req, reply) => {
     const { id } = req.params as { id: string };
     if (!deleteNote(ctx.db, id)) return fail(reply, 404, 'Note not found', 'NOTE_NOT_FOUND');
+    ctx.scheduler.onNoteChanged(id);
     ok(reply, null, 'Note moved to trash');
   });
 
@@ -110,6 +114,7 @@ export function registerNoteRoutes(app: FastifyInstance, ctx: AppContext): void 
     const { id } = req.params as { id: string };
     if (!restoreNote(ctx.db, id))
       return fail(reply, 404, 'Note not found or not in trash', 'RESTORE_FAILED');
+    ctx.scheduler.onNoteChanged(id);
     ok(reply, null, 'Note restored');
   });
 
