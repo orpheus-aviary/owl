@@ -45,7 +45,7 @@ export function ShortcutsSection() {
   }
 
   return (
-    <div className="flex flex-col gap-4 max-w-2xl">
+    <div className="flex flex-col gap-4">
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-lg font-semibold">快捷键</h2>

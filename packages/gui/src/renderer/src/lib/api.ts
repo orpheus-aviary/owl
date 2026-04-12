@@ -226,7 +226,7 @@ export interface ShortcutsConfig {
 export interface OwlConfig {
   llm: { url: string; model: string; api_key: string };
   window: { width: number; height: number };
-  font: { global_offset: number };
+  font: { global_offset: number; editor_font_size: number; editor_line_height: number };
   navigation: { order: string[] };
   daemon: { poll_interval_min: number; port: number };
   ai: { context_rounds: number; max_fts_notes: number; max_recent_notes: number };

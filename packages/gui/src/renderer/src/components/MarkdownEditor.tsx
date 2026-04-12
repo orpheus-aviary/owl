@@ -75,7 +75,7 @@ const owlDarkTheme = EditorView.theme(
   {
     '&': {
       height: '100%',
-      fontSize: '14px',
+      fontSize: 'var(--owl-editor-font-size, 14px)',
       backgroundColor: 'oklch(0.145 0 0)',
       color: '#e2e8f0',
     },
@@ -83,6 +83,7 @@ const owlDarkTheme = EditorView.theme(
       caretColor: '#e2e8f0',
       fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace',
       padding: '8px 0',
+      lineHeight: 'var(--owl-editor-line-height, 1.6)',
     },
     '.cm-cursor': { borderLeftColor: '#e2e8f0' },
     '.cm-activeLine': { backgroundColor: 'oklch(0.3 0 0 / 0.5)' },

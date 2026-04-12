@@ -1,14 +1,26 @@
 import { join } from 'node:path';
 import { is } from '@electron-toolkit/utils';
+import { loadConfig } from '@owl/core';
 import { BrowserWindow, app, shell } from 'electron';
 import { checkDaemon, spawnDaemon } from './daemon.js';
 
 let mainWindow: BrowserWindow | null = null;
 
 function createWindow(): void {
+  // Read window size from config so user customisations take effect next launch.
+  let width = 1000;
+  let height = 700;
+  try {
+    const cfg = loadConfig();
+    if (cfg.window.width > 0) width = cfg.window.width;
+    if (cfg.window.height > 0) height = cfg.window.height;
+  } catch {
+    // Fall through to hardcoded defaults if config is unreadable.
+  }
+
   mainWindow = new BrowserWindow({
-    width: 1000,
-    height: 700,
+    width,
+    height,
     minWidth: 600,
     minHeight: 400,
     show: false,

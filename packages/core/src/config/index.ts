@@ -17,7 +17,12 @@ export interface WindowConfig {
 }
 
 export interface FontConfig {
+  /** Offset (in px) applied to the root html element's base font size (16px). */
   global_offset: number;
+  /** CodeMirror editor font size in px. */
+  editor_font_size: number;
+  /** CodeMirror editor line height (unitless multiplier). */
+  editor_line_height: number;
 }
 
 export interface NavigationConfig {
@@ -78,7 +83,7 @@ export interface OwlConfig {
 export const DEFAULT_CONFIG: OwlConfig = {
   llm: { url: '', model: '', api_key: '' },
   window: { width: 1000, height: 700 },
-  font: { global_offset: 0 },
+  font: { global_offset: 0, editor_font_size: 14, editor_line_height: 1.6 },
   navigation: { order: ['editor', 'browser', 'trash', 'reminders', 'ai', 'todo', 'settings'] },
   daemon: { poll_interval_min: 1, port: 47010 },
   ai: { context_rounds: 3, max_fts_notes: 10, max_recent_notes: 5 },

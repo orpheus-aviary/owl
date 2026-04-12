@@ -1,3 +1,4 @@
+import { AppearanceSection } from '@/components/settings/AppearanceSection';
 import { ShortcutsSection } from '@/components/settings/ShortcutsSection';
 import { cn } from '@/lib/utils';
 import { useState } from 'react';
@@ -13,7 +14,7 @@ const TABS: { id: SettingsTab; label: string }[] = [
 
 function PlaceholderSection({ title }: { title: string }) {
   return (
-    <div className="flex flex-col gap-2 max-w-2xl">
+    <div className="flex flex-col gap-2">
       <h2 className="text-lg font-semibold">{title}</h2>
       <p className="text-sm text-muted-foreground">即将推出</p>
     </div>
@@ -44,12 +45,15 @@ export function SettingsPage() {
         ))}
       </nav>
 
-      {/* Right content */}
-      <div className="flex-1 overflow-auto px-8 py-6">
-        {active === 'shortcuts' && <ShortcutsSection />}
-        {active === 'appearance' && <PlaceholderSection title="外观" />}
-        {active === 'custom' && <PlaceholderSection title="自定义" />}
-        {active === 'advanced' && <PlaceholderSection title="高级" />}
+      {/* Right content — centered horizontally so it stays balanced when the
+          global font offset grows or the window is resized. */}
+      <div className="flex-1 overflow-auto">
+        <div className="mx-auto max-w-2xl px-8 py-6">
+          {active === 'shortcuts' && <ShortcutsSection />}
+          {active === 'appearance' && <AppearanceSection />}
+          {active === 'custom' && <PlaceholderSection title="自定义" />}
+          {active === 'advanced' && <PlaceholderSection title="高级" />}
+        </div>
       </div>
     </div>
   );
