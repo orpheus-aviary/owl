@@ -1,6 +1,6 @@
 # 开发进度
 
-## 当前状态：P1 实施中（P1-0 ~ P1-10 完成）
+## 当前状态：P2 实施中（P2-0 完成）
 
 ### 已完成
 
@@ -34,52 +34,47 @@
 | 补充 | 多频率同时生效+频率排序修复 | `f04979b` |
 | 补充 | 代码简化：提取TagDisplay/date-format/useMemo优化 | `03eb7c8` |
 | P1-10 | reminder_status 表 + daemon 提醒调度器 + 系统通知 | `e28c27b`~`948b24b` |
+| fix | daemon 测试挂死修复（scheduler.stop() 到 after hook） | `72f05e6` |
+| P2-0 | 待办页面（提取+分组+勾选同步+dirty tab overlay） | `1bd0889` |
 
-- 测试：81 个全部通过（core 61 + daemon 20）
+- 测试：89 个全部通过（core 61 + daemon 28）
 - Lint + Typecheck：零错误（7 个 pre-existing warnings）
 
-### 下一步：P2 规划
+### 下一步：P2-1 快捷键自定义
 
-P1 目标：完整的笔记管理 GUI，解决 Go 版所有渲染问题。
+**P2 设计文档：** `docs/plans/2026-04-12-p2-design.md`
 
-**设计文档：** `docs/plans/2026-04-06-p1-design.md`
+P2 commit 分解（11 步）：
 
-P1 commit 分解（12 步）：
+| # | 内容 | 类型 | 状态 |
+|---|------|------|------|
+| P2-0 | 待办页面（提取+分组+勾选同步，含 openTabs 冲突处理） | 前端+API | ✅ |
+| P2-1 | 设置页面框架 + 快捷键自定义栏 | 前端 | ⏳ |
+| P2-2 | 设置 — 外观栏 | 前端 | ⏳ |
+| P2-3 | 设置 — 自定义栏（LLM API + 自动删除天数 + 默认模式/排序） | 前端+配置 | ⏳ |
+| P2-4 | 设置 — 高级栏（LLM 参数 + 日志） | 前端+配置 | ⏳ |
+| P2-5 | 文件夹管理面板（侧边栏 + CRUD + 拖拽排序 + 递归 CTE） | 前端+API+Core | ⏳ |
+| P2-6 | 浏览页文件夹筛选（include_descendants） | 前端 | ⏳ |
+| P2-7 | AI Tool Registry + daemon agent loop | 后端 | ⏳ |
+| P2-8 | AI 对话页面（聊天界面 + 草稿机制） | 前端 | ⏳ |
+| P2-9 | 分屏拖拽（列表↔编辑、编辑↔预览） | 前端 | ⏳ |
+| P2-10 | reminder_status 清理（90 天 fired 记录） | 后端 | ⏳ |
 
-| # | 内容 | 类型 |
-|---|------|------|
-| P1-0 | 回滚 extractTagsFromContent | 架构修正 |
-| P1-1 | shadcn/ui 初始化 + API 调用层 + 侧边栏图标 | 基础设施 |
-| P1-2 | zustand stores + 笔记列表组件 | 数据层+组件 |
-| P1-3 | CodeMirror 6 编辑器组件 | 核心组件 |
-| P1-4 | Markdown 渲染组件 | 核心组件 |
-| P1-5a | 编辑页面 — 三栏布局 + 多标签 + 模式切换 | 页面框架 |
-| P1-5b | 编辑页面 — 快捷键 + 手动保存 + 脏标记 | 交互逻辑 |
-| P1-6 | 标签栏 Tag Bar（Go 风格输入+自动补全+日期选择器） | 交互组件 |
-| P1-7 | 浏览页面（搜索+标签筛选下拉+自动补全） | 页面 |
-| P1-8 | 回收站页面（两 Tab + 批量操作 + 自动清除） | 页面 |
-| P1-9 | 提醒页面（时间筛选+待触发列表） | 页面 |
-| P1-10 | reminder_status 表 + daemon 提醒调度器 + 系统通知 | 后端 |
+**P2 不做（延后事项）：**
+- 远程连接（原 P2-1）— 与 P4 migration 同步机制耦合，整体留到 P4
+- `open_note_in_gui`（daemon→GUI 反向通道）— 留到 P3 CLI 场景再做
 
 **关键设计决策：**
-- 标签栏为唯一标签数据源，正文纯 Markdown（`#` 是 Markdown 语法，不从 content 提取标签）
-- 手动保存（Cmd+S），无自动保存，关闭未保存标签弹窗提示
-- 提醒调度：DB 持久化（reminder_status 表）+ 事件驱动 + setTimeout 精确触发
-- 编辑模式三种切换：编辑→分屏→预览（Cmd+Option+V 循环），P1 分屏固定 50/50
-- 所有快捷键 P1 硬编码，P2 设置页面可自定义
+- AI 草稿走 SSE 响应事件，GUI 自行打开 Tab（无反向通道）
+- create_note 用 `draft_<uuid>` 占位 ID，首次 Cmd+S 走 POST
+- update_note dirty 冲突弹 modal 三选一（接受 AI / 保留本地 / 查看差异）
+- 待办页数据 = daemon 结果 + dirty tab overlay，订阅 editorStore 自动合并
 
 ### 实施阶段总览
 
 ```
-P0 ✅ → P1 ✅ → P2（待办+设置+文件夹+AI+分屏拖拽） → P3（CLI+外部调用） → P4（Migration）
+P0 ✅ → P1 ✅ → P2 实施中（P2-0 ✅，P2-1 ~ P2-10 待开发） → P3（CLI+外部调用） → P4（Migration）
 ```
-
-**P2 范围预览：**
-- 待办页面（`- [ ]` 提取、按笔记整理、交互式编辑）
-- 设置页面（远程配置、快捷键自定义、窗口/自动清除/标签栏位置配置）
-- 文件夹（嵌套、拖拽排序、展开折叠）
-- AI 工具调用 + AI 生成标签
-- 分屏拖拽调整比例 + 记住偏好
 
 ## 关键文件
 
