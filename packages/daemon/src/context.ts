@@ -7,6 +7,8 @@ export interface AppContext {
   db: OwlDatabase;
   sqlite: Database.Database;
   config: OwlConfig;
+  /** Optional override for where to persist config writes (used by tests). */
+  configPath?: string;
   logger: Logger;
   deviceId: string;
   scheduler: ReminderScheduler;

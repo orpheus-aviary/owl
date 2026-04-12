@@ -51,6 +51,14 @@ export interface ShortcutsConfig {
   close_tab: string;
   toggle_wrap: string;
   toggle_edit_mode: string;
+  new_note: string;
+  nav_editor: string;
+  nav_browser: string;
+  nav_trash: string;
+  nav_reminders: string;
+  nav_todo: string;
+  nav_ai: string;
+  nav_settings: string;
 }
 
 export interface OwlConfig {
@@ -77,10 +85,18 @@ export const DEFAULT_CONFIG: OwlConfig = {
   trash: { auto_delete_days: 30 },
   log: { max_size_mb: 10, max_backups: 5, max_age_days: 30, level: 'info' },
   shortcuts: {
-    save: 'Mod-s',
-    close_tab: 'Mod-w',
-    toggle_wrap: 'Alt-z',
-    toggle_edit_mode: 'Mod-Alt-v',
+    save: 'Mod-KeyS',
+    close_tab: 'Mod-KeyW',
+    toggle_wrap: 'Alt-KeyZ',
+    toggle_edit_mode: 'Mod-Alt-KeyV',
+    new_note: 'Mod-KeyN',
+    nav_editor: 'Mod-Digit1',
+    nav_browser: 'Mod-Digit2',
+    nav_trash: 'Mod-Digit3',
+    nav_reminders: 'Mod-Digit4',
+    nav_todo: 'Mod-Digit5',
+    nav_ai: 'Mod-Digit6',
+    nav_settings: 'Mod-Digit7',
   },
 };
 

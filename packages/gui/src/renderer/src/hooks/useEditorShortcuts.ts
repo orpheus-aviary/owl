@@ -1,3 +1,6 @@
+import type { ShortcutsConfig } from '@/lib/api';
+import { matchesShortcut } from '@/lib/shortcuts';
+import { useConfigStore } from '@/stores/config-store';
 import { useNoteStore } from '@/stores/note-store';
 import { useEffect } from 'react';
 import { openNoteById, useEditorStore } from '../stores/editor-store';
@@ -8,16 +11,17 @@ interface ShortcutHandlers {
 
 type ShortcutAction = (handlers: ShortcutHandlers) => void;
 
-// key format: "meta+KeyX" or "meta+alt+KeyX" (using e.code for Alt-key safety)
-const SHORTCUTS: Record<string, ShortcutAction> = {
-  'meta+KeyS': () => {
+// Actions map onto ShortcutsConfig keys. Nav shortcuts are handled in App.tsx;
+// here we only cover editor-context actions.
+const ACTIONS: Partial<Record<keyof ShortcutsConfig, ShortcutAction>> = {
+  save: () => {
     useEditorStore.getState().saveActiveNote();
   },
-  'meta+KeyW': ({ requestCloseTab }) => {
+  close_tab: ({ requestCloseTab }) => {
     const { activeTabId } = useEditorStore.getState();
     if (activeTabId) requestCloseTab(activeTabId);
   },
-  'meta+KeyN': () => {
+  new_note: () => {
     useNoteStore
       .getState()
       .createNote()
@@ -25,36 +29,41 @@ const SHORTCUTS: Record<string, ShortcutAction> = {
         if (note) openNoteById(note.id);
       });
   },
-  'meta+alt+KeyV': () => {
+  toggle_edit_mode: () => {
     useEditorStore.getState().cycleMode();
   },
-  'meta+KeyL': () => {
-    const tagInput = document.querySelector<HTMLInputElement>('[data-tag-input]');
-    if (tagInput) tagInput.focus();
-  },
-  'meta+KeyE': () => {
-    const cmEditor = document.querySelector<HTMLElement>('.cm-content');
-    if (cmEditor) cmEditor.focus();
+  toggle_wrap: () => {
+    useEditorStore.getState().toggleLineWrap();
   },
 };
-
-function getShortcutKey(e: KeyboardEvent): string | null {
-  if (!e.metaKey && !e.ctrlKey) return null;
-  const parts = ['meta'];
-  if (e.altKey) parts.push('alt');
-  parts.push(e.code);
-  return parts.join('+');
-}
 
 export function useEditorShortcuts(handlers: ShortcutHandlers) {
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      const key = getShortcutKey(e);
-      if (!key) return;
-      const action = SHORTCUTS[key];
-      if (action) {
-        e.preventDefault();
-        action(handlers);
+      const shortcuts = useConfigStore.getState().shortcuts;
+      for (const action of Object.keys(ACTIONS) as (keyof ShortcutsConfig)[]) {
+        const binding = shortcuts[action];
+        if (binding && matchesShortcut(e, binding)) {
+          e.preventDefault();
+          ACTIONS[action]?.(handlers);
+          return;
+        }
+      }
+      // Non-configurable focus helpers.
+      if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey) {
+        if (e.code === 'KeyL') {
+          const tagInput = document.querySelector<HTMLInputElement>('[data-tag-input]');
+          if (tagInput) {
+            e.preventDefault();
+            tagInput.focus();
+          }
+        } else if (e.code === 'KeyE') {
+          const cmEditor = document.querySelector<HTMLElement>('.cm-content');
+          if (cmEditor) {
+            e.preventDefault();
+            cmEditor.focus();
+          }
+        }
       }
     };
 

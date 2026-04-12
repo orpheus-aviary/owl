@@ -1,3 +1,6 @@
+import type { ShortcutsConfig } from '@/lib/api';
+import { matchesShortcut } from '@/lib/shortcuts';
+import { useConfigStore } from '@/stores/config-store';
 import {
   Bell,
   Bot,
@@ -18,14 +21,21 @@ import { SettingsPage } from './pages/SettingsPage';
 import { TodoPage } from './pages/TodoPage';
 import { TrashPage } from './pages/TrashPage';
 
-const NAV_ITEMS: { path: string; label: string; icon: LucideIcon }[] = [
-  { path: '/', label: '编辑', icon: PenSquare },
-  { path: '/browser', label: '浏览', icon: Search },
-  { path: '/trash', label: '回收站', icon: Trash2 },
-  { path: '/reminders', label: '提醒', icon: Bell },
-  { path: '/todo', label: '待办', icon: CheckSquare },
-  { path: '/ai', label: 'AI', icon: Bot },
-  { path: '/settings', label: '设置', icon: Settings },
+interface NavItem {
+  path: string;
+  label: string;
+  icon: LucideIcon;
+  shortcutKey: keyof ShortcutsConfig;
+}
+
+const NAV_ITEMS: NavItem[] = [
+  { path: '/', label: '编辑', icon: PenSquare, shortcutKey: 'nav_editor' },
+  { path: '/browser', label: '浏览', icon: Search, shortcutKey: 'nav_browser' },
+  { path: '/trash', label: '回收站', icon: Trash2, shortcutKey: 'nav_trash' },
+  { path: '/reminders', label: '提醒', icon: Bell, shortcutKey: 'nav_reminders' },
+  { path: '/todo', label: '待办', icon: CheckSquare, shortcutKey: 'nav_todo' },
+  { path: '/ai', label: 'AI', icon: Bot, shortcutKey: 'nav_ai' },
+  { path: '/settings', label: '设置', icon: Settings, shortcutKey: 'nav_settings' },
 ];
 
 function NavShortcuts() {
@@ -33,11 +43,14 @@ function NavShortcuts() {
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (!e.metaKey || e.shiftKey || e.altKey || e.ctrlKey) return;
-      const index = Number(e.key);
-      if (index >= 1 && index <= NAV_ITEMS.length) {
-        e.preventDefault();
-        navigate(NAV_ITEMS[index - 1].path);
+      const shortcuts = useConfigStore.getState().shortcuts;
+      for (const item of NAV_ITEMS) {
+        const binding = shortcuts[item.shortcutKey];
+        if (binding && matchesShortcut(e, binding)) {
+          e.preventDefault();
+          navigate(item.path);
+          return;
+        }
       }
     };
     window.addEventListener('keydown', handler);
@@ -48,6 +61,11 @@ function NavShortcuts() {
 }
 
 export function App() {
+  // Load config once on mount — subsequent changes are pushed by PATCH /config.
+  useEffect(() => {
+    useConfigStore.getState().fetch();
+  }, []);
+
   return (
     <HashRouter>
       <NavShortcuts />

@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict';
+import { mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { after, before, describe, it } from 'node:test';
 import {
   DEFAULT_CONFIG,
+  type OwlConfig,
   createConsoleLogger,
   createDatabase,
   ensureDeviceId,
@@ -12,13 +16,19 @@ import type Database from 'better-sqlite3';
 import { ReminderScheduler } from './scheduler.js';
 import { buildServer } from './server.js';
 
+const TEST_DIR = join(tmpdir(), `owl-daemon-test-${Date.now()}`);
+const TEST_CONFIG_PATH = join(TEST_DIR, 'owl_config.toml');
+
 describe('daemon API', () => {
   let app: ReturnType<typeof buildServer>;
   let db: OwlDatabase;
   let sqlite: Database.Database;
   let scheduler: ReminderScheduler;
+  // Live config object shared with the server so PATCH /config mutations are visible.
+  let ctxConfig: OwlConfig;
 
   before(async () => {
+    mkdirSync(TEST_DIR, { recursive: true });
     const result = createDatabase({ dbPath: ':memory:' });
     db = result.db;
     sqlite = result.sqlite;
@@ -27,10 +37,12 @@ describe('daemon API', () => {
 
     const logger = createConsoleLogger('test', 'silent');
     scheduler = new ReminderScheduler(db, sqlite, logger);
+    ctxConfig = structuredClone(DEFAULT_CONFIG);
     app = buildServer({
       db,
       sqlite,
-      config: DEFAULT_CONFIG,
+      config: ctxConfig,
+      configPath: TEST_CONFIG_PATH,
       logger,
       deviceId,
       scheduler,
@@ -45,6 +57,7 @@ describe('daemon API', () => {
     scheduler.stop();
     await app.close();
     sqlite.close();
+    rmSync(TEST_DIR, { recursive: true, force: true });
   });
 
   // ── Status ──
@@ -452,6 +465,56 @@ describe('daemon API', () => {
         payload: { line: 1 },
       });
       assert.equal(res.statusCode, 404);
+    });
+  });
+
+  // ── Config ──
+
+  describe('config', () => {
+    it('GET /config returns current config', async () => {
+      const res = await app.inject({ method: 'GET', url: '/config' });
+      assert.equal(res.statusCode, 200);
+      const body = res.json();
+      assert.equal(body.success, true);
+      assert.equal(body.data.shortcuts.save, 'Mod-KeyS');
+      assert.equal(body.data.daemon.port, 47010);
+    });
+
+    it('PATCH /config deep-merges and persists shortcuts', async () => {
+      const res = await app.inject({
+        method: 'PATCH',
+        url: '/config',
+        payload: { shortcuts: { save: 'Mod-Alt-KeyS' } },
+      });
+      assert.equal(res.statusCode, 200);
+      assert.equal(res.json().data.shortcuts.save, 'Mod-Alt-KeyS');
+      // Untouched fields still present
+      assert.equal(res.json().data.shortcuts.close_tab, 'Mod-KeyW');
+      // Persisted to disk
+      const raw = readFileSync(TEST_CONFIG_PATH, 'utf-8');
+      assert.ok(raw.includes('Mod-Alt-KeyS'));
+    });
+
+    it('PATCH /config rejects non-whitelisted sections', async () => {
+      const res = await app.inject({
+        method: 'PATCH',
+        url: '/config',
+        payload: { daemon: { port: 1 }, shortcuts: { save: 'Mod-KeyS' } },
+      });
+      assert.equal(res.statusCode, 200);
+      // daemon section was filtered out, port should remain unchanged
+      assert.equal(ctxConfig.daemon.port, 47010);
+      assert.equal(res.json().data.shortcuts.save, 'Mod-KeyS');
+    });
+
+    it('PATCH /config rejects non-object body', async () => {
+      const res = await app.inject({
+        method: 'PATCH',
+        url: '/config',
+        headers: { 'content-type': 'application/json' },
+        payload: '"a string"',
+      });
+      assert.equal(res.statusCode, 400);
     });
   });
 

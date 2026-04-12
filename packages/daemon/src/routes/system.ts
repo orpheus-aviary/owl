@@ -31,6 +31,8 @@ export function registerSystemRoutes(app: FastifyInstance): void {
         { method: 'GET', path: '/reminders', description: 'Get reminders in date range' },
         { method: 'GET', path: '/reminders/upcoming', description: 'Get upcoming reminders' },
         { method: 'GET', path: '/reminders/alarms', description: 'Get all notes with alarm tags' },
+        { method: 'GET', path: '/config', description: 'Get current owl config' },
+        { method: 'PATCH', path: '/config', description: 'Partial update of owl config' },
         { method: 'GET', path: '/status', description: 'Health check' },
         { method: 'GET', path: '/api/capabilities', description: 'List all endpoints' },
       ],

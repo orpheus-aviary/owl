@@ -207,6 +207,39 @@ export const listUpcomingReminders = (withinMinutes?: number) => {
 
 export const listAlarmNotes = () => request<Note[]>('GET', '/reminders/alarms');
 
+// Config
+export interface ShortcutsConfig {
+  save: string;
+  close_tab: string;
+  toggle_wrap: string;
+  toggle_edit_mode: string;
+  new_note: string;
+  nav_editor: string;
+  nav_browser: string;
+  nav_trash: string;
+  nav_reminders: string;
+  nav_todo: string;
+  nav_ai: string;
+  nav_settings: string;
+}
+
+export interface OwlConfig {
+  llm: { url: string; model: string; api_key: string };
+  window: { width: number; height: number };
+  font: { global_offset: number };
+  navigation: { order: string[] };
+  daemon: { poll_interval_min: number; port: number };
+  ai: { context_rounds: number; max_fts_notes: number; max_recent_notes: number };
+  trash: { auto_delete_days: number };
+  log: { max_size_mb: number; max_backups: number; max_age_days: number; level: string };
+  shortcuts: ShortcutsConfig;
+}
+
+export const getConfig = () => request<OwlConfig>('GET', '/config');
+
+export const patchConfig = (delta: Partial<OwlConfig>) =>
+  request<OwlConfig>('PATCH', '/config', delta);
+
 // Tag editing helpers
 
 /** Serialize a note's tags array back to raw tag strings for API submission. */

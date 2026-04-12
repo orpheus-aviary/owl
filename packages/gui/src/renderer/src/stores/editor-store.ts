@@ -37,6 +37,7 @@ interface EditorState {
   tabs: TabState[];
   activeTabId: string | null;
   mode: EditorMode;
+  lineWrap: boolean;
 
   openNote: (note: Note) => void;
   closeTab: (noteId: string) => void;
@@ -48,6 +49,7 @@ interface EditorState {
   saveActiveNote: () => Promise<boolean>;
   cycleMode: () => void;
   setMode: (mode: EditorMode) => void;
+  toggleLineWrap: () => void;
 }
 
 function extractTitle(content: string): string {
@@ -61,6 +63,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   tabs: [],
   activeTabId: null,
   mode: 'edit',
+  lineWrap: true,
 
   openNote: (note: Note) => {
     const { tabs } = get();
@@ -174,6 +177,10 @@ export const useEditorStore = create<EditorState>((set, get) => ({
 
   setMode: (mode: EditorMode) => {
     set({ mode });
+  },
+
+  toggleLineWrap: () => {
+    set((state) => ({ lineWrap: !state.lineWrap }));
   },
 }));
 

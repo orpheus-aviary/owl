@@ -9,7 +9,7 @@ import {
 } from '@codemirror/language';
 import { languages } from '@codemirror/language-data';
 import { highlightSelectionMatches, searchKeymap } from '@codemirror/search';
-import { EditorSelection, EditorState, type Extension } from '@codemirror/state';
+import { Compartment, EditorSelection, EditorState, type Extension } from '@codemirror/state';
 import {
   EditorView,
   type ViewUpdate,
@@ -23,6 +23,7 @@ import {
 } from '@codemirror/view';
 import { tags } from '@lezer/highlight';
 import { useEffect, useRef } from 'react';
+import { useEditorStore } from '../stores/editor-store';
 
 // ─── Syntax highlight style (dark) ──────────────────────
 
@@ -200,12 +201,17 @@ interface MarkdownEditorProps {
 export function MarkdownEditor({ value, onChange, className }: MarkdownEditorProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
+  const wrapCompartmentRef = useRef<Compartment | null>(null);
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
+  const lineWrap = useEditorStore((s) => s.lineWrap);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: mount-only effect, value tracked via ref
   useEffect(() => {
     if (!containerRef.current) return;
+
+    const wrapCompartment = new Compartment();
+    wrapCompartmentRef.current = wrapCompartment;
 
     const extensions: Extension[] = [
       lineNumbers({ formatNumber: (n) => String(n).padStart(3, ' ') }),
@@ -230,7 +236,7 @@ export function MarkdownEditor({ value, onChange, className }: MarkdownEditorPro
           onChangeRef.current?.(update.state.doc.toString());
         }
       }),
-      EditorView.lineWrapping,
+      wrapCompartment.of(useEditorStore.getState().lineWrap ? EditorView.lineWrapping : []),
       scrollPastEnd(),
     ];
 
@@ -255,6 +261,16 @@ export function MarkdownEditor({ value, onChange, className }: MarkdownEditorPro
       });
     }
   }, [value]);
+
+  // React to lineWrap toggle from the editor store via the compartment.
+  useEffect(() => {
+    const view = viewRef.current;
+    const compartment = wrapCompartmentRef.current;
+    if (!view || !compartment) return;
+    view.dispatch({
+      effects: compartment.reconfigure(lineWrap ? EditorView.lineWrapping : []),
+    });
+  }, [lineWrap]);
 
   return <div ref={containerRef} className={`h-full overflow-auto ${className ?? ''}`} />;
 }
