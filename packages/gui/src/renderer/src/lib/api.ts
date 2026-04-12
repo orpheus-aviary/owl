@@ -168,6 +168,31 @@ export const listFrequentTags = (limit?: number) => {
 
 export const parseTag = (raw: string) => request<ParsedTag>('POST', '/parse-tag', { raw });
 
+// Todos
+export interface TodoItem {
+  line: number;
+  text: string;
+  checked: boolean;
+}
+
+export interface TodoGroup {
+  note_id: string;
+  note_title: string;
+  updated_at: string;
+  items: TodoItem[];
+}
+
+export const getTodos = (params?: { checked?: boolean; folder_id?: string }) => {
+  const qs = new URLSearchParams();
+  if (params?.checked !== undefined) qs.set('checked', String(params.checked));
+  if (params?.folder_id) qs.set('folder_id', params.folder_id);
+  const query = qs.toString();
+  return request<TodoGroup[]>('GET', `/todos${query ? `?${query}` : ''}`);
+};
+
+export const toggleTodo = (noteId: string, line: number) =>
+  request<Note>('PATCH', `/notes/${noteId}/toggle-todo`, { line });
+
 // Reminders
 export const listReminders = (from: string, to: string) =>
   request<Note[]>(

@@ -342,6 +342,119 @@ describe('daemon API', () => {
     });
   });
 
+  // ── Todos ──
+
+  describe('todos', () => {
+    let todoNoteId: string;
+    let emptyNoteId: string;
+
+    it('creates a note with todos for todo tests', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/notes',
+        payload: {
+          content: [
+            '# Shopping',
+            '',
+            '- [ ] 买菜',
+            '- [x] 打扫卫生',
+            '- [ ] 写报告',
+            '',
+            '备注：周末完成',
+          ].join('\n'),
+        },
+      });
+      assert.equal(res.statusCode, 201);
+      todoNoteId = res.json().data.id;
+
+      const empty = await app.inject({
+        method: 'POST',
+        url: '/notes',
+        payload: { content: '# No todos here\n\njust a note' },
+      });
+      emptyNoteId = empty.json().data.id;
+    });
+
+    it('GET /todos?checked=false returns only open todos', async () => {
+      const res = await app.inject({ method: 'GET', url: '/todos?checked=false' });
+      assert.equal(res.statusCode, 200);
+      const body = res.json();
+      assert.equal(body.success, true);
+
+      const group = body.data.find((g: { note_id: string }) => g.note_id === todoNoteId);
+      assert.ok(group, 'todo note should be in results');
+      assert.equal(group.items.length, 2, 'should return 2 unchecked items');
+      assert.ok(group.items.every((it: { checked: boolean }) => !it.checked));
+
+      // Note without todos should not appear
+      const emptyGroup = body.data.find((g: { note_id: string }) => g.note_id === emptyNoteId);
+      assert.equal(emptyGroup, undefined);
+    });
+
+    it('GET /todos (no filter) returns all todos', async () => {
+      const res = await app.inject({ method: 'GET', url: '/todos' });
+      assert.equal(res.statusCode, 200);
+      const group = res.json().data.find((g: { note_id: string }) => g.note_id === todoNoteId);
+      assert.ok(group);
+      assert.equal(group.items.length, 3, 'should include checked and unchecked');
+      assert.equal(group.items[0].text, '买菜');
+      assert.equal(group.items[0].checked, false);
+      assert.equal(group.items[1].text, '打扫卫生');
+      assert.equal(group.items[1].checked, true);
+    });
+
+    it('PATCH /notes/:id/toggle-todo flips an unchecked item', async () => {
+      // Line 3 in the content is "- [ ] 买菜"
+      const res = await app.inject({
+        method: 'PATCH',
+        url: `/notes/${todoNoteId}/toggle-todo`,
+        payload: { line: 3 },
+      });
+      assert.equal(res.statusCode, 200);
+      assert.ok(res.json().data.content.includes('- [x] 买菜'));
+    });
+
+    it('PATCH /notes/:id/toggle-todo flips it back', async () => {
+      const res = await app.inject({
+        method: 'PATCH',
+        url: `/notes/${todoNoteId}/toggle-todo`,
+        payload: { line: 3 },
+      });
+      assert.equal(res.statusCode, 200);
+      assert.ok(res.json().data.content.includes('- [ ] 买菜'));
+    });
+
+    it('PATCH /notes/:id/toggle-todo rejects non-todo lines', async () => {
+      // Line 1 is "# Shopping" (a heading, not a todo)
+      const res = await app.inject({
+        method: 'PATCH',
+        url: `/notes/${todoNoteId}/toggle-todo`,
+        payload: { line: 1 },
+      });
+      assert.equal(res.statusCode, 400);
+      assert.equal(res.json().error_code, 'NOT_A_TODO');
+    });
+
+    it('PATCH /notes/:id/toggle-todo rejects out-of-range lines', async () => {
+      const res = await app.inject({
+        method: 'PATCH',
+        url: `/notes/${todoNoteId}/toggle-todo`,
+        payload: { line: 9999 },
+      });
+      assert.equal(res.statusCode, 400);
+      assert.equal(res.json().error_code, 'INVALID_LINE');
+    });
+
+    it('PATCH /notes/:id/toggle-todo returns 404 for missing note', async () => {
+      const res = await app.inject({
+        method: 'PATCH',
+        url: '/notes/does-not-exist/toggle-todo',
+        payload: { line: 1 },
+      });
+      assert.equal(res.statusCode, 404);
+    });
+  });
+
   // ── Error handling ──
 
   it('returns 404 for non-existent note', async () => {
