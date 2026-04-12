@@ -16,6 +16,7 @@ describe('daemon API', () => {
   let app: ReturnType<typeof buildServer>;
   let db: OwlDatabase;
   let sqlite: Database.Database;
+  let scheduler: ReminderScheduler;
 
   before(async () => {
     const result = createDatabase({ dbPath: ':memory:' });
@@ -25,7 +26,7 @@ describe('daemon API', () => {
     const deviceId = ensureDeviceId(db);
 
     const logger = createConsoleLogger('test', 'silent');
-    const scheduler = new ReminderScheduler(db, sqlite, logger);
+    scheduler = new ReminderScheduler(db, sqlite, logger);
     app = buildServer({
       db,
       sqlite,
@@ -38,6 +39,10 @@ describe('daemon API', () => {
   });
 
   after(async () => {
+    // Stop scheduler first — its internal setTimeout for pending reminders
+    // (scheduled 1-2 hours out by the alarm integration tests below) keeps
+    // the Node.js event loop alive and prevents the test process from exiting.
+    scheduler.stop();
     await app.close();
     sqlite.close();
   });
