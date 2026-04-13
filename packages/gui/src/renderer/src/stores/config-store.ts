@@ -39,6 +39,19 @@ const DEFAULT_BROWSER: OwlConfig['browser'] = {
   default_sort_direction: 'desc',
 };
 
+const DEFAULT_AI: OwlConfig['ai'] = {
+  context_rounds: 3,
+  max_fts_notes: 10,
+  max_recent_notes: 5,
+};
+
+const DEFAULT_LOG: OwlConfig['log'] = {
+  max_size_mb: 10,
+  max_backups: 5,
+  max_age_days: 30,
+  level: 'info',
+};
+
 /** Base html font size (px) before `global_offset` is applied. */
 const BASE_FONT_SIZE = 16;
 
@@ -60,6 +73,8 @@ interface ConfigState {
   trash: OwlConfig['trash'];
   editor: OwlConfig['editor'];
   browser: OwlConfig['browser'];
+  ai: OwlConfig['ai'];
+  log: OwlConfig['log'];
   loading: boolean;
   error: string | null;
 
@@ -72,6 +87,8 @@ interface ConfigState {
   patchTrash: (delta: Partial<OwlConfig['trash']>) => Promise<boolean>;
   patchEditor: (delta: Partial<OwlConfig['editor']>) => Promise<boolean>;
   patchBrowser: (delta: Partial<OwlConfig['browser']>) => Promise<boolean>;
+  patchAi: (delta: Partial<OwlConfig['ai']>) => Promise<boolean>;
+  patchLog: (delta: Partial<OwlConfig['log']>) => Promise<boolean>;
 }
 
 function applyConfig(set: (update: Partial<ConfigState>) => void, config: OwlConfig): void {
@@ -85,6 +102,8 @@ function applyConfig(set: (update: Partial<ConfigState>) => void, config: OwlCon
     trash: config.trash,
     editor: config.editor,
     browser: config.browser,
+    ai: config.ai,
+    log: config.log,
   });
 }
 
@@ -97,6 +116,8 @@ export const useConfigStore = create<ConfigState>((set, get) => ({
   trash: DEFAULT_TRASH,
   editor: DEFAULT_EDITOR,
   browser: DEFAULT_BROWSER,
+  ai: DEFAULT_AI,
+  log: DEFAULT_LOG,
   loading: false,
   error: null,
 
@@ -224,6 +245,34 @@ export const useConfigStore = create<ConfigState>((set, get) => ({
       return false;
     }
   },
+
+  patchAi: async (delta) => {
+    try {
+      const res = await api.patchConfig({ ai: { ...get().ai, ...delta } });
+      if (res.data) {
+        applyConfig(set, res.data);
+        return true;
+      }
+      return false;
+    } catch (err) {
+      set({ error: err instanceof Error ? err.message : String(err) });
+      return false;
+    }
+  },
+
+  patchLog: async (delta) => {
+    try {
+      const res = await api.patchConfig({ log: { ...get().log, ...delta } });
+      if (res.data) {
+        applyConfig(set, res.data);
+        return true;
+      }
+      return false;
+    } catch (err) {
+      set({ error: err instanceof Error ? err.message : String(err) });
+      return false;
+    }
+  },
 }));
 
 export {
@@ -234,4 +283,6 @@ export {
   DEFAULT_TRASH,
   DEFAULT_EDITOR,
   DEFAULT_BROWSER,
+  DEFAULT_AI,
+  DEFAULT_LOG,
 };

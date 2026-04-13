@@ -1,3 +1,4 @@
+import { AdvancedSection } from '@/components/settings/AdvancedSection';
 import { AppearanceSection } from '@/components/settings/AppearanceSection';
 import { CustomSection } from '@/components/settings/CustomSection';
 import { ShortcutsSection } from '@/components/settings/ShortcutsSection';
@@ -12,15 +13,6 @@ const TABS: { id: SettingsTab; label: string }[] = [
   { id: 'custom', label: '自定义' },
   { id: 'advanced', label: '高级' },
 ];
-
-function PlaceholderSection({ title }: { title: string }) {
-  return (
-    <div className="flex flex-col gap-2">
-      <h2 className="text-lg font-semibold">{title}</h2>
-      <p className="text-sm text-muted-foreground">即将推出</p>
-    </div>
-  );
-}
 
 export function SettingsPage() {
   const [active, setActive] = useState<SettingsTab>('shortcuts');
@@ -53,7 +45,7 @@ export function SettingsPage() {
           {active === 'shortcuts' && <ShortcutsSection />}
           {active === 'appearance' && <AppearanceSection />}
           {active === 'custom' && <CustomSection />}
-          {active === 'advanced' && <PlaceholderSection title="高级" />}
+          {active === 'advanced' && <AdvancedSection />}
         </div>
       </div>
     </div>

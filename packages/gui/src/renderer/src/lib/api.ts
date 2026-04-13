@@ -249,7 +249,12 @@ export interface OwlConfig {
   daemon: { poll_interval_min: number; port: number };
   ai: { context_rounds: number; max_fts_notes: number; max_recent_notes: number };
   trash: { auto_delete_days: number };
-  log: { max_size_mb: number; max_backups: number; max_age_days: number; level: string };
+  log: {
+    max_size_mb: number;
+    max_backups: number;
+    max_age_days: number;
+    level: 'debug' | 'info' | 'warn' | 'error';
+  };
   editor: EditorConfig;
   browser: BrowserConfig;
   shortcuts: ShortcutsConfig;
