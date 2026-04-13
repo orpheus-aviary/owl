@@ -223,8 +223,26 @@ export interface ShortcutsConfig {
   nav_settings: string;
 }
 
+export type LlmApiFormat = 'openai' | 'anthropic';
+
+export interface LlmConfig {
+  url: string;
+  model: string;
+  api_key: string;
+  api_format: LlmApiFormat;
+}
+
+export interface EditorConfig {
+  default_mode: 'edit' | 'split' | 'preview';
+}
+
+export interface BrowserConfig {
+  default_sort_field: 'updated' | 'created';
+  default_sort_direction: 'asc' | 'desc';
+}
+
 export interface OwlConfig {
-  llm: { url: string; model: string; api_key: string };
+  llm: LlmConfig;
   window: { width: number; height: number };
   font: { global_offset: number; editor_font_size: number; editor_line_height: number };
   navigation: { order: string[] };
@@ -232,6 +250,8 @@ export interface OwlConfig {
   ai: { context_rounds: number; max_fts_notes: number; max_recent_notes: number };
   trash: { auto_delete_days: number };
   log: { max_size_mb: number; max_backups: number; max_age_days: number; level: string };
+  editor: EditorConfig;
+  browser: BrowserConfig;
   shortcuts: ShortcutsConfig;
 }
 
@@ -239,6 +259,9 @@ export const getConfig = () => request<OwlConfig>('GET', '/config');
 
 export const patchConfig = (delta: Partial<OwlConfig>) =>
   request<OwlConfig>('PATCH', '/config', delta);
+
+export const testLlmConnection = (llm?: Partial<LlmConfig>) =>
+  request<{ success: boolean; message: string }>('POST', '/llm/test', llm ?? {});
 
 // Tag editing helpers
 

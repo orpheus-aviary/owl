@@ -28,6 +28,17 @@ const DEFAULT_FONT: OwlConfig['font'] = {
 
 const DEFAULT_WINDOW: OwlConfig['window'] = { width: 1000, height: 700 };
 
+const DEFAULT_LLM: OwlConfig['llm'] = { url: '', model: '', api_key: '', api_format: 'openai' };
+
+const DEFAULT_TRASH: OwlConfig['trash'] = { auto_delete_days: 30 };
+
+const DEFAULT_EDITOR: OwlConfig['editor'] = { default_mode: 'edit' };
+
+const DEFAULT_BROWSER: OwlConfig['browser'] = {
+  default_sort_field: 'updated',
+  default_sort_direction: 'desc',
+};
+
 /** Base html font size (px) before `global_offset` is applied. */
 const BASE_FONT_SIZE = 16;
 
@@ -45,6 +56,10 @@ interface ConfigState {
   shortcuts: ShortcutsConfig;
   font: OwlConfig['font'];
   window: OwlConfig['window'];
+  llm: OwlConfig['llm'];
+  trash: OwlConfig['trash'];
+  editor: OwlConfig['editor'];
+  browser: OwlConfig['browser'];
   loading: boolean;
   error: string | null;
 
@@ -53,6 +68,10 @@ interface ConfigState {
   resetShortcuts: () => Promise<boolean>;
   patchFont: (delta: Partial<OwlConfig['font']>) => Promise<boolean>;
   patchWindow: (delta: Partial<OwlConfig['window']>) => Promise<boolean>;
+  patchLlm: (delta: Partial<OwlConfig['llm']>) => Promise<boolean>;
+  patchTrash: (delta: Partial<OwlConfig['trash']>) => Promise<boolean>;
+  patchEditor: (delta: Partial<OwlConfig['editor']>) => Promise<boolean>;
+  patchBrowser: (delta: Partial<OwlConfig['browser']>) => Promise<boolean>;
 }
 
 function applyConfig(set: (update: Partial<ConfigState>) => void, config: OwlConfig): void {
@@ -62,6 +81,10 @@ function applyConfig(set: (update: Partial<ConfigState>) => void, config: OwlCon
     shortcuts: config.shortcuts,
     font: config.font,
     window: config.window,
+    llm: config.llm,
+    trash: config.trash,
+    editor: config.editor,
+    browser: config.browser,
   });
 }
 
@@ -70,6 +93,10 @@ export const useConfigStore = create<ConfigState>((set, get) => ({
   shortcuts: DEFAULT_SHORTCUTS,
   font: DEFAULT_FONT,
   window: DEFAULT_WINDOW,
+  llm: DEFAULT_LLM,
+  trash: DEFAULT_TRASH,
+  editor: DEFAULT_EDITOR,
+  browser: DEFAULT_BROWSER,
   loading: false,
   error: null,
 
@@ -141,6 +168,70 @@ export const useConfigStore = create<ConfigState>((set, get) => ({
       return false;
     }
   },
+
+  patchLlm: async (delta) => {
+    try {
+      const res = await api.patchConfig({ llm: { ...get().llm, ...delta } });
+      if (res.data) {
+        applyConfig(set, res.data);
+        return true;
+      }
+      return false;
+    } catch (err) {
+      set({ error: err instanceof Error ? err.message : String(err) });
+      return false;
+    }
+  },
+
+  patchTrash: async (delta) => {
+    try {
+      const res = await api.patchConfig({ trash: { ...get().trash, ...delta } });
+      if (res.data) {
+        applyConfig(set, res.data);
+        return true;
+      }
+      return false;
+    } catch (err) {
+      set({ error: err instanceof Error ? err.message : String(err) });
+      return false;
+    }
+  },
+
+  patchEditor: async (delta) => {
+    try {
+      const res = await api.patchConfig({ editor: { ...get().editor, ...delta } });
+      if (res.data) {
+        applyConfig(set, res.data);
+        return true;
+      }
+      return false;
+    } catch (err) {
+      set({ error: err instanceof Error ? err.message : String(err) });
+      return false;
+    }
+  },
+
+  patchBrowser: async (delta) => {
+    try {
+      const res = await api.patchConfig({ browser: { ...get().browser, ...delta } });
+      if (res.data) {
+        applyConfig(set, res.data);
+        return true;
+      }
+      return false;
+    } catch (err) {
+      set({ error: err instanceof Error ? err.message : String(err) });
+      return false;
+    }
+  },
 }));
 
-export { DEFAULT_SHORTCUTS, DEFAULT_FONT, DEFAULT_WINDOW };
+export {
+  DEFAULT_SHORTCUTS,
+  DEFAULT_FONT,
+  DEFAULT_WINDOW,
+  DEFAULT_LLM,
+  DEFAULT_TRASH,
+  DEFAULT_EDITOR,
+  DEFAULT_BROWSER,
+};

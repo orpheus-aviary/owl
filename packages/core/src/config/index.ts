@@ -5,10 +5,14 @@ import { aviaryConfigPath, configPath } from './paths.js';
 
 // ─── Config Types ──────────────────────────────────────
 
+export type LlmApiFormat = 'openai' | 'anthropic';
+
 export interface LlmConfig {
   url: string;
   model: string;
   api_key: string;
+  /** API wire format — determines auth header and request shape. */
+  api_format: LlmApiFormat;
 }
 
 export interface WindowConfig {
@@ -51,6 +55,16 @@ export interface LogConfig {
   level: 'debug' | 'info' | 'warn' | 'error';
 }
 
+export interface EditorConfig {
+  /** Default mode for newly opened editor tabs. */
+  default_mode: 'edit' | 'split' | 'preview';
+}
+
+export interface BrowserConfig {
+  default_sort_field: 'updated' | 'created';
+  default_sort_direction: 'asc' | 'desc';
+}
+
 export interface ShortcutsConfig {
   save: string;
   close_tab: string;
@@ -75,13 +89,15 @@ export interface OwlConfig {
   ai: AiConfig;
   trash: TrashConfig;
   log: LogConfig;
+  editor: EditorConfig;
+  browser: BrowserConfig;
   shortcuts: ShortcutsConfig;
 }
 
 // ─── Defaults ──────────────────────────────────────────
 
 export const DEFAULT_CONFIG: OwlConfig = {
-  llm: { url: '', model: '', api_key: '' },
+  llm: { url: '', model: '', api_key: '', api_format: 'openai' },
   window: { width: 1000, height: 700 },
   font: { global_offset: 0, editor_font_size: 14, editor_line_height: 1.6 },
   navigation: { order: ['editor', 'browser', 'trash', 'reminders', 'ai', 'todo', 'settings'] },
@@ -89,6 +105,8 @@ export const DEFAULT_CONFIG: OwlConfig = {
   ai: { context_rounds: 3, max_fts_notes: 10, max_recent_notes: 5 },
   trash: { auto_delete_days: 30 },
   log: { max_size_mb: 10, max_backups: 5, max_age_days: 30, level: 'info' },
+  editor: { default_mode: 'edit' },
+  browser: { default_sort_field: 'updated', default_sort_direction: 'desc' },
   shortcuts: {
     save: 'Mod-KeyS',
     close_tab: 'Mod-KeyW',
@@ -159,6 +177,7 @@ export function resolveLlmConfig(config: OwlConfig): LlmConfig {
         url: config.llm.url || parsed.llm.url || '',
         model: config.llm.model || parsed.llm.model || '',
         api_key: config.llm.api_key || parsed.llm.api_key || '',
+        api_format: config.llm.api_format || parsed.llm.api_format || 'openai',
       };
     }
   } catch {

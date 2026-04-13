@@ -5,7 +5,15 @@ export { SPECIAL_NOTES, ensureSpecialNotes, ensureDeviceId } from './db/special-
 
 // Config
 export { loadConfig, saveConfig, resolveLlmConfig, DEFAULT_CONFIG } from './config/index.js';
-export type { OwlConfig, LlmConfig, DaemonConfig, LogConfig } from './config/index.js';
+export type {
+  OwlConfig,
+  LlmConfig,
+  LlmApiFormat,
+  DaemonConfig,
+  LogConfig,
+  EditorConfig,
+  BrowserConfig,
+} from './config/index.js';
 export * as paths from './config/paths.js';
 
 // Logger

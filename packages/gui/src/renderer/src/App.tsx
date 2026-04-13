@@ -1,6 +1,8 @@
 import type { ShortcutsConfig } from '@/lib/api';
 import { matchesShortcut } from '@/lib/shortcuts';
+import { useBrowserStore } from '@/stores/browser-store';
 import { useConfigStore } from '@/stores/config-store';
+import { useEditorStore } from '@/stores/editor-store';
 import {
   Bell,
   Bot,
@@ -62,8 +64,19 @@ function NavShortcuts() {
 
 export function App() {
   // Load config once on mount — subsequent changes are pushed by PATCH /config.
+  // After the initial fetch, hydrate session-level defaults (editor mode +
+  // browser sort) from config. These one-shot writes only apply to the current
+  // session; users can still change them live without the settings overriding.
   useEffect(() => {
-    useConfigStore.getState().fetch();
+    void useConfigStore
+      .getState()
+      .fetch()
+      .then(() => {
+        const { editor, browser } = useConfigStore.getState();
+        useEditorStore.getState().setMode(editor.default_mode);
+        const sortKey = `${browser.default_sort_field}_${browser.default_sort_direction}` as const;
+        useBrowserStore.getState().setSortKey(sortKey);
+      });
   }, []);
 
   return (

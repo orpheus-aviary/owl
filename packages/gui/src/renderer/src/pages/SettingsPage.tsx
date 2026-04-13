@@ -1,4 +1,5 @@
 import { AppearanceSection } from '@/components/settings/AppearanceSection';
+import { CustomSection } from '@/components/settings/CustomSection';
 import { ShortcutsSection } from '@/components/settings/ShortcutsSection';
 import { cn } from '@/lib/utils';
 import { useState } from 'react';
@@ -51,7 +52,7 @@ export function SettingsPage() {
         <div className="mx-auto max-w-2xl px-8 py-6">
           {active === 'shortcuts' && <ShortcutsSection />}
           {active === 'appearance' && <AppearanceSection />}
-          {active === 'custom' && <PlaceholderSection title="自定义" />}
+          {active === 'custom' && <CustomSection />}
           {active === 'advanced' && <PlaceholderSection title="高级" />}
         </div>
       </div>
