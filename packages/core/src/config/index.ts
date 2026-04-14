@@ -78,6 +78,7 @@ export interface ShortcutsConfig {
   nav_todo: string;
   nav_ai: string;
   nav_settings: string;
+  toggle_folder_panel: string;
 }
 
 export interface OwlConfig {
@@ -120,6 +121,7 @@ export const DEFAULT_CONFIG: OwlConfig = {
     nav_todo: 'Mod-Digit5',
     nav_ai: 'Mod-Digit6',
     nav_settings: 'Mod-Digit7',
+    toggle_folder_panel: 'Mod-KeyB',
   },
 };
 

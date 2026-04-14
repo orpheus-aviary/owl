@@ -18,6 +18,7 @@ const DEFAULT_SHORTCUTS: ShortcutsConfig = {
   nav_todo: 'Mod-Digit5',
   nav_ai: 'Mod-Digit6',
   nav_settings: 'Mod-Digit7',
+  toggle_folder_panel: 'Mod-KeyB',
 };
 
 const DEFAULT_FONT: OwlConfig['font'] = {

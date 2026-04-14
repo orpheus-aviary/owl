@@ -44,6 +44,22 @@ export interface ParsedTag {
   tagValue: string;
 }
 
+export interface Folder {
+  id: string;
+  name: string;
+  parent_id: string | null;
+  position: number;
+  created_at: string;
+  updated_at: string;
+  device_id: string | null;
+}
+
+export interface FolderReorderItem {
+  id: string;
+  parent_id: string | null;
+  position: number;
+}
+
 // ─── API Client ─────────────────────────────────────────
 
 declare global {
@@ -157,6 +173,28 @@ export const batchRestoreNotes = (ids: string[]) =>
 export const batchPermanentDeleteNotes = (ids: string[]) =>
   request<{ count: number }>('POST', '/notes/batch-permanent-delete', { ids });
 
+// Folders
+export const listFolders = () => request<Folder[]>('GET', '/folders');
+
+export const createFolder = (data: {
+  name: string;
+  parent_id?: string | null;
+  position?: number;
+}) => request<Folder>('POST', '/folders', data);
+
+export const updateFolder = (
+  id: string,
+  data: { name?: string; parent_id?: string | null; position?: number },
+) => request<Folder>('PUT', `/folders/${id}`, data);
+
+export const deleteFolder = (id: string) => request<null>('DELETE', `/folders/${id}`);
+
+export const reorderFolders = (items: FolderReorderItem[]) =>
+  request<{ count: number }>('PATCH', '/folders/reorder', { items });
+
+export const moveNoteToFolder = (id: string, folderId: string | null) =>
+  request<Note>('PATCH', `/notes/${id}/move`, { folder_id: folderId });
+
 // Tags
 export const listTags = (search?: string) => {
   const qs = search ? `?search=${encodeURIComponent(search)}` : '';
@@ -223,6 +261,7 @@ export interface ShortcutsConfig {
   nav_todo: string;
   nav_ai: string;
   nav_settings: string;
+  toggle_folder_panel: string;
 }
 
 export type LlmApiFormat = 'openai' | 'anthropic';

@@ -22,6 +22,7 @@ const ROWS: ShortcutRow[] = [
   { key: 'nav_todo', label: '导航到待办' },
   { key: 'nav_ai', label: '导航到 AI' },
   { key: 'nav_settings', label: '导航到设置' },
+  { key: 'toggle_folder_panel', label: '切换文件夹面板' },
 ];
 
 export function ShortcutsSection() {

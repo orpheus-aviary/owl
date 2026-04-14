@@ -1,12 +1,15 @@
+import { FolderPanel } from '@/components/FolderPanel';
 import type { ShortcutsConfig } from '@/lib/api';
 import { matchesShortcut } from '@/lib/shortcuts';
 import { useBrowserStore } from '@/stores/browser-store';
 import { useConfigStore } from '@/stores/config-store';
 import { useEditorStore } from '@/stores/editor-store';
+import { useFolderStore } from '@/stores/folder-store';
 import {
   Bell,
   Bot,
   CheckSquare,
+  FolderTree,
   type LucideIcon,
   PenSquare,
   Search,
@@ -40,20 +43,38 @@ const NAV_ITEMS: NavItem[] = [
   { path: '/settings', label: '设置', icon: Settings, shortcutKey: 'nav_settings' },
 ];
 
+/**
+ * Global window-level shortcut dispatcher. Page navigation (Cmd+1..7) fires
+ * everywhere; the folder panel toggle is scoped away from the CodeMirror
+ * editor because its default Cmd+B collides with the markdown bold command.
+ */
+function dispatchNavShortcut(e: KeyboardEvent, navigate: (path: string) => void): boolean {
+  const shortcuts = useConfigStore.getState().shortcuts;
+  for (const item of NAV_ITEMS) {
+    const binding = shortcuts[item.shortcutKey];
+    if (binding && matchesShortcut(e, binding)) {
+      e.preventDefault();
+      navigate(item.path);
+      return true;
+    }
+  }
+  const toggleBinding = shortcuts.toggle_folder_panel;
+  if (toggleBinding && matchesShortcut(e, toggleBinding)) {
+    const target = e.target as Element | null;
+    if (target?.closest('.cm-editor')) return false;
+    e.preventDefault();
+    useFolderStore.getState().togglePanel();
+    return true;
+  }
+  return false;
+}
+
 function NavShortcuts() {
   const navigate = useNavigate();
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      const shortcuts = useConfigStore.getState().shortcuts;
-      for (const item of NAV_ITEMS) {
-        const binding = shortcuts[item.shortcutKey];
-        if (binding && matchesShortcut(e, binding)) {
-          e.preventDefault();
-          navigate(item.path);
-          return;
-        }
-      }
+      dispatchNavShortcut(e, navigate);
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
@@ -79,12 +100,29 @@ export function App() {
       });
   }, []);
 
+  const panelOpen = useFolderStore((s) => s.panelOpen);
+  const togglePanel = useFolderStore((s) => s.togglePanel);
+
   return (
     <HashRouter>
       <NavShortcuts />
       <div className="flex h-screen bg-background text-foreground">
         {/* Sidebar */}
         <nav className="flex flex-col w-16 shrink-0 border-r border-border bg-sidebar text-sidebar-foreground select-none">
+          {/* Tool toggle — distinct color to separate it from the page nav below */}
+          <button
+            type="button"
+            onClick={togglePanel}
+            className={`flex flex-col items-center justify-center gap-0.5 h-14 text-[10px] transition-colors ${
+              panelOpen
+                ? 'text-sidebar-primary-foreground bg-sidebar-primary'
+                : 'text-sidebar-primary hover:bg-sidebar-primary/10'
+            }`}
+            title="文件夹 (Cmd+B)"
+          >
+            <FolderTree className="size-4" />
+            文件夹
+          </button>
           {NAV_ITEMS.map((item) => (
             <NavLink
               key={item.path}
@@ -104,6 +142,8 @@ export function App() {
             </NavLink>
           ))}
         </nav>
+
+        {panelOpen && <FolderPanel />}
 
         {/* Main content */}
         <main className="flex-1 overflow-hidden">
