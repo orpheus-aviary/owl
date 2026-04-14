@@ -42,6 +42,23 @@ export type {
   ListNotesOptions,
 } from './notes/index.js';
 
+// Folders
+export {
+  createFolder,
+  getFolder,
+  listFolders,
+  updateFolder,
+  deleteFolder,
+  reorderFolders,
+  getFolderSubtreeIds,
+} from './folders/index.js';
+export type {
+  Folder,
+  CreateFolderInput,
+  UpdateFolderInput,
+  ReorderFolderItem,
+} from './folders/index.js';
+
 // Tags
 export {
   parseTag,

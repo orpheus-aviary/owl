@@ -598,4 +598,167 @@ describe('daemon API', () => {
     });
     assert.equal(res.statusCode, 400);
   });
+
+  // ── Folders ──
+
+  describe('folders CRUD', () => {
+    it('creates, lists, renames, moves, deletes folders', async () => {
+      const createRes = await app.inject({
+        method: 'POST',
+        url: '/folders',
+        payload: { name: 'Parent' },
+      });
+      assert.equal(createRes.statusCode, 201);
+      const parent = createRes.json().data;
+
+      const childRes = await app.inject({
+        method: 'POST',
+        url: '/folders',
+        payload: { name: 'Child', parent_id: parent.id },
+      });
+      const child = childRes.json().data;
+      assert.equal(child.parent_id, parent.id);
+      assert.equal(child.position, 0);
+
+      // Rename
+      const renameRes = await app.inject({
+        method: 'PUT',
+        url: `/folders/${child.id}`,
+        payload: { name: 'Renamed' },
+      });
+      assert.equal(renameRes.json().data.name, 'Renamed');
+
+      // List (flat)
+      const listRes = await app.inject({ method: 'GET', url: '/folders' });
+      const all = listRes.json().data as { id: string }[];
+      assert.ok(all.some((f) => f.id === parent.id));
+      assert.ok(all.some((f) => f.id === child.id));
+
+      // Create a note in the child and verify include_descendants=true/false
+      const noteRes = await app.inject({
+        method: 'POST',
+        url: '/notes',
+        payload: { content: 'note in child', folder_id: child.id },
+      });
+      const note = noteRes.json().data;
+
+      const recursive = await app.inject({
+        method: 'GET',
+        url: `/notes?folder_id=${parent.id}`,
+      });
+      assert.ok((recursive.json().data as { id: string }[]).some((n) => n.id === note.id));
+
+      const exact = await app.inject({
+        method: 'GET',
+        url: `/notes?folder_id=${parent.id}&include_descendants=false`,
+      });
+      assert.ok(!(exact.json().data as { id: string }[]).some((n) => n.id === note.id));
+
+      // Move note via PATCH /notes/:id/move
+      const moveRes = await app.inject({
+        method: 'PATCH',
+        url: `/notes/${note.id}/move`,
+        payload: { folder_id: parent.id },
+      });
+      assert.equal(moveRes.statusCode, 200);
+      assert.equal(moveRes.json().data.folderId, parent.id);
+
+      // Delete child (parent still exists); note was moved so nothing to promote
+      const delRes = await app.inject({ method: 'DELETE', url: `/folders/${child.id}` });
+      assert.equal(delRes.statusCode, 200);
+
+      // Delete parent and verify the note's folder_id is reset to null
+      await app.inject({ method: 'DELETE', url: `/folders/${parent.id}` });
+      const reloaded = await app.inject({ method: 'GET', url: `/notes/${note.id}` });
+      assert.equal(reloaded.json().data.folderId, null);
+
+      // Clean up
+      await app.inject({ method: 'POST', url: `/notes/${note.id}/permanent-delete` });
+    });
+
+    it('promotes children to grandparent when a middle folder is deleted', async () => {
+      const root = (
+        await app.inject({ method: 'POST', url: '/folders', payload: { name: 'R' } })
+      ).json().data;
+      const mid = (
+        await app.inject({
+          method: 'POST',
+          url: '/folders',
+          payload: { name: 'M', parent_id: root.id },
+        })
+      ).json().data;
+      const leaf = (
+        await app.inject({
+          method: 'POST',
+          url: '/folders',
+          payload: { name: 'L', parent_id: mid.id },
+        })
+      ).json().data;
+
+      await app.inject({ method: 'DELETE', url: `/folders/${mid.id}` });
+
+      const list = (await app.inject({ method: 'GET', url: '/folders' })).json().data as {
+        id: string;
+        parent_id: string | null;
+      }[];
+      const leafRow = list.find((f) => f.id === leaf.id);
+      assert.equal(leafRow?.parent_id, root.id);
+
+      // Clean up
+      await app.inject({ method: 'DELETE', url: `/folders/${leaf.id}` });
+      await app.inject({ method: 'DELETE', url: `/folders/${root.id}` });
+    });
+
+    it('rejects creating folder with missing name', async () => {
+      const res = await app.inject({ method: 'POST', url: '/folders', payload: { name: '' } });
+      assert.equal(res.statusCode, 400);
+    });
+
+    it('rejects moving a folder into its own descendant', async () => {
+      const p = (
+        await app.inject({ method: 'POST', url: '/folders', payload: { name: 'P' } })
+      ).json().data;
+      const c = (
+        await app.inject({
+          method: 'POST',
+          url: '/folders',
+          payload: { name: 'C', parent_id: p.id },
+        })
+      ).json().data;
+      const res = await app.inject({
+        method: 'PUT',
+        url: `/folders/${p.id}`,
+        payload: { parent_id: c.id },
+      });
+      assert.equal(res.statusCode, 400);
+
+      await app.inject({ method: 'DELETE', url: `/folders/${c.id}` });
+      await app.inject({ method: 'DELETE', url: `/folders/${p.id}` });
+    });
+
+    it('reorders folders in batch', async () => {
+      const a = (
+        await app.inject({ method: 'POST', url: '/folders', payload: { name: 'RA' } })
+      ).json().data;
+      const b = (
+        await app.inject({ method: 'POST', url: '/folders', payload: { name: 'RB' } })
+      ).json().data;
+
+      const res = await app.inject({
+        method: 'PATCH',
+        url: '/folders/reorder',
+        payload: {
+          items: [
+            { id: a.id, parent_id: null, position: 100 },
+            { id: b.id, parent_id: null, position: 101 },
+          ],
+        },
+      });
+      assert.equal(res.statusCode, 200);
+      assert.equal(res.json().data.count, 2);
+
+      await app.inject({ method: 'DELETE', url: `/folders/${a.id}` });
+      await app.inject({ method: 'DELETE', url: `/folders/${b.id}` });
+    });
+  });
 });

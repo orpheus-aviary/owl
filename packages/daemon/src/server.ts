@@ -2,6 +2,7 @@ import cors from '@fastify/cors';
 import Fastify from 'fastify';
 import type { AppContext } from './context.js';
 import { registerConfigRoutes } from './routes/config.js';
+import { registerFolderRoutes } from './routes/folders.js';
 import { registerNoteRoutes } from './routes/notes.js';
 import { registerSystemRoutes } from './routes/system.js';
 import { registerTagRoutes } from './routes/tags.js';
@@ -20,6 +21,7 @@ export function buildServer(ctx: AppContext) {
 
   // Register routes
   registerNoteRoutes(app, ctx);
+  registerFolderRoutes(app, ctx);
   registerTagRoutes(app, ctx);
   registerTodoRoutes(app, ctx);
   registerConfigRoutes(app, ctx);

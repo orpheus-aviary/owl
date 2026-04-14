@@ -4,6 +4,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { updateFtsTagsText } from '../db/fts.js';
 import type { OwlDatabase } from '../db/index.js';
 import { noteTags, notes, tags } from '../db/schema.js';
+import { getFolderSubtreeIds } from '../folders/index.js';
 import type { ParsedTag } from '../tags/parser.js';
 import { contentHash } from './hash.js';
 
@@ -40,6 +41,12 @@ export interface UpdateNoteInput {
 export interface ListNotesOptions {
   q?: string;
   folderId?: string | null;
+  /**
+   * When `folderId` is a concrete id, whether to also include notes from
+   * descendant folders (expanded via recursive CTE). Defaults to `true`.
+   * Ignored when `folderId` is `null` (root/unfiled) or `undefined` (all).
+   */
+  includeDescendants?: boolean;
   trashLevel?: number;
   tagValues?: string[];
   sortBy?: 'updated' | 'created';
@@ -108,6 +115,7 @@ export function listNotes(
   const {
     q,
     folderId,
+    includeDescendants = true,
     trashLevel = 0,
     tagValues,
     page = 1,
@@ -171,9 +179,15 @@ export function listNotes(
   const conditions = [eq(notes.trashLevel, trashLevel)];
 
   if (folderId !== undefined) {
-    conditions.push(
-      folderId === null ? sql`${notes.folderId} IS NULL` : eq(notes.folderId, folderId),
-    );
+    if (folderId === null) {
+      conditions.push(sql`${notes.folderId} IS NULL`);
+    } else if (includeDescendants) {
+      const subtreeIds = getFolderSubtreeIds(sqlite, folderId);
+      if (subtreeIds.length === 0) return { items: [], total: 0 };
+      conditions.push(inArray(notes.folderId, subtreeIds));
+    } else {
+      conditions.push(eq(notes.folderId, folderId));
+    }
   }
 
   if (matchingIds) {

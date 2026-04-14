@@ -21,6 +21,7 @@ export function registerNoteRoutes(app: FastifyInstance, ctx: AppContext): void 
     const query = req.query as {
       q?: string;
       folder_id?: string;
+      include_descendants?: string;
       trash_level?: string;
       tags?: string;
       sort_by?: string;
@@ -32,6 +33,7 @@ export function registerNoteRoutes(app: FastifyInstance, ctx: AppContext): void 
     const result = listNotes(ctx.db, ctx.sqlite, {
       q: query.q,
       folderId: query.folder_id === 'null' ? null : query.folder_id,
+      includeDescendants: query.include_descendants !== 'false',
       trashLevel: query.trash_level ? Number(query.trash_level) : 0,
       tagValues: query.tags ? query.tags.split(',') : undefined,
       sortBy: query.sort_by === 'created' ? 'created' : 'updated',

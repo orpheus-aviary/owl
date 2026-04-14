@@ -53,12 +53,18 @@ export function parseTodosFromContent(content: string): TodoItem[] {
 interface TodoQueryOpts {
   filterChecked: boolean | undefined;
   folderId: string | null | undefined;
+  includeDescendants: boolean;
 }
 
-function parseTodoQuery(query: { checked?: string; folder_id?: string }): TodoQueryOpts {
+function parseTodoQuery(query: {
+  checked?: string;
+  folder_id?: string;
+  include_descendants?: string;
+}): TodoQueryOpts {
   return {
     filterChecked: query.checked === undefined ? undefined : query.checked === 'true',
     folderId: query.folder_id === 'null' ? null : query.folder_id,
+    includeDescendants: query.include_descendants !== 'false',
   };
 }
 
@@ -86,16 +92,14 @@ function buildTodoGroup(
 export function registerTodoRoutes(app: FastifyInstance, ctx: AppContext): void {
   // GET /todos — list all todos across non-trashed notes, grouped by note
   app.get('/todos', async (req, reply) => {
-    const { filterChecked, folderId } = parseTodoQuery(
-      req.query as { checked?: string; folder_id?: string },
+    const { filterChecked, folderId, includeDescendants } = parseTodoQuery(
+      req.query as { checked?: string; folder_id?: string; include_descendants?: string },
     );
 
-    // Fetch all non-trashed notes, optionally constrained by folder.
-    // P2-0 scope: no folder recursion yet — that lands in P2-5 along with
-    // the recursive CTE helper.
     const result = listNotes(ctx.db, ctx.sqlite, {
       trashLevel: 0,
       folderId,
+      includeDescendants,
       limit: 10000, // todo extraction runs on all notes; cap generously
     });
 
