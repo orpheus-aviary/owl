@@ -40,10 +40,11 @@
 | P2-2 | 设置 — 外观栏（窗口大小 + 全局字体偏移 + 编辑器字号/行高，CSS 变量） | — |
 | P2-3 | 设置 — 自定义栏（LLM API + 测试连接 + auto_delete_days + 默认模式/排序） | `73e7ea0` |
 | P2-4 | 设置 — 高级栏（AI 上下文参数 + 日志配置 + 日志级别切换） | `88b9079` |
-| fix | trash sticky-deadline（auto_delete_at 列 + 非递增语义 + 剩余时间格式化 + 独立 cleanup timer） | — |
+| fix | trash sticky-deadline（auto_delete_at 列 + 非递增语义 + 独立 cleanup timer + daemon /config 值校验 + GUI ESM spawn 修复 + `just daemon-restart`） | `d70428a` |
 
-- 测试：102 个全部通过（core 69 + daemon 33）
+- 测试：103 个全部通过（core 69 + daemon 34）
 - Lint + Typecheck：零错误（8 个 pre-existing warnings）
+- 决策文档：`docs/plans/2026-04-14-trash-sticky-semantics.md`
 
 ### 下一步：P2-5 文件夹管理面板
 
@@ -78,7 +79,7 @@ P2 commit 分解（11 步）：
 ### 实施阶段总览
 
 ```
-P0 ✅ → P1 ✅ → P2 实施中（P2-0 ✅，P2-1 ~ P2-10 待开发） → P3（CLI+外部调用） → P4（Migration）
+P0 ✅ → P1 ✅ → P2 实施中（P2-0 ~ P2-4 ✅，P2-5 ~ P2-10 待开发） → P3（CLI+外部调用） → P4（Migration）
 ```
 
 ## 关键文件
