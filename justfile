@@ -64,6 +64,14 @@ dev:
 dev-daemon:
     pnpm --filter @owl/daemon run dev
 
+# Rebuild daemon and stop the running instance. If `dev-daemon` is active
+# under `node --watch`, it auto-respawns with the new code; otherwise run
+# `just dev-daemon` yourself afterwards.
+[group('dev')]
+daemon-restart:
+    pnpm --filter @owl/daemon run build
+    node packages/daemon/dist/cli.js stop-daemon
+
 # ─── Clean ──────────────────────────────────────────────
 
 [group('clean')]

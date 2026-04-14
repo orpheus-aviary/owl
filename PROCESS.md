@@ -1,6 +1,6 @@
 # 开发进度
 
-## 当前状态：P2 实施中（P2-4 完成）
+## 当前状态：P2 实施中（trash sticky-deadline fix 完成）
 
 ### 已完成
 
@@ -39,12 +39,13 @@
 | P2-1 | 设置页面框架 + 快捷键自定义栏（daemon /config API + 12 项快捷键录制） | `dba637b` |
 | P2-2 | 设置 — 外观栏（窗口大小 + 全局字体偏移 + 编辑器字号/行高，CSS 变量） | — |
 | P2-3 | 设置 — 自定义栏（LLM API + 测试连接 + auto_delete_days + 默认模式/排序） | `73e7ea0` |
-| P2-4 | 设置 — 高级栏（AI 上下文参数 + 日志配置 + 日志级别切换） | — |
+| P2-4 | 设置 — 高级栏（AI 上下文参数 + 日志配置 + 日志级别切换） | `88b9079` |
+| fix | trash sticky-deadline（auto_delete_at 列 + 非递增语义 + 剩余时间格式化 + 独立 cleanup timer） | — |
 
-- 测试：93 个全部通过（core 61 + daemon 32）
+- 测试：102 个全部通过（core 69 + daemon 33）
 - Lint + Typecheck：零错误（8 个 pre-existing warnings）
 
-### 下一步：trash sticky-deadline fix（粘性截止时间 + 剩余时间展示格式化）
+### 下一步：P2-5 文件夹管理面板
 
 **P2 设计文档：** `docs/plans/2026-04-12-p2-design.md`
 

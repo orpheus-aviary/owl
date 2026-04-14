@@ -27,6 +27,25 @@ function deepAssign(
   return target;
 }
 
+/**
+ * Validate the incoming config patch values. Returns `null` if OK, or an
+ * error message string describing the first violation. Structural filtering
+ * (section whitelist) happens separately — this only checks values inside
+ * already-allowed sections.
+ */
+function validatePatch(filtered: Record<string, unknown>): string | null {
+  const trash = filtered.trash;
+  if (trash && typeof trash === 'object') {
+    const days = (trash as { auto_delete_days?: unknown }).auto_delete_days;
+    if (days !== undefined) {
+      if (!Number.isInteger(days) || (days as number) < 1 || (days as number) > 3650) {
+        return 'trash.auto_delete_days must be an integer between 1 and 3650';
+      }
+    }
+  }
+  return null;
+}
+
 /** Whitelist of top-level config sections the HTTP API is allowed to patch. */
 const ALLOWED_SECTIONS = new Set<keyof OwlConfig>([
   'llm',
@@ -114,9 +133,23 @@ export function registerConfigRoutes(app: FastifyInstance, ctx: AppContext): voi
       }
     }
 
+    // Value-level validation (e.g. auto_delete_days=0 would defeat the
+    // level-2 review buffer). The GUI already clamps these, but external
+    // agents hitting the daemon directly shouldn't be able to poison config.
+    const validationError = validatePatch(filtered);
+    if (validationError) {
+      return fail(reply, 400, validationError, 'INVALID_CONFIG');
+    }
+
     try {
       deepAssign(ctx.config as unknown as Record<string, unknown>, filtered);
       saveConfig(ctx.config, ctx.configPath);
+      // When the trash auto-delete threshold changes, recompute all sticky
+      // deadlines and rearm the cleanup timer. This only ever pulls deadlines
+      // earlier — never extends them — so it's safe to run on any patch.
+      if ('trash' in filtered) {
+        ctx.scheduler.onTrashThresholdChanged();
+      }
       ok(reply, ctx.config, 'config updated');
     } catch (err) {
       ctx.logger.error({ err }, 'failed to save config');

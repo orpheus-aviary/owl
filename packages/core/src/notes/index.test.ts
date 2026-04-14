@@ -104,21 +104,41 @@ describe('notes CRUD', () => {
 
   it('soft deletes a note', () => {
     const note = createNote(db, sqlite, { content: 'Delete me' });
-    assert.ok(deleteNote(db, note.id));
+    assert.ok(deleteNote(db, note.id, 30));
 
     const deleted = getNote(db, note.id);
     assert.ok(deleted);
     assert.equal(deleted.trashLevel, 1);
+    // Level 1 does not stamp a deadline
+    assert.equal(deleted.autoDeleteAt, null);
   });
 
-  it('restores a note', () => {
+  it('stamps auto_delete_at when reaching level 2', () => {
+    const note = createNote(db, sqlite, { content: 'Promote me' });
+    deleteNote(db, note.id, 30); // → level 1
+    const before = Date.now();
+    deleteNote(db, note.id, 7); // → level 2
+    const promoted = getNote(db, note.id);
+    assert.ok(promoted);
+    assert.equal(promoted.trashLevel, 2);
+    assert.ok(promoted.autoDeleteAt);
+    const deadline = promoted.autoDeleteAt.getTime();
+    // Should be ~ now + 7 days
+    assert.ok(deadline >= before + 7 * 86_400_000 - 1000);
+    assert.ok(deadline <= Date.now() + 7 * 86_400_000 + 1000);
+  });
+
+  it('restores a note and clears auto_delete_at', () => {
     const note = createNote(db, sqlite, { content: 'Restore me' });
-    deleteNote(db, note.id);
+    deleteNote(db, note.id, 30);
+    deleteNote(db, note.id, 30); // level 2, stamped
+    assert.ok(getNote(db, note.id)?.autoDeleteAt);
     assert.ok(restoreNote(db, note.id));
 
     const restored = getNote(db, note.id);
     assert.ok(restored);
-    assert.equal(restored.trashLevel, 0);
+    assert.equal(restored.trashLevel, 1);
+    assert.equal(restored.autoDeleteAt, null);
   });
 
   it('permanently deletes a note', () => {
@@ -130,14 +150,14 @@ describe('notes CRUD', () => {
   it('batch deletes notes', () => {
     const n1 = createNote(db, sqlite, { content: 'Batch 1' });
     const n2 = createNote(db, sqlite, { content: 'Batch 2' });
-    const count = batchDeleteNotes(db, [n1.id, n2.id]);
+    const count = batchDeleteNotes(db, [n1.id, n2.id], 30);
     assert.equal(count, 2);
   });
 
   it('batch restores notes', () => {
     const n1 = createNote(db, sqlite, { content: 'Batch restore 1' });
     const n2 = createNote(db, sqlite, { content: 'Batch restore 2' });
-    batchDeleteNotes(db, [n1.id, n2.id]);
+    batchDeleteNotes(db, [n1.id, n2.id], 30);
     const count = batchRestoreNotes(db, [n1.id, n2.id]);
     assert.equal(count, 2);
   });
@@ -181,7 +201,7 @@ describe('listAlarmNotes', () => {
       content: '# Trashed alarm',
       tags: [{ tagType: '/alarm', tagValue: '2026-05-01T10:00:00' }],
     });
-    deleteNote(db, note.id);
+    deleteNote(db, note.id, 30);
 
     const result = listAlarmNotes(db, sqlite);
     // Only the alarm note from the first test should remain

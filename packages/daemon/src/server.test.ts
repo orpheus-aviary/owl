@@ -36,8 +36,8 @@ describe('daemon API', () => {
     const deviceId = ensureDeviceId(db);
 
     const logger = createConsoleLogger('test', 'silent');
-    scheduler = new ReminderScheduler(db, sqlite, logger);
     ctxConfig = structuredClone(DEFAULT_CONFIG);
+    scheduler = new ReminderScheduler(db, sqlite, ctxConfig, logger);
     app = buildServer({
       db,
       sqlite,
@@ -515,6 +515,70 @@ describe('daemon API', () => {
         payload: '"a string"',
       });
       assert.equal(res.statusCode, 400);
+    });
+
+    it('PATCH /config rejects invalid trash.auto_delete_days', async () => {
+      for (const bad of [0, -1, 3651, 1.5, '7', null]) {
+        const res = await app.inject({
+          method: 'PATCH',
+          url: '/config',
+          payload: { trash: { auto_delete_days: bad } },
+        });
+        assert.equal(res.statusCode, 400, `expected 400 for ${JSON.stringify(bad)}`);
+        assert.equal(res.json().error_code, 'INVALID_CONFIG');
+      }
+      // Boundary-legal values pass.
+      for (const good of [1, 3650, 30]) {
+        const res = await app.inject({
+          method: 'PATCH',
+          url: '/config',
+          payload: { trash: { auto_delete_days: good } },
+        });
+        assert.equal(res.statusCode, 200, `expected 200 for ${good}`);
+      }
+      // Leave auto_delete_days at 30 for subsequent tests.
+      assert.equal(ctxConfig.trash.auto_delete_days, 30);
+    });
+
+    it('PATCH /config trash pulls existing deadlines earlier but never extends them', async () => {
+      // Create a note, soft-delete it twice to land in level 2. The default
+      // threshold is 30, so auto_delete_at ≈ now + 30d.
+      const create = await app.inject({
+        method: 'POST',
+        url: '/notes',
+        payload: { content: 'trash ttl test' },
+      });
+      const id = create.json().data.id;
+      await app.inject({ method: 'DELETE', url: `/notes/${id}` }); // level 1
+      await app.inject({ method: 'DELETE', url: `/notes/${id}` }); // level 2
+      const afterDelete = await app.inject({ method: 'GET', url: `/notes/${id}` });
+      const initialDeadline = new Date(afterDelete.json().data.autoDeleteAt).getTime();
+      const now = Date.now();
+      assert.ok(initialDeadline >= now + 29 * 86_400_000);
+      assert.ok(initialDeadline <= now + 31 * 86_400_000);
+
+      // Lower threshold to 7 — deadline should come in
+      await app.inject({
+        method: 'PATCH',
+        url: '/config',
+        payload: { trash: { auto_delete_days: 7 } },
+      });
+      const afterLower = await app.inject({ method: 'GET', url: `/notes/${id}` });
+      const loweredDeadline = new Date(afterLower.json().data.autoDeleteAt).getTime();
+      assert.ok(loweredDeadline <= Date.now() + 7 * 86_400_000 + 5000);
+
+      // Raise back to 30 — deadline must NOT extend
+      await app.inject({
+        method: 'PATCH',
+        url: '/config',
+        payload: { trash: { auto_delete_days: 30 } },
+      });
+      const afterRaise = await app.inject({ method: 'GET', url: `/notes/${id}` });
+      const raisedDeadline = new Date(afterRaise.json().data.autoDeleteAt).getTime();
+      assert.equal(raisedDeadline, loweredDeadline);
+
+      // Permanently delete to clean up
+      await app.inject({ method: 'POST', url: `/notes/${id}/permanent-delete` });
     });
   });
 

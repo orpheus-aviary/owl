@@ -1,5 +1,5 @@
 import type Database from 'better-sqlite3';
-import { and, eq, lte } from 'drizzle-orm';
+import { and, eq, isNotNull, lte, sql } from 'drizzle-orm';
 import type { OwlDatabase } from '../db/index.js';
 import { noteTags, notes, reminderStatus, tags } from '../db/schema.js';
 
@@ -142,20 +142,18 @@ export function getNoteTitle(db: OwlDatabase, noteId: string): string {
 }
 
 /**
- * Permanently delete notes with trash_level=2 and trashedAt older than `days` days.
- * Returns count of deleted notes.
+ * Permanently delete level-2 trash notes whose sticky `auto_delete_at`
+ * deadline has passed. Returns the number of deletions.
  */
-export function cleanupExpiredTrash(
-  db: OwlDatabase,
-  _sqlite: Database.Database,
-  days: number,
-): number {
-  const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+export function cleanupExpiredTrash(db: OwlDatabase, _sqlite: Database.Database): number {
+  const now = new Date();
 
   const expired = db
     .select({ id: notes.id })
     .from(notes)
-    .where(and(eq(notes.trashLevel, 2), lte(notes.trashedAt, cutoff)))
+    .where(
+      and(eq(notes.trashLevel, 2), isNotNull(notes.autoDeleteAt), lte(notes.autoDeleteAt, now)),
+    )
     .all();
 
   if (expired.length === 0) return 0;
@@ -165,4 +163,43 @@ export function cleanupExpiredTrash(
   }
 
   return expired.length;
+}
+
+/**
+ * Recompute `auto_delete_at` for all level-2 trash notes given the current
+ * threshold. The deadline is monotonically non-increasing:
+ *
+ *   new_deadline = min(existing_deadline, now + thresholdDays)
+ *
+ * - Lowering the threshold pulls deadlines earlier.
+ * - Raising the threshold leaves existing deadlines untouched.
+ * - Notes that somehow ended up in level 2 with NULL (pre-migration data)
+ *   are treated as if their deadline were infinity and get stamped.
+ */
+export function recomputeTrashDeadlines(db: OwlDatabase, thresholdDays: number): number {
+  const ceiling = Date.now() + thresholdDays * 86_400_000;
+
+  const result = db
+    .update(notes)
+    .set({
+      autoDeleteAt: sql`MIN(COALESCE(${notes.autoDeleteAt}, ${ceiling}), ${ceiling})`,
+    })
+    .where(eq(notes.trashLevel, 2))
+    .run();
+
+  return result.changes;
+}
+
+/**
+ * Return the earliest pending `auto_delete_at` timestamp (ms) across all
+ * level-2 trash notes, or `null` if none exist. Used by the scheduler to
+ * arm its next cleanup timer.
+ */
+export function getNextTrashDeadline(db: OwlDatabase): number | null {
+  const row = db
+    .select({ deadline: sql<number>`MIN(${notes.autoDeleteAt})` })
+    .from(notes)
+    .where(and(eq(notes.trashLevel, 2), isNotNull(notes.autoDeleteAt)))
+    .get();
+  return row?.deadline ?? null;
 }

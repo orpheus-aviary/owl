@@ -7,10 +7,12 @@ import { createNote, updateNote } from '../notes/index.js';
 import {
   cleanupExpiredTrash,
   getNextPendingReminder,
+  getNextTrashDeadline,
   getOverdueReminders,
   getPendingReminders,
   markFired,
   normalizeFireAt,
+  recomputeTrashDeadlines,
   syncReminders,
 } from './index.js';
 
@@ -160,42 +162,175 @@ describe('cleanupExpiredTrash', () => {
     sqlite.close();
   });
 
-  it('deletes notes trashed over N days ago', () => {
+  it('deletes level-2 notes with auto_delete_at in the past', () => {
     const note = createNote(db, sqlite, { content: '# Old trash' });
     const noteId = note.id;
 
-    // Set trash_level=2 and trashedAt to 40 days ago via raw SQL
-    const fortyDaysAgo = Date.now() - 40 * 24 * 60 * 60 * 1000;
+    // Put it into level 2 with an already-passed deadline
+    const pastDeadline = Date.now() - 60_000;
     sqlite
-      .prepare('UPDATE notes SET trash_level = 2, trashed_at = ? WHERE id = ?')
-      .run(fortyDaysAgo, noteId);
+      .prepare('UPDATE notes SET trash_level = 2, auto_delete_at = ? WHERE id = ?')
+      .run(pastDeadline, noteId);
 
-    const count = cleanupExpiredTrash(db, sqlite, 30);
+    const count = cleanupExpiredTrash(db, sqlite);
     assert.equal(count, 1);
 
-    // Verify note is gone
     const row = sqlite.prepare('SELECT id FROM notes WHERE id = ?').get(noteId);
     assert.equal(row, undefined);
   });
 
-  it('does not delete recently trashed notes', () => {
+  it('does not delete level-2 notes with a future deadline', () => {
     const note = createNote(db, sqlite, { content: '# Recent trash' });
     const noteId = note.id;
 
-    // Set trash_level=2 and trashedAt to 5 days ago
-    const fiveDaysAgo = Date.now() - 5 * 24 * 60 * 60 * 1000;
+    const future = Date.now() + 10 * 86_400_000;
     sqlite
-      .prepare('UPDATE notes SET trash_level = 2, trashed_at = ? WHERE id = ?')
-      .run(fiveDaysAgo, noteId);
+      .prepare('UPDATE notes SET trash_level = 2, auto_delete_at = ? WHERE id = ?')
+      .run(future, noteId);
 
-    const count = cleanupExpiredTrash(db, sqlite, 30);
+    const count = cleanupExpiredTrash(db, sqlite);
     assert.equal(count, 0);
 
-    // Verify note still exists
     const row = sqlite.prepare('SELECT id FROM notes WHERE id = ?').get(noteId) as
       | { id: string }
       | undefined;
     assert.ok(row);
-    assert.equal(row.id, noteId);
+  });
+
+  it('ignores level-2 notes with NULL auto_delete_at (pre-migration data)', () => {
+    const note = createNote(db, sqlite, { content: '# Legacy trash' });
+    sqlite
+      .prepare('UPDATE notes SET trash_level = 2, auto_delete_at = NULL WHERE id = ?')
+      .run(note.id);
+
+    const count = cleanupExpiredTrash(db, sqlite);
+    assert.equal(count, 0);
+  });
+});
+
+describe('recomputeTrashDeadlines', () => {
+  let db: OwlDatabase;
+  let sqlite: Database.Database;
+
+  before(() => {
+    const result = createDatabase({ dbPath: ':memory:' });
+    db = result.db;
+    sqlite = result.sqlite;
+  });
+
+  after(() => {
+    sqlite.close();
+  });
+
+  function putInLevel2(noteId: string, deadline: number | null): void {
+    sqlite
+      .prepare('UPDATE notes SET trash_level = 2, auto_delete_at = ? WHERE id = ?')
+      .run(deadline, noteId);
+  }
+
+  function readDeadline(noteId: string): number | null {
+    const row = sqlite.prepare('SELECT auto_delete_at FROM notes WHERE id = ?').get(noteId) as
+      | { auto_delete_at: number | null }
+      | undefined;
+    return row?.auto_delete_at ?? null;
+  }
+
+  it('lowering threshold pulls deadlines earlier', () => {
+    const note = createNote(db, sqlite, { content: '# Pull in' });
+    // Start with a far-out deadline, like threshold was 30
+    putInLevel2(note.id, Date.now() + 30 * 86_400_000);
+
+    recomputeTrashDeadlines(db, 7);
+    const d = readDeadline(note.id);
+    assert.ok(d);
+    // Should be ~now + 7d, not 30d
+    const now = Date.now();
+    assert.ok(d <= now + 7 * 86_400_000 + 1000);
+    assert.ok(d >= now + 7 * 86_400_000 - 5000);
+  });
+
+  it('raising threshold does not extend existing deadlines', () => {
+    const note = createNote(db, sqlite, { content: '# Stay put' });
+    // Note has a 5-day deadline already
+    const shortDeadline = Date.now() + 5 * 86_400_000;
+    putInLevel2(note.id, shortDeadline);
+
+    recomputeTrashDeadlines(db, 30);
+    const d = readDeadline(note.id);
+    // Must remain ≈ shortDeadline, not jump to 30 days
+    assert.equal(d, shortDeadline);
+  });
+
+  it('null deadline (legacy row) gets stamped with the current threshold', () => {
+    const note = createNote(db, sqlite, { content: '# Legacy' });
+    putInLevel2(note.id, null);
+
+    recomputeTrashDeadlines(db, 14);
+    const d = readDeadline(note.id);
+    assert.ok(d);
+    const expected = Date.now() + 14 * 86_400_000;
+    assert.ok(Math.abs((d ?? 0) - expected) < 5000);
+  });
+
+  it('user scenario: 30 → 7 → wait 1d → 30 keeps the 6-day remaining', () => {
+    const note = createNote(db, sqlite, { content: '# Scenario' });
+    // Start with a 30-day deadline
+    const t0 = Date.now();
+    putInLevel2(note.id, t0 + 30 * 86_400_000);
+
+    // Lower to 7 — deadline should come in
+    recomputeTrashDeadlines(db, 7);
+    const d1 = readDeadline(note.id);
+    assert.ok(d1 && d1 <= t0 + 7 * 86_400_000 + 1000);
+
+    // Simulate "one day has passed" — bump the deadline back one day so our
+    // recompute sees it as if we'd gone through a real day.
+    const simulatedDeadline = (d1 ?? 0) - 86_400_000;
+    sqlite
+      .prepare('UPDATE notes SET auto_delete_at = ? WHERE id = ?')
+      .run(simulatedDeadline, note.id);
+
+    // Raise back to 30 — deadline must NOT move
+    recomputeTrashDeadlines(db, 30);
+    const d2 = readDeadline(note.id);
+    assert.equal(d2, simulatedDeadline);
+  });
+});
+
+describe('getNextTrashDeadline', () => {
+  let db: OwlDatabase;
+  let sqlite: Database.Database;
+
+  before(() => {
+    const result = createDatabase({ dbPath: ':memory:' });
+    db = result.db;
+    sqlite = result.sqlite;
+  });
+
+  after(() => {
+    sqlite.close();
+  });
+
+  it('returns null when no level-2 notes exist', () => {
+    assert.equal(getNextTrashDeadline(db), null);
+  });
+
+  it('returns the earliest non-null deadline', () => {
+    const a = createNote(db, sqlite, { content: '# A' });
+    const b = createNote(db, sqlite, { content: '# B' });
+    const c = createNote(db, sqlite, { content: '# C — no deadline' });
+
+    const t = Date.now();
+    sqlite
+      .prepare('UPDATE notes SET trash_level = 2, auto_delete_at = ? WHERE id = ?')
+      .run(t + 100_000, a.id);
+    sqlite
+      .prepare('UPDATE notes SET trash_level = 2, auto_delete_at = ? WHERE id = ?')
+      .run(t + 50_000, b.id);
+    sqlite
+      .prepare('UPDATE notes SET trash_level = 2, auto_delete_at = NULL WHERE id = ?')
+      .run(c.id);
+
+    assert.equal(getNextTrashDeadline(db), t + 50_000);
   });
 });

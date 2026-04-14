@@ -39,6 +39,7 @@ export function createDatabase(options: DatabaseOptions): {
   sqlite.pragma('busy_timeout = 5000');
 
   createTables(sqlite);
+  migrateSchema(sqlite);
   createFts(sqlite);
 
   const db = drizzle(sqlite, { schema });
@@ -48,6 +49,19 @@ export function createDatabase(options: DatabaseOptions): {
 
 function createTables(sqlite: BetterSqlite3.Database): void {
   sqlite.exec(DDL);
+}
+
+/**
+ * Idempotent schema migrations for pre-existing databases. Each check does a
+ * `PRAGMA table_info` lookup and adds any missing columns. Safe to run on
+ * every startup.
+ */
+function migrateSchema(sqlite: BetterSqlite3.Database): void {
+  const notesCols = sqlite.pragma('table_info(notes)') as { name: string }[];
+  const hasAutoDeleteAt = notesCols.some((c) => c.name === 'auto_delete_at');
+  if (!hasAutoDeleteAt) {
+    sqlite.prepare('ALTER TABLE notes ADD COLUMN auto_delete_at INTEGER').run();
+  }
 }
 
 const DDL = `
@@ -68,6 +82,7 @@ const DDL = `
     created_at    INTEGER NOT NULL,
     updated_at    INTEGER NOT NULL,
     trashed_at    INTEGER,
+    auto_delete_at INTEGER,
     device_id     TEXT,
     content_hash  TEXT,
     content       TEXT NOT NULL

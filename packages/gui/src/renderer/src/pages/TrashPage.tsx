@@ -8,15 +8,32 @@ import type { Note } from '@/lib/api';
 import { RotateCcw, Search, Trash2, X } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-const AUTO_PURGE_DAYS = 30;
+/**
+ * Format the time remaining until a note's sticky auto-delete deadline.
+ * Returns `null` when the note has no deadline yet (e.g. level-1 trash).
+ *
+ * - `>= 24h`   → `N 天后清除`
+ * - `>= 1h`    → `H 小时 M 分后清除`
+ * - `> 0`      → `M 分后清除`
+ * - `<= 0`     → `即将清除`
+ */
+function formatRemaining(autoDeleteAt: string | null): string | null {
+  if (!autoDeleteAt) return null;
+  const diffMs = new Date(autoDeleteAt).getTime() - Date.now();
+  if (diffMs <= 0) return '即将清除';
 
-/** Calculate remaining days before auto-purge (from trashedAt). */
-function remainingDays(trashedAt: string | null): number {
-  if (!trashedAt) return AUTO_PURGE_DAYS;
-  const trashed = new Date(trashedAt).getTime();
-  const deadline = trashed + AUTO_PURGE_DAYS * 24 * 60 * 60 * 1000;
-  const remaining = Math.ceil((deadline - Date.now()) / (24 * 60 * 60 * 1000));
-  return Math.max(0, remaining);
+  const HOUR = 60 * 60 * 1000;
+  const DAY = 24 * HOUR;
+
+  if (diffMs >= DAY) {
+    const days = Math.ceil(diffMs / DAY);
+    return `${days} 天后清除`;
+  }
+
+  const hours = Math.floor(diffMs / HOUR);
+  const mins = Math.floor((diffMs % HOUR) / 60_000);
+  if (hours > 0) return `${hours} 小时 ${mins} 分后清除`;
+  return `${Math.max(1, mins)} 分后清除`;
 }
 
 type TrashTab = 1 | 2;
@@ -41,7 +58,7 @@ function TrashNoteRow({
   onRestore: () => void;
   onDelete: () => void;
 }) {
-  const days = tab === 2 ? remainingDays(note.trashedAt) : null;
+  const remaining = tab === 2 ? formatRemaining(note.autoDeleteAt) : null;
 
   return (
     <div className="flex items-start">
@@ -71,10 +88,8 @@ function TrashNoteRow({
             <Trash2 className="size-3.5" />
           </Button>
         </div>
-        {days !== null && (
-          <span className="text-xs text-red-500 font-medium whitespace-nowrap">
-            {days > 0 ? `${days} 天后清除` : '即将清除'}
-          </span>
+        {remaining !== null && (
+          <span className="text-xs text-red-500 font-medium whitespace-nowrap">{remaining}</span>
         )}
       </div>
     </div>

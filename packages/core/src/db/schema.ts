@@ -24,6 +24,12 @@ export const notes = sqliteTable('notes', {
   createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
   updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull(),
   trashedAt: integer('trashed_at', { mode: 'timestamp_ms' }),
+  /**
+   * Sticky auto-delete deadline for trash_level=2 notes.
+   * Can only move earlier (never later) when the threshold config changes —
+   * see `recomputeTrashDeadlines`. NULL means "not yet in level-2 trash".
+   */
+  autoDeleteAt: integer('auto_delete_at', { mode: 'timestamp_ms' }),
   deviceId: text('device_id'),
   contentHash: text('content_hash'),
   content: text('content').notNull(),

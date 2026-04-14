@@ -17,6 +17,7 @@ export interface NoteWithTags {
   createdAt: Date;
   updatedAt: Date;
   trashedAt: Date | null;
+  autoDeleteAt: Date | null;
   deviceId: string | null;
   contentHash: string | null;
   tags: { id: string; tagType: string; tagValue: string | null }[];
@@ -270,16 +271,26 @@ export function updateNote(
   return getNote(db, id);
 }
 
-/** Soft delete: increment trash_level */
-export function deleteNote(db: OwlDatabase, id: string): boolean {
+/**
+ * Soft delete: increment trash_level. When a note enters level 2
+ * ("即将清除"), stamp `auto_delete_at = now + thresholdDays`. When it enters
+ * level 1 the deadline stays NULL — auto-cleanup only targets level 2.
+ */
+export function deleteNote(db: OwlDatabase, id: string, thresholdDays: number): boolean {
   const note = db.select().from(notes).where(eq(notes.id, id)).get();
   if (!note) return false;
 
+  const now = new Date();
+  const newLevel = note.trashLevel + 1;
+  const autoDeleteAt =
+    newLevel === 2 ? new Date(now.getTime() + thresholdDays * 86_400_000) : note.autoDeleteAt;
+
   db.update(notes)
     .set({
-      trashLevel: note.trashLevel + 1,
-      trashedAt: new Date(),
-      updatedAt: new Date(),
+      trashLevel: newLevel,
+      trashedAt: now,
+      autoDeleteAt,
+      updatedAt: now,
     })
     .where(eq(notes.id, id))
     .run();
@@ -287,7 +298,7 @@ export function deleteNote(db: OwlDatabase, id: string): boolean {
   return true;
 }
 
-/** Restore: decrement trash_level */
+/** Restore: decrement trash_level. Clears `auto_delete_at` unconditionally. */
 export function restoreNote(db: OwlDatabase, id: string): boolean {
   const note = db.select().from(notes).where(eq(notes.id, id)).get();
   if (!note || note.trashLevel === 0) return false;
@@ -297,6 +308,7 @@ export function restoreNote(db: OwlDatabase, id: string): boolean {
     .set({
       trashLevel: newLevel,
       trashedAt: newLevel === 0 ? null : note.trashedAt,
+      autoDeleteAt: null,
       updatedAt: new Date(),
     })
     .where(eq(notes.id, id))
@@ -311,21 +323,13 @@ export function permanentDeleteNote(db: OwlDatabase, id: string): boolean {
   return result.changes > 0;
 }
 
-/** Batch soft delete */
-export function batchDeleteNotes(db: OwlDatabase, ids: string[]): number {
+/** Batch soft delete — see `deleteNote` for the `auto_delete_at` semantics. */
+export function batchDeleteNotes(db: OwlDatabase, ids: string[], thresholdDays: number): number {
   if (ids.length === 0) return 0;
-  const now = new Date();
   let count = 0;
 
   for (const id of ids) {
-    const note = db.select().from(notes).where(eq(notes.id, id)).get();
-    if (note) {
-      db.update(notes)
-        .set({ trashLevel: note.trashLevel + 1, trashedAt: now, updatedAt: now })
-        .where(eq(notes.id, id))
-        .run();
-      count++;
-    }
+    if (deleteNote(db, id, thresholdDays)) count++;
   }
 
   return count;

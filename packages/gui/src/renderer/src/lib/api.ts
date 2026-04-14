@@ -22,6 +22,8 @@ export interface Note {
   createdAt: string;
   updatedAt: string;
   trashedAt: string | null;
+  /** Sticky auto-delete deadline for trash_level=2 notes (ISO string). */
+  autoDeleteAt: string | null;
   deviceId: string | null;
   contentHash: string | null;
   tags: NoteTag[];

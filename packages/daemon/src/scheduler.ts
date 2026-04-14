@@ -1,12 +1,15 @@
 import {
   type Logger,
+  type OwlConfig,
   type OwlDatabase,
   type ReminderRecord,
   cleanupExpiredTrash,
   getNextPendingReminder,
+  getNextTrashDeadline,
   getNoteTitle,
   getOverdueReminders,
   markFired,
+  recomputeTrashDeadlines,
   schema,
   syncReminders,
 } from '@owl/core';
@@ -23,6 +26,7 @@ const FREQ_PRIORITY: Record<string, number> = {
 
 export class ReminderScheduler {
   private timer: ReturnType<typeof setTimeout> | null = null;
+  private trashTimer: ReturnType<typeof setTimeout> | null = null;
   private heartbeatInterval: ReturnType<typeof setInterval> | null = null;
   private lastCheckTime: number = Date.now();
   private readonly HEARTBEAT_MS = 5_000;
@@ -31,13 +35,18 @@ export class ReminderScheduler {
   constructor(
     private readonly db: OwlDatabase,
     private readonly sqlite: Database.Database,
+    private readonly config: OwlConfig,
     private readonly logger: Logger,
   ) {}
 
   start(): void {
     this.logger.info('Reminder scheduler starting');
+    // Bring any pre-migration level-2 notes (auto_delete_at=NULL) up to date
+    // and re-apply the current threshold as a ceiling.
+    recomputeTrashDeadlines(this.db, this.config.trash.auto_delete_days);
     this.scanOverdue();
     this.scheduleNext();
+    this.scheduleNextTrashCleanup();
     this.startHeartbeat();
   }
 
@@ -45,6 +54,10 @@ export class ReminderScheduler {
     if (this.timer) {
       clearTimeout(this.timer);
       this.timer = null;
+    }
+    if (this.trashTimer) {
+      clearTimeout(this.trashTimer);
+      this.trashTimer = null;
     }
     if (this.heartbeatInterval) {
       clearInterval(this.heartbeatInterval);
@@ -71,10 +84,60 @@ export class ReminderScheduler {
       this.logger.info({ count: overdue.length }, 'Fired overdue reminders');
     }
 
-    const deleted = cleanupExpiredTrash(this.db, this.sqlite, 30);
+    const deleted = cleanupExpiredTrash(this.db, this.sqlite);
     if (deleted > 0) {
       this.logger.info({ count: deleted }, 'Cleaned up expired trash notes');
     }
+  }
+
+  /**
+   * Arm a timer for the next `auto_delete_at` deadline. When it fires we run
+   * a cleanup pass and recursively schedule the next. Call this after config
+   * changes or after soft-deletes to keep the timer accurate. Independent of
+   * `scheduleNext()` which is reminder-driven.
+   */
+  scheduleNextTrashCleanup(): void {
+    if (this.trashTimer) {
+      clearTimeout(this.trashTimer);
+      this.trashTimer = null;
+    }
+
+    const nextDeadline = getNextTrashDeadline(this.db);
+    if (nextDeadline === null) {
+      this.logger.debug('No pending trash deadlines to schedule');
+      return;
+    }
+
+    const rawDelay = Math.max(0, nextDeadline - Date.now());
+    // Node's setTimeout overflows past ~24.8 days (int32 ms). Cap the single
+    // timer at 24h and re-check on every tick; this also doubles as a slow
+    // heartbeat for trash cleanup.
+    const MAX_DELAY = 24 * 60 * 60 * 1000;
+    const delay = Math.min(rawDelay, MAX_DELAY);
+
+    this.trashTimer = setTimeout(() => {
+      const deleted = cleanupExpiredTrash(this.db, this.sqlite);
+      if (deleted > 0) {
+        this.logger.info({ count: deleted }, 'Cleaned up expired trash notes (timer)');
+      }
+      this.scheduleNextTrashCleanup();
+    }, delay);
+
+    this.logger.debug(
+      { deadline: new Date(nextDeadline).toISOString(), delayMs: delay, rawDelayMs: rawDelay },
+      'Scheduled next trash cleanup',
+    );
+  }
+
+  /**
+   * Called by PATCH /config when `trash.auto_delete_days` changes. Pulls
+   * deadlines inward (if threshold was lowered) and re-arms the cleanup
+   * timer. Never deletes anything immediately — the user's threshold change
+   * is treated as a ceiling adjustment, not a destructive action.
+   */
+  onTrashThresholdChanged(): void {
+    recomputeTrashDeadlines(this.db, this.config.trash.auto_delete_days);
+    this.scheduleNextTrashCleanup();
   }
 
   scheduleNext(): void {
@@ -106,6 +169,7 @@ export class ReminderScheduler {
   onNoteChanged(noteId: string): void {
     syncReminders(this.db, this.sqlite, noteId);
     this.scheduleNext();
+    this.scheduleNextTrashCleanup();
   }
 
   private handleFrequency(fired: ReminderRecord): void {

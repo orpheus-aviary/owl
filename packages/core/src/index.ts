@@ -65,5 +65,7 @@ export {
   getNoteTitle,
   normalizeFireAt,
   cleanupExpiredTrash,
+  recomputeTrashDeadlines,
+  getNextTrashDeadline,
 } from './reminders/index.js';
 export type { ReminderRecord } from './reminders/index.js';

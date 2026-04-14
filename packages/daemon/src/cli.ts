@@ -42,7 +42,7 @@ program
 
     ensureSpecialNotes(db);
     const deviceId = ensureDeviceId(db);
-    const scheduler = new ReminderScheduler(db, sqlite, logger);
+    const scheduler = new ReminderScheduler(db, sqlite, config, logger);
 
     const server = buildServer({ db, sqlite, config, logger, deviceId, scheduler });
 

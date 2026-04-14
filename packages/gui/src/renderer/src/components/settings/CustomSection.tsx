@@ -78,7 +78,10 @@ export function CustomSection() {
   };
   const commitDays = () => {
     const n = Number(daysDraft);
-    if (Number.isFinite(n) && n >= 1 && n !== trash.auto_delete_days) {
+    // Clamp to [1, 3650] to match the daemon's validation. 0 would defeat the
+    // purpose of level-2 trash (instant purge); 3650 = 10 years is the
+    // pragmatic upper bound.
+    if (Number.isFinite(n) && n >= 1 && n <= 3650 && n !== trash.auto_delete_days) {
       patchTrash({ auto_delete_days: Math.round(n) });
     } else {
       setDaysDraft(String(trash.auto_delete_days));
@@ -205,9 +208,14 @@ export function CustomSection() {
       <div>
         <h3 className="text-sm font-medium px-1 pb-2">行为</h3>
         <div className="border border-border rounded-md divide-y divide-border">
-          <SettingRow label="自动删除天数" help="回收站中超过该天数的笔记会被自动清理">
+          <SettingRow
+            label="自动删除天数"
+            help="「即将清除」中超过该天数的笔记会被自动永久删除（最小 1 天，最大 3650 天）"
+          >
             <Input
               type="number"
+              min={1}
+              max={3650}
               className="w-20 h-8"
               value={daysDraft}
               onChange={(e) => setDaysDraft(e.target.value)}
