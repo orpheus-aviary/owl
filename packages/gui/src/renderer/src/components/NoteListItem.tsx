@@ -1,8 +1,10 @@
 import { Badge } from '@/components/ui/badge';
 import type { Note, NoteTag } from '@/lib/api';
 import { formatDateCompact } from '@/lib/date-format';
+import type { DragData } from '@/lib/dnd-types';
 import { sortTags } from '@/lib/tag-sort';
 import { cn } from '@/lib/utils';
+import { useDraggable } from '@dnd-kit/core';
 import { useMemo } from 'react';
 import { TagDisplay } from './TagDisplay';
 
@@ -42,6 +44,7 @@ interface NoteListItemProps {
   onDoubleClick?: () => void;
   activeSort?: 'updated' | 'created';
   onEditTag?: (tag: NoteTag, newValue: string) => void;
+  draggable?: boolean;
 }
 
 export function NoteListItem({
@@ -51,6 +54,7 @@ export function NoteListItem({
   onDoubleClick,
   activeSort,
   onEditTag,
+  draggable = false,
 }: NoteListItemProps) {
   const title = extractTitle(note.content);
   const preview = extractPreview(note.content);
@@ -58,8 +62,18 @@ export function NoteListItem({
   const visible = sorted.slice(0, MAX_VISIBLE_TAGS);
   const overflow = sorted.length - MAX_VISIBLE_TAGS;
 
+  const dragData: DragData = { kind: 'note', noteId: note.id };
+  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
+    id: `note:${note.id}`,
+    data: dragData,
+    disabled: !draggable,
+  });
+
   return (
     <button
+      ref={setNodeRef}
+      {...(draggable ? listeners : {})}
+      {...(draggable ? attributes : {})}
       type="button"
       onClick={onClick}
       onDoubleClick={onDoubleClick}
@@ -67,6 +81,7 @@ export function NoteListItem({
         'w-full text-left px-3 py-2 border-b border-border transition-colors outline-none',
         'hover:bg-accent/50',
         isActive && 'bg-accent border-l-2 border-l-primary',
+        isDragging && 'opacity-40',
       )}
     >
       <div className="flex items-start gap-2">

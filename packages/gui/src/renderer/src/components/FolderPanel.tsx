@@ -13,7 +13,15 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { type FolderNode, buildFolderTree, useFolderStore } from '@/stores/folder-store';
+import type { DragData, DropTarget } from '@/lib/dnd-types';
+import { cn } from '@/lib/utils';
+import {
+  type FolderNode,
+  buildFolderTree,
+  isDescendant,
+  useFolderStore,
+} from '@/stores/folder-store';
+import { useDndContext, useDraggable, useDroppable } from '@dnd-kit/core';
 import {
   ChevronDown,
   ChevronRight,
@@ -23,7 +31,7 @@ import {
   FolderPlus,
   MoreHorizontal,
 } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 
 /** What the renderer is currently editing in a tree row (new / rename). */
 type EditingState =
@@ -163,11 +171,87 @@ export function FolderPanel() {
           </div>
         )}
 
-        {tree.map((node) => (
-          <FolderRow key={node.id} node={node} depth={0} {...handlers} />
+        {tree.map((node, i) => (
+          <Fragment key={node.id}>
+            <DroppableGap id={`gap:root:${i}`} parentId={null} index={i} />
+            <FolderRow node={node} depth={0} {...handlers} />
+          </Fragment>
         ))}
+        {tree.length > 0 && (
+          <DroppableGap id={`gap:root:${tree.length}`} parentId={null} index={tree.length} />
+        )}
       </div>
+
+      {/* Root drop zone lives outside the scroll area so it's always visible
+          at the panel footer, regardless of how many folders exist. */}
+      <RootBlankDrop />
     </aside>
+  );
+}
+
+// ─── Drop zones ────────────────────────────────────────
+
+/**
+ * Returns true iff the current active drag would be rejected if dropped on a
+ * folder node / gap at the given parent chain anchor. Used to suppress the
+ * hover highlight when the drop would noop (self / cycle / already-child).
+ */
+function useInvalidFolderTarget(anchorId: string | null): boolean {
+  const { active } = useDndContext();
+  const folders = useFolderStore((s) => s.folders);
+  const drag = active?.data.current as DragData | undefined;
+  if (!drag || drag.kind !== 'folder') return false;
+  if (anchorId === null) return false; // root target is always valid for a folder
+  if (anchorId === drag.folderId) return true;
+  return isDescendant(folders, drag.folderId, anchorId);
+}
+
+/** Thin 6px-tall drop zone between sibling folders. Shows a 2px highlighted
+ *  horizontal rule when hovered, indicating "insert here". Suppresses the
+ *  indicator when the drop would create a cycle. */
+function DroppableGap({
+  id,
+  parentId,
+  index,
+}: {
+  id: string;
+  parentId: string | null;
+  index: number;
+}) {
+  const data: DropTarget = { kind: 'folder-gap', parentId, index };
+  const { setNodeRef, isOver } = useDroppable({ id, data });
+  const invalid = useInvalidFolderTarget(parentId);
+  const show = isOver && !invalid;
+  return (
+    <div ref={setNodeRef} className="relative h-1.5">
+      {show && (
+        <div className="absolute inset-x-2 top-1/2 h-0.5 -translate-y-1/2 rounded-full bg-sidebar-primary" />
+      )}
+    </div>
+  );
+}
+
+/** Dashed drop zone pinned to the panel footer (outside the scroll area).
+ *  Only rendered while a drag is active, to avoid occupying space at rest.
+ *  Dropping a folder here promotes it to top-level; dropping a note here
+ *  clears its folder_id. */
+function RootBlankDrop() {
+  const { active } = useDndContext();
+  const data: DropTarget = { kind: 'root-blank' };
+  const { setNodeRef, isOver } = useDroppable({ id: 'drop:root-blank', data });
+  if (!active) return null;
+  return (
+    <div
+      ref={setNodeRef}
+      className={cn(
+        'shrink-0 mx-2 mb-2 mt-1 rounded-md border border-dashed py-2 text-center text-[10px] transition-colors',
+        isOver
+          ? 'border-sidebar-primary bg-sidebar-primary/10 text-sidebar-primary'
+          : 'border-border/50 text-muted-foreground/40',
+      )}
+    >
+      移动到根目录
+    </div>
   );
 }
 
@@ -179,6 +263,34 @@ function FolderRow({ node, depth, ...h }: { node: FolderNode; depth: number } & 
   const hasChildren = node.children.length > 0;
   const indent = depth * 12 + 4;
 
+  const dragData: DragData = {
+    kind: 'folder',
+    folderId: node.id,
+    parentId: node.parent_id,
+  };
+  const {
+    attributes,
+    listeners,
+    setNodeRef: setDragRef,
+    isDragging,
+  } = useDraggable({ id: `folder:${node.id}`, data: dragData });
+
+  const nodeDropData: DropTarget = { kind: 'folder-node', folderId: node.id };
+  const { setNodeRef: setNodeDropRef, isOver: nodeIsOver } = useDroppable({
+    id: `node:${node.id}`,
+    data: nodeDropData,
+  });
+  // Suppress hover highlight when dropping here would be rejected
+  // (self or descendant of the active folder drag).
+  const invalidTarget = useInvalidFolderTarget(node.id);
+  const showNodeHover = nodeIsOver && !invalidTarget;
+
+  // Merge drag + drop refs onto the same element
+  const setRowRef = (el: HTMLDivElement | null) => {
+    setDragRef(el);
+    setNodeDropRef(el);
+  };
+
   // Rename takes over the row so the input stretches across the full width.
   if (isRenaming) {
     return (
@@ -188,9 +300,17 @@ function FolderRow({ node, depth, ...h }: { node: FolderNode; depth: number } & 
         </div>
         {isOpen && hasChildren && (
           <div>
-            {node.children.map((child) => (
-              <FolderRow key={child.id} node={child} depth={depth + 1} {...h} />
+            {node.children.map((child, i) => (
+              <Fragment key={child.id}>
+                <DroppableGap id={`gap:${node.id}:${i}`} parentId={node.id} index={i} />
+                <FolderRow node={child} depth={depth + 1} {...h} />
+              </Fragment>
             ))}
+            <DroppableGap
+              id={`gap:${node.id}:${node.children.length}`}
+              parentId={node.id}
+              index={node.children.length}
+            />
           </div>
         )}
       </div>
@@ -204,7 +324,17 @@ function FolderRow({ node, depth, ...h }: { node: FolderNode; depth: number } & 
       <ContextMenu>
         <ContextMenuTrigger asChild>
           <div
-            className="group flex items-center gap-1 pr-1 h-7 hover:bg-sidebar-accent/60 rounded-sm"
+            ref={setRowRef}
+            {...listeners}
+            {...attributes}
+            onDoubleClick={() => hasChildren && h.onToggle(node.id)}
+            className={cn(
+              'group flex items-center gap-1 pr-1 h-7 rounded-sm',
+              isDragging && 'opacity-40',
+              showNodeHover
+                ? 'bg-sidebar-primary/25 outline outline-2 outline-sidebar-primary'
+                : 'hover:bg-sidebar-accent/60',
+            )}
             style={{ paddingLeft: indent }}
           >
             <button
@@ -276,9 +406,17 @@ function FolderRow({ node, depth, ...h }: { node: FolderNode; depth: number } & 
 
       {isOpen && hasChildren && (
         <div>
-          {node.children.map((child) => (
-            <FolderRow key={child.id} node={child} depth={depth + 1} {...h} />
+          {node.children.map((child, i) => (
+            <Fragment key={child.id}>
+              <DroppableGap id={`gap:${node.id}:${i}`} parentId={node.id} index={i} />
+              <FolderRow node={child} depth={depth + 1} {...h} />
+            </Fragment>
           ))}
+          <DroppableGap
+            id={`gap:${node.id}:${node.children.length}`}
+            parentId={node.id}
+            index={node.children.length}
+          />
         </div>
       )}
     </div>

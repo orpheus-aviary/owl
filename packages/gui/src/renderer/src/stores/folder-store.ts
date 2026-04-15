@@ -1,4 +1,4 @@
-import type { Folder } from '@/lib/api';
+import type { Folder, FolderReorderItem } from '@/lib/api';
 import * as api from '@/lib/api';
 import { create } from 'zustand';
 
@@ -19,6 +19,7 @@ interface FolderState {
   create: (name: string, parentId: string | null) => Promise<Folder | null>;
   rename: (id: string, name: string) => Promise<void>;
   move: (id: string, parentId: string | null) => Promise<void>;
+  reorder: (items: FolderReorderItem[]) => Promise<void>;
   remove: (id: string) => Promise<void>;
 
   setPanelOpen: (open: boolean) => void;
@@ -52,6 +53,31 @@ export function buildFolderTree(folders: Folder[]): FolderNode[] {
   };
   sortSiblings(roots);
   return roots;
+}
+
+/**
+ * Returns true iff `targetId` lives anywhere in the subtree rooted at
+ * `ancestorId` (exclusive of ancestor itself). Used to reject drags that
+ * would create a cycle (dragging a folder into its own descendant).
+ */
+export function isDescendant(folders: Folder[], ancestorId: string, targetId: string): boolean {
+  if (ancestorId === targetId) return false;
+  const childrenByParent = new Map<string, string[]>();
+  for (const f of folders) {
+    if (!f.parent_id) continue;
+    const arr = childrenByParent.get(f.parent_id) ?? [];
+    arr.push(f.id);
+    childrenByParent.set(f.parent_id, arr);
+  }
+  const stack = [...(childrenByParent.get(ancestorId) ?? [])];
+  while (stack.length > 0) {
+    const id = stack.pop();
+    if (id === undefined) break;
+    if (id === targetId) return true;
+    const kids = childrenByParent.get(id);
+    if (kids) stack.push(...kids);
+  }
+  return false;
 }
 
 export const useFolderStore = create<FolderState>((set, get) => ({
@@ -101,6 +127,16 @@ export const useFolderStore = create<FolderState>((set, get) => ({
       if (parentId) get().expand(parentId);
     } catch (err) {
       set({ error: (err as Error).message });
+    }
+  },
+
+  reorder: async (items) => {
+    try {
+      await api.reorderFolders(items);
+      await get().fetch();
+    } catch (err) {
+      set({ error: (err as Error).message });
+      await get().fetch(); // refetch to reconcile after failed optimistic update
     }
   },
 

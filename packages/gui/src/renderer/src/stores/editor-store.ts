@@ -12,6 +12,7 @@ export interface TabState {
   originalContent: string;
   tags: NoteTag[];
   originalTags: NoteTag[];
+  folderId: string | null;
   dirty: boolean;
 }
 
@@ -44,6 +45,7 @@ interface EditorState {
   setActiveTab: (noteId: string) => void;
   updateContent: (noteId: string, content: string) => void;
   updateTags: (noteId: string, tags: NoteTag[]) => void;
+  syncTabFolderId: (noteId: string, folderId: string | null) => void;
   markSaved: (noteId: string, content: string, tags: NoteTag[]) => void;
   saveNote: (noteId: string) => Promise<boolean>;
   saveActiveNote: () => Promise<boolean>;
@@ -80,6 +82,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       originalContent: note.content,
       tags,
       originalTags: tags,
+      folderId: note.folderId,
       dirty: false,
     };
     set({ tabs: [...tabs, newTab], activeTabId: note.id });
@@ -133,6 +136,12 @@ export const useEditorStore = create<EditorState>((set, get) => ({
             }
           : t,
       ),
+    }));
+  },
+
+  syncTabFolderId: (noteId, folderId) => {
+    set((state) => ({
+      tabs: state.tabs.map((t) => (t.noteId === noteId ? { ...t, folderId } : t)),
     }));
   },
 

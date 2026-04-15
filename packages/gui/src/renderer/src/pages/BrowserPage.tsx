@@ -261,6 +261,7 @@ export function BrowserPage() {
                   onDoubleClick={() => handleOpenNote(note.id)}
                   activeSort={activeSort}
                   onEditTag={(tag, newValue) => handleEditTag(note.id, tag, newValue)}
+                  draggable
                 />
               </div>
             ))}

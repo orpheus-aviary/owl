@@ -42,7 +42,8 @@
 | P2-4 | 设置 — 高级栏（AI 上下文参数 + 日志配置 + 日志级别切换） | `88b9079` |
 | fix | trash sticky-deadline（auto_delete_at 列 + 非递增语义 + 独立 cleanup timer + daemon /config 值校验 + GUI ESM spawn 修复 + `just daemon-restart`） | `d70428a` |
 | P2-5a | folders 核心模块 + 递归 CTE + daemon `/folders`/`/notes/:id/move` 路由 | `44ea48d` |
-| P2-5b | GUI 文件夹侧边面板（树 + 右键 CRUD + Cmd+B toggle + editor-scoped） | — |
+| P2-5b | GUI 文件夹侧边面板（树 + 右键 CRUD + Cmd+B toggle + editor-scoped） | `fa6d225` |
+| P2-5c | 拖拽（dnd-kit 排序 + 跨父级 move + 拖笔记入文件夹 + cycle 抑制 + 双击展开） | — |
 
 - 测试：119 个全部通过（core 80 + daemon 39）
 - Lint + Typecheck：零错误（8 个 pre-existing warnings）
@@ -63,7 +64,7 @@ P2 commit 分解（11 步）：
 | P2-4 | 设置 — 高级栏（LLM 参数 + 日志） | 前端+配置 | ✅ |
 | P2-5a | 文件夹核心 + daemon API（CRUD + 递归 CTE + 移动笔记） | Core+API | ✅ |
 | P2-5b | GUI 文件夹侧边面板（树 + 右键 CRUD + Cmd+B + context-menu） | 前端 | ✅ |
-| P2-5c | 拖拽（dnd-kit 排序 + 拖笔记入文件夹 + editorStore.folderId 同步） | 前端 | ⏳ |
+| P2-5c | 拖拽（dnd-kit 排序 + 拖笔记入文件夹 + editorStore.folderId 同步） | 前端 | ✅ |
 | P2-6 | 浏览页文件夹筛选（include_descendants） | 前端 | ⏳ |
 | P2-7 | AI Tool Registry + daemon agent loop | 后端 | ⏳ |
 | P2-8 | AI 对话页面（聊天界面 + 草稿机制） | 前端 | ⏳ |
