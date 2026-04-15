@@ -1,3 +1,4 @@
+import { useRequestDeleteNote } from '@/components/DeleteConfirmDialog';
 import { NoteListItem } from '@/components/NoteListItem';
 import { TagFilterPopover } from '@/components/TagFilterPopover';
 import { Badge } from '@/components/ui/badge';
@@ -104,17 +105,13 @@ export function BrowserPage() {
     [navigate],
   );
 
+  const requestDelete = useRequestDeleteNote();
   const handleDeleteNote = useCallback(
-    (noteId: string) => {
-      api
-        .deleteNote(noteId)
-        .then(() => {
-          setSelectedNoteId((prev) => (prev === noteId ? null : prev));
-          return fetchNotes();
-        })
-        .catch(() => {});
+    async (noteId: string) => {
+      await requestDelete(noteId);
+      setSelectedNoteId((prev) => (prev === noteId ? null : prev));
     },
-    [fetchNotes],
+    [requestDelete],
   );
 
   const handleEditTag = useCallback(

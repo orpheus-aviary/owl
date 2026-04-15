@@ -1,10 +1,15 @@
+import { useRequestDeleteNote } from '@/components/DeleteConfirmDialog';
 import { Button } from '@/components/ui/button';
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger,
+} from '@/components/ui/context-menu';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import * as api from '@/lib/api';
-import { useEditorStore } from '@/stores/editor-store';
 import { useNoteStore } from '@/stores/note-store';
-import { Plus, Search } from 'lucide-react';
+import { Plus, Search, Trash2 } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { NoteListItem } from './NoteListItem';
 
@@ -35,18 +40,13 @@ export function NoteList({ activeNoteId, onSelectNote }: NoteListProps) {
     if (note) onSelectNote(note.id);
   }, [createNote, onSelectNote]);
 
+  const requestDelete = useRequestDeleteNote();
   const handleDelete = useCallback(
     async (noteId: string) => {
-      await api.deleteNote(noteId);
-      // Close the tab if this note is open in editor
-      const editorState = useEditorStore.getState();
-      if (editorState.tabs.some((t) => t.noteId === noteId)) {
-        editorState.closeTab(noteId);
-      }
+      await requestDelete(noteId);
       if (selectedId === noteId) setSelectedId(null);
-      fetchNotes();
     },
-    [selectedId, fetchNotes],
+    [selectedId, requestDelete],
   );
 
   // Keyboard delete for selected note
@@ -107,14 +107,24 @@ export function NoteList({ activeNoteId, onSelectNote }: NoteListProps) {
             </div>
           ) : (
             notes.map((note) => (
-              <div key={note.id} data-note-id={note.id}>
-                <NoteListItem
-                  note={note}
-                  isActive={note.id === displayActiveId}
-                  onClick={() => setSelectedId(note.id)}
-                  onDoubleClick={() => onSelectNote(note.id)}
-                />
-              </div>
+              <ContextMenu key={note.id}>
+                <ContextMenuTrigger asChild>
+                  <div data-note-id={note.id}>
+                    <NoteListItem
+                      note={note}
+                      isActive={note.id === displayActiveId}
+                      onClick={() => setSelectedId(note.id)}
+                      onDoubleClick={() => onSelectNote(note.id)}
+                    />
+                  </div>
+                </ContextMenuTrigger>
+                <ContextMenuContent>
+                  <ContextMenuItem variant="destructive" onClick={() => handleDelete(note.id)}>
+                    <Trash2 className="size-3.5" />
+                    删除
+                  </ContextMenuItem>
+                </ContextMenuContent>
+              </ContextMenu>
             ))
           )}
         </div>

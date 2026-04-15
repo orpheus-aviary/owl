@@ -1,3 +1,4 @@
+import { DeleteConfirmDialog } from '@/components/DeleteConfirmDialog';
 import { FolderPanel } from '@/components/FolderPanel';
 import { extractTitle } from '@/components/NoteListItem';
 import { type ShortcutsConfig, moveNoteToFolder } from '@/lib/api';
@@ -269,6 +270,7 @@ export function App() {
           {activeDrag && <DragOverlayCard drag={activeDrag} />}
         </DragOverlay>
       </DndContext>
+      <DeleteConfirmDialog />
     </HashRouter>
   );
 }
