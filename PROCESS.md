@@ -1,6 +1,6 @@
 # 开发进度
 
-## 当前状态：P2 实施中（P2-7d SSE + AI 路由 完成）
+## 当前状态：P2 实施中（P2-7e Tier-2 写工具 + draft/preview 完成 → AI 后端就绪）
 
 ### 已完成
 
@@ -48,12 +48,13 @@
 | P2-7b | Tool registry + 9 个工具（7 read + 2 Tier-1 write）+ WriteToolResult 契约 | `f5ff159` |
 | P2-7c | Agent loop + ConversationStore + 系统提示（Layer 1 recent fill）+ max_context_chars 配置 | — |
 | P2-7d | SSE 端点 + AI 路由（POST /ai/chat、GET/DELETE /ai/conversations、GET /ai/capabilities）+ AppContext 扩展 | — |
+| P2-7e | Tier-2 写工具（create/update_note、create_reminder、apply_update）+ PreviewStore + GUI editorStore 草稿/暂存 | — |
 
-- 测试：156 个全部通过（core 80 + daemon 76）
+- 测试：170 个全部通过（core 80 + daemon 90）
 - Lint + Typecheck：零错误（8 个 pre-existing warnings）
 - 决策文档：`docs/plans/2026-04-14-trash-sticky-semantics.md`、`docs/plans/2026-04-17-p2-7-ai-implementation.md`
 
-### 下一步：P2-7e Tier-2 写工具 + draft/preview
+### 下一步：P2-6 浏览页文件夹筛选 / P2-8 AI 对话页面
 
 **P2 设计文档：** `docs/plans/2026-04-12-p2-design.md`
 
@@ -74,7 +75,7 @@ P2 commit 分解（11 步）：
 | P2-7b | Tool registry + 9 工具（read + Tier-1 write） | 后端 | ✅ |
 | P2-7c | Agent loop + 内存对话 + system-prompt（Layer 1 recent fill） | 后端 | ✅ |
 | P2-7d | SSE 端点 `/ai/chat` + AI 路由 + AppContext 扩展 | 后端 | ✅ |
-| P2-7e | Tier-2 写工具（create/update_note、create_reminder、apply_update）+ draft/preview | 后端 | ⏳ |
+| P2-7e | Tier-2 写工具（create/update_note、create_reminder、apply_update）+ draft/preview | 后端 | ✅ |
 | P2-8 | AI 对话页面（聊天界面 + 草稿机制） | 前端 | ⏳ |
 | P2-9 | 分屏拖拽（列表↔编辑、编辑↔预览） | 前端 | ⏳ |
 | P2-10 | reminder_status 清理（90 天 fired 记录） | 后端 | ⏳ |
