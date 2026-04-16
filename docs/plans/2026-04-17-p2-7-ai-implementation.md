@@ -199,14 +199,15 @@ Rationale: Tier 1 is append-only and low-risk; Tier 2 has multi-line content or 
 
 ```ts
 type AgentEvent =
-  | { type: 'tool_call'; tool: string; args: Record<string, unknown> }
-  | { type: 'tool_result'; tool: string; result: unknown }
+  | { type: 'conversation_id'; conversation_id: string }   // emitted FIRST so the GUI can wire DELETE on close mid-stream
+  | { type: 'tool_call'; tool: string; args: Record<string, unknown>; tool_call_id: string }
+  | { type: 'tool_result'; tool: string; tool_call_id: string; result: unknown; is_error: boolean }
   | { type: 'note_applied'; note_id: string; content: string; appended_text: string }
   | { type: 'draft_ready'; action: 'create' | 'update' | 'create_reminder'; note_id: string; content: string; tags: string[]; folder_id: string | null; original_content?: string; original_tags?: string[]; original_folder_id?: string | null }
   | { type: 'preview_ready'; preview_id: string; action: string; diff: string; content: string; tags: string[]; folder_id?: string | null }
   | { type: 'message'; content: string }
   | { type: 'error'; message: string }
-  | { type: 'done'; conversation_id: string }
+  | { type: 'done'; conversation_id: string; stop_reason: string }
 
 async function* runAgentLoop(options, toolRegistry, llmClient, conversations, toolCtx, config): AsyncGenerator<AgentEvent>
 ```
@@ -214,7 +215,7 @@ async function* runAgentLoop(options, toolRegistry, llmClient, conversations, to
 **Agent loop flow:**
 
 ```
-1. conversations.getOrCreate(conversationId)
+1. conversations.getOrCreate(conversationId) → yield conversation_id
 2. Build system prompt (persona + date/time + Layer 1 recent notes)
 3. Append user message, trim to context_rounds
 4. Loop (max 10 iterations, 120s timeout):
