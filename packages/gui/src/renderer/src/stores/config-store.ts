@@ -44,6 +44,7 @@ const DEFAULT_AI: OwlConfig['ai'] = {
   context_rounds: 3,
   max_fts_notes: 10,
   max_recent_notes: 5,
+  max_context_chars: 30000,
 };
 
 const DEFAULT_LOG: OwlConfig['log'] = {

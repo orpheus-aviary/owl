@@ -9,6 +9,7 @@ export type {
   OwlConfig,
   LlmConfig,
   LlmApiFormat,
+  AiConfig,
   DaemonConfig,
   LogConfig,
   EditorConfig,

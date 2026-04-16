@@ -288,7 +288,12 @@ export interface OwlConfig {
   font: { global_offset: number; editor_font_size: number; editor_line_height: number };
   navigation: { order: string[] };
   daemon: { poll_interval_min: number; port: number };
-  ai: { context_rounds: number; max_fts_notes: number; max_recent_notes: number };
+  ai: {
+    context_rounds: number;
+    max_fts_notes: number;
+    max_recent_notes: number;
+    max_context_chars: number;
+  };
   trash: { auto_delete_days: number };
   log: {
     max_size_mb: number;
