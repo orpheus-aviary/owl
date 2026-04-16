@@ -15,7 +15,7 @@
   "scripts": {
     "build": "tsc",
     "dev": "node --watch dist/cli.js daemon",
-    "test": "node --test dist/**/*.test.js"
+    "test": "node --test 'dist/**/*.test.js'"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.90.0",
