@@ -68,7 +68,11 @@ declare global {
   }
 }
 
-function baseUrl(): string {
+/**
+ * Resolve the daemon base URL. Exported so `sse-client` callers can
+ * compose the `/ai/chat` URL without re-implementing this lookup.
+ */
+export function baseUrl(): string {
   return window.owlAPI?.daemonUrl ?? 'http://127.0.0.1:47010';
 }
 
@@ -313,6 +317,52 @@ export const patchConfig = (delta: Partial<OwlConfig>) =>
 
 export const testLlmConnection = (llm?: Partial<LlmConfig>) =>
   request<{ success: boolean; message: string }>('POST', '/llm/test', llm ?? {});
+
+// ─── AI ────────────────────────────────────────────────
+
+export interface AiToolDescriptor {
+  name: string;
+  description: string;
+  parameters: Record<string, unknown>;
+}
+
+export interface AiConversationSummary {
+  id: string;
+  created_at: string;
+  updated_at: string;
+  message_count: number;
+}
+
+export interface AiPreviewSummary {
+  id: string;
+  action: 'create' | 'update' | 'create_reminder';
+  note_id?: string;
+  content: string;
+  tags: string[];
+  folder_id: string | null;
+  created_at: string;
+  expires_at: string;
+}
+
+export const getAiCapabilities = () =>
+  request<{ tools: AiToolDescriptor[] }>('GET', '/ai/capabilities');
+
+export const listAiConversations = () =>
+  request<{ conversations: AiConversationSummary[] }>('GET', '/ai/conversations');
+
+export const deleteAiConversation = (id: string) =>
+  request<{ id: string }>('DELETE', `/ai/conversations/${id}`);
+
+export const listAiPreviews = () =>
+  request<{ previews: AiPreviewSummary[] }>('GET', '/ai/previews');
+
+export const applyAiPreview = (previewId: string) =>
+  request<{ note_id: string; action: string; message: string }>('POST', '/ai/preview/apply', {
+    preview_id: previewId,
+  });
+
+// Note: POST /ai/chat is SSE-streamed and lives in `lib/sse-client.ts`,
+// invoked with `${baseUrl()}/ai/chat`.
 
 // Tag editing helpers
 
