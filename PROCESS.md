@@ -1,6 +1,6 @@
 # 开发进度
 
-## 当前状态：P2 实施中（P2-7a llm-client + P2-7b tool registry 完成）
+## 当前状态：P2 实施中（P2-7c agent loop 完成）
 
 ### 已完成
 
@@ -46,12 +46,13 @@
 | P2-5c | 拖拽（dnd-kit 排序 + 跨父级 move + 拖笔记入文件夹 + cycle 抑制 + 双击展开） | — |
 | P2-7a | LLM client SDK 适配器（OpenAI + Anthropic 双 SDK，统一 StreamChunk 异步流） | `7424c38` |
 | P2-7b | Tool registry + 9 个工具（7 read + 2 Tier-1 write）+ WriteToolResult 契约 | `f5ff159` |
+| P2-7c | Agent loop + ConversationStore + 系统提示（Layer 1 recent fill）+ max_context_chars 配置 | — |
 
-- 测试：139 个全部通过（core 80 + daemon 59）
+- 测试：149 个全部通过（core 80 + daemon 69）
 - Lint + Typecheck：零错误（8 个 pre-existing warnings）
 - 决策文档：`docs/plans/2026-04-14-trash-sticky-semantics.md`、`docs/plans/2026-04-17-p2-7-ai-implementation.md`
 
-### 下一步：P2-7c Agent loop + Conversations
+### 下一步：P2-7d SSE 端点 + AI 路由
 
 **P2 设计文档：** `docs/plans/2026-04-12-p2-design.md`
 
@@ -70,7 +71,7 @@ P2 commit 分解（11 步）：
 | P2-6 | 浏览页文件夹筛选（include_descendants） | 前端 | ⏳ |
 | P2-7a | LLM client SDK 适配器 | 后端 | ✅ |
 | P2-7b | Tool registry + 9 工具（read + Tier-1 write） | 后端 | ✅ |
-| P2-7c | Agent loop + 内存对话 + system-prompt（Layer 1 recent fill） | 后端 | ⏳ |
+| P2-7c | Agent loop + 内存对话 + system-prompt（Layer 1 recent fill） | 后端 | ✅ |
 | P2-7d | SSE 端点 `/ai/chat` + AI 路由 + AppContext 扩展 | 后端 | ⏳ |
 | P2-7e | Tier-2 写工具（create/update_note、create_reminder、apply_update）+ draft/preview | 后端 | ⏳ |
 | P2-8 | AI 对话页面（聊天界面 + 草稿机制） | 前端 | ⏳ |
