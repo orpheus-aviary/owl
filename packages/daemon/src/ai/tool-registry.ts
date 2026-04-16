@@ -2,6 +2,7 @@ import type { Logger, OwlConfig, OwlDatabase } from '@owl/core';
 import type Database from 'better-sqlite3';
 import type { ReminderScheduler } from '../scheduler.js';
 import type { LlmToolDef } from './llm-client.js';
+import type { PreviewStore } from './preview-store.js';
 
 // ─── Context passed to every tool ──────────────────────────────────────
 
@@ -21,6 +22,8 @@ export interface ToolContext {
   scheduler: ReminderScheduler;
   source: ToolSource;
   logger: Logger;
+  /** Tier-2 write tools deposit external-agent payloads here. */
+  previewStore: PreviewStore;
   /** Filled in lazily by the agent loop / route handler so `get_capabilities` can introspect siblings. */
   registry?: ToolRegistry;
 }

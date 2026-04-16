@@ -41,6 +41,8 @@ export function registerSystemRoutes(app: FastifyInstance): void {
           description: 'Clear an AI conversation',
         },
         { method: 'GET', path: '/ai/capabilities', description: 'Describe AI tool registry' },
+        { method: 'GET', path: '/ai/previews', description: 'List staged external-agent previews' },
+        { method: 'POST', path: '/ai/preview/apply', description: 'Commit a staged preview' },
         { method: 'GET', path: '/status', description: 'Health check' },
         { method: 'GET', path: '/api/capabilities', description: 'List all endpoints' },
       ],

@@ -4,6 +4,7 @@ import { type AgentEvent, runAgentLoop } from '../ai/agent-loop.js';
 import { createLlmClient } from '../ai/llm-client.js';
 import { endSse, initSse, sendSseEvent } from '../ai/sse.js';
 import type { ToolSource } from '../ai/tool-registry.js';
+import { applyPreview } from '../ai/tools/apply-update.js';
 import type { AppContext } from '../context.js';
 import { fail, ok } from '../response.js';
 
@@ -65,6 +66,7 @@ export function registerAiRoutes(app: FastifyInstance, ctx: AppContext): void {
             scheduler: ctx.scheduler,
             source: validation.source,
             logger: ctx.logger,
+            previewStore: ctx.previewStore,
           },
         },
       );
@@ -112,6 +114,41 @@ export function registerAiRoutes(app: FastifyInstance, ctx: AppContext): void {
       parameters: t.parameters,
     }));
     ok(reply, { tools });
+  });
+
+  // ── GET /ai/previews — list active external-agent previews ──────────
+  app.get('/ai/previews', async (_req, reply) => {
+    const previews = ctx.previewStore.list().map((p) => ({
+      id: p.id,
+      action: p.payload.action,
+      note_id: p.payload.note_id,
+      content: p.payload.content,
+      tags: p.payload.tags,
+      folder_id: p.payload.folder_id ?? null,
+      created_at: p.createdAt.toISOString(),
+      expires_at: p.expiresAt.toISOString(),
+    }));
+    ok(reply, { previews });
+  });
+
+  // ── POST /ai/preview/apply — commit a stored preview ────────────────
+  app.post<{ Body: { preview_id?: unknown } }>('/ai/preview/apply', async (req, reply) => {
+    const previewId = typeof req.body?.preview_id === 'string' ? req.body.preview_id.trim() : '';
+    if (!previewId) {
+      fail(reply, 400, 'preview_id is required');
+      return;
+    }
+    const stored = ctx.previewStore.consume(previewId);
+    if (!stored) {
+      fail(reply, 404, `preview not found or expired: ${previewId}`);
+      return;
+    }
+    const result = applyPreview(stored, ctx.db, ctx.sqlite, ctx.deviceId, ctx.scheduler);
+    if ('error' in result) {
+      fail(reply, 400, result.error);
+      return;
+    }
+    ok(reply, result, result.message);
   });
 }
 

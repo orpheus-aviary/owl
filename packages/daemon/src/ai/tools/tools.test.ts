@@ -15,6 +15,7 @@ import {
 } from '@owl/core';
 import type Database from 'better-sqlite3';
 import { ReminderScheduler } from '../../scheduler.js';
+import { PreviewStore } from '../preview-store.js';
 import type { ToolContext } from '../tool-registry.js';
 import { addTodoTool } from './add-todo.js';
 import { appendMemoTool } from './append-memo.js';
@@ -54,6 +55,7 @@ describe('AI tools (P2-7b)', () => {
       scheduler,
       source: 'gui',
       logger,
+      previewStore: new PreviewStore(),
       registry,
     };
   });

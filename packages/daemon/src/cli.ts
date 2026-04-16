@@ -11,6 +11,7 @@ import {
 } from '@owl/core';
 import { Command } from 'commander';
 import { ConversationStore } from './ai/conversations.js';
+import { PreviewStore } from './ai/preview-store.js';
 import { createBuiltinRegistry } from './ai/tools/index.js';
 import { isDaemonRunning, readPid, removePid, writePid } from './pid.js';
 import { ReminderScheduler } from './scheduler.js';
@@ -47,6 +48,7 @@ program
     const scheduler = new ReminderScheduler(db, sqlite, config, logger);
     const toolRegistry = createBuiltinRegistry();
     const conversationStore = new ConversationStore();
+    const previewStore = new PreviewStore();
 
     const server = buildServer({
       db,
@@ -57,6 +59,7 @@ program
       scheduler,
       toolRegistry,
       conversationStore,
+      previewStore,
     });
 
     // Graceful shutdown

@@ -17,6 +17,7 @@ import { ReminderScheduler } from '../scheduler.js';
 import { type AgentEvent, runAgentLoop } from './agent-loop.js';
 import { ConversationStore } from './conversations.js';
 import type { ChatOptions, LlmClient, LlmMessage, LlmToolDef, StreamChunk } from './llm-client.js';
+import { PreviewStore } from './preview-store.js';
 import { createBuiltinRegistry } from './tools/index.js';
 
 // ─── Mock LLM ──────────────────────────────────────────────────────────
@@ -89,7 +90,16 @@ describe('agent loop (P2-7c)', () => {
       db,
       sqlite,
       config,
-      toolCtx: { db, sqlite, config, deviceId, scheduler, source: 'gui' as const, logger },
+      toolCtx: {
+        db,
+        sqlite,
+        config,
+        deviceId,
+        scheduler,
+        source: 'gui' as const,
+        logger,
+        previewStore: new PreviewStore(),
+      },
     };
   }
 

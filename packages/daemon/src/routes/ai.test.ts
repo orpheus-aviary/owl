@@ -13,6 +13,7 @@ import {
 import type Database from 'better-sqlite3';
 import { ConversationStore } from '../ai/conversations.js';
 import type { LlmClient, LlmMessage, LlmToolDef, StreamChunk } from '../ai/llm-client.js';
+import { PreviewStore } from '../ai/preview-store.js';
 import { createBuiltinRegistry } from '../ai/tools/index.js';
 import { ReminderScheduler } from '../scheduler.js';
 import { buildServer } from '../server.js';
@@ -65,6 +66,7 @@ describe('AI routes (P2-7d)', () => {
   let scheduler: ReminderScheduler;
   let config: OwlConfig;
   let conversationStore: ConversationStore;
+  let previewStore: PreviewStore;
   // Tests reassign this; the route reads it on every request.
   let nextLlm: LlmClient | null;
 
@@ -86,6 +88,7 @@ describe('AI routes (P2-7d)', () => {
     };
     scheduler = new ReminderScheduler(db, sqlite, config, logger);
     conversationStore = new ConversationStore();
+    previewStore = new PreviewStore();
 
     app = buildServer({
       db,
@@ -96,6 +99,7 @@ describe('AI routes (P2-7d)', () => {
       scheduler,
       toolRegistry: createBuiltinRegistry(),
       conversationStore,
+      previewStore,
       llmClientFactory: (_cfg: LlmConfig): LlmClient => {
         if (!nextLlm) throw new Error('test forgot to set nextLlm');
         const client = nextLlm;
@@ -242,6 +246,46 @@ describe('AI routes (P2-7d)', () => {
   });
 
   // ── GET /ai/conversations ──
+
+  // ── POST /ai/preview/apply ──
+
+  it('POST /ai/preview/apply commits a stored external preview', async () => {
+    const stored = previewStore.create({
+      action: 'create',
+      content: 'apply via http',
+      tags: ['#http-preview'],
+      folder_id: null,
+    });
+    const res = await app.inject({
+      method: 'POST',
+      url: '/ai/preview/apply',
+      payload: { preview_id: stored.id },
+    });
+    assert.equal(res.statusCode, 200);
+    const body = res.json();
+    assert.equal(body.success, true);
+    assert.equal(body.data.action, 'create');
+    assert.ok(body.data.note_id);
+    // Preview consumed.
+    assert.equal(previewStore.get(stored.id), undefined);
+
+    // 404 on second apply.
+    const again = await app.inject({
+      method: 'POST',
+      url: '/ai/preview/apply',
+      payload: { preview_id: stored.id },
+    });
+    assert.equal(again.statusCode, 404);
+  });
+
+  it('POST /ai/preview/apply 400s on missing preview_id', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/ai/preview/apply',
+      payload: {},
+    });
+    assert.equal(res.statusCode, 400);
+  });
 
   it('GET /ai/conversations lists active conversations', async () => {
     nextLlm = new QueuedLlmClient([
