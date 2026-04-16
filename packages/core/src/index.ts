@@ -84,5 +84,10 @@ export {
   cleanupExpiredTrash,
   recomputeTrashDeadlines,
   getNextTrashDeadline,
+  listRemindersWithStatus,
 } from './reminders/index.js';
-export type { ReminderRecord } from './reminders/index.js';
+export type {
+  ReminderRecord,
+  ReminderWithNote,
+  ListRemindersOptions,
+} from './reminders/index.js';

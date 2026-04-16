@@ -126,6 +126,132 @@ export function markFired(db: OwlDatabase, noteId: string, tagId: string, firedA
     .run();
 }
 
+// ─── Status-aware listing (used by AI tool `get_reminders`) ────────────
+
+export interface ReminderWithNote {
+  noteId: string;
+  noteTitle: string;
+  noteContent: string;
+  tagId: string;
+  fireAt: number;
+  /** 'pending' | 'fired' | 'overdue' (computed from pending + fireAt <= now). */
+  status: 'pending' | 'fired' | 'overdue';
+  firedAt: number | null;
+}
+
+export interface ListRemindersOptions {
+  /**
+   * - 'pending' → status='pending' AND fireAt > now
+   * - 'overdue' → status='pending' AND fireAt <= now
+   * - 'fired'   → status='fired'
+   * - undefined → all
+   */
+  status?: 'pending' | 'fired' | 'overdue';
+  /** Inclusive lower bound (Unix ms). */
+  from?: number;
+  /** Inclusive upper bound (Unix ms). */
+  to?: number;
+  limit?: number;
+  /** When omitted, defaults to Date.now() — overridable for deterministic tests. */
+  now?: number;
+}
+
+/**
+ * Authoritative status-aware reminder listing.
+ *
+ * Joins `reminder_status` (the source of truth for fire/pending state) with
+ * `notes` so callers get titles and content alongside scheduling fields.
+ * Trashed notes are excluded.
+ *
+ * Implementation note: written with raw SQL because drizzle's typed builder
+ * has no clean way to express the `(status='pending' AND fireAt <= now)`
+ * disjunction needed for the 'overdue' bucket alongside trash filtering.
+ */
+export function listRemindersWithStatus(
+  _db: OwlDatabase,
+  sqlite: Database.Database,
+  options: ListRemindersOptions = {},
+): ReminderWithNote[] {
+  const now = options.now ?? Date.now();
+  const limit = options.limit ?? 50;
+
+  const conditions: string[] = ['n.trash_level = 0'];
+  const params: Array<string | number> = [];
+
+  if (options.status === 'pending') {
+    conditions.push('rs.status = ?', 'rs.fire_at > ?');
+    params.push('pending', now);
+  } else if (options.status === 'overdue') {
+    conditions.push('rs.status = ?', 'rs.fire_at <= ?');
+    params.push('pending', now);
+  } else if (options.status === 'fired') {
+    conditions.push('rs.status = ?');
+    params.push('fired');
+  }
+
+  if (options.from !== undefined) {
+    conditions.push('rs.fire_at >= ?');
+    params.push(options.from);
+  }
+  if (options.to !== undefined) {
+    conditions.push('rs.fire_at <= ?');
+    params.push(options.to);
+  }
+
+  params.push(limit);
+
+  const rows = sqlite
+    .prepare(
+      `SELECT
+         rs.note_id     AS noteId,
+         rs.tag_id      AS tagId,
+         rs.fire_at     AS fireAt,
+         rs.status      AS rawStatus,
+         rs.fired_at    AS firedAt,
+         n.content      AS noteContent
+       FROM reminder_status rs
+       JOIN notes n ON n.id = rs.note_id
+       WHERE ${conditions.join(' AND ')}
+       ORDER BY rs.fire_at ASC
+       LIMIT ?`,
+    )
+    .all(...params) as Array<{
+    noteId: string;
+    tagId: string;
+    fireAt: number;
+    rawStatus: string;
+    firedAt: number | null;
+    noteContent: string;
+  }>;
+
+  return rows.map((r) => ({
+    noteId: r.noteId,
+    noteTitle: deriveTitle(r.noteContent),
+    noteContent: r.noteContent,
+    tagId: r.tagId,
+    fireAt: r.fireAt,
+    status: computeStatus(r.rawStatus, r.fireAt, now),
+    firedAt: r.firedAt,
+  }));
+}
+
+function computeStatus(
+  rawStatus: string,
+  fireAt: number,
+  now: number,
+): 'pending' | 'fired' | 'overdue' {
+  if (rawStatus === 'fired') return 'fired';
+  return fireAt <= now ? 'overdue' : 'pending';
+}
+
+function deriveTitle(content: string): string {
+  for (const line of content.split('\n')) {
+    const trimmed = line.replace(/^#+\s*/, '').trim();
+    if (trimmed) return trimmed;
+  }
+  return 'Untitled';
+}
+
 // ─── Utilities ─────────────────────────────────────────
 
 /** First non-empty line of note content, or 'Untitled'. */
