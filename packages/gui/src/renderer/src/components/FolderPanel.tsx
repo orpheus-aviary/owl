@@ -156,7 +156,6 @@ export function FolderPanel() {
   const handleDeleteNote = async (noteId: string) => {
     await requestDelete(noteId);
     setSelectedNoteId((prev) => (prev === noteId ? null : prev));
-    await fetchPanelNotes();
   };
 
   const handlers: RowHandlers = {

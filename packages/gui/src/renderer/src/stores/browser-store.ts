@@ -63,6 +63,7 @@ export const useBrowserStore = create<BrowserState>((set, get) => ({
   },
 
   setFolderId: (id: string | undefined) => {
+    if (get().folderId === id) return;
     set({ folderId: id });
     get().fetchNotes();
   },
