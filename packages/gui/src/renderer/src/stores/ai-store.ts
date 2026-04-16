@@ -2,94 +2,44 @@ import * as api from '@/lib/api';
 import { baseUrl } from '@/lib/api';
 import { type SseHttpError, streamSse } from '@/lib/sse-client';
 import { create } from 'zustand';
+import { type NoteAppliedNotice, dispatchAgentEvent } from './ai-dispatcher';
+import type { ChatMessage, ChatTabState } from './ai-store-types';
+
+export type {
+  ChatRole,
+  ChatToolCall,
+  DraftReadyCard,
+  PreviewReadyCard,
+  ChatMessage,
+  ChatTabState,
+} from './ai-store-types';
+export type { NoteAppliedNotice } from './ai-dispatcher';
 
 /**
  * Chat state for the AI page. One `ChatTabState` per tab in the chat
  * tab bar; each maps to a single backend conversation_id (filled in by
  * the first SSE event from /ai/chat).
  *
- * The store is intentionally split into types + skeleton actions in
- * Step 2; the SSE event dispatcher (Step 3) and Tier-1 / draft handoff
- * (Steps 4-7) layer on top of `sendMessage` without changing the shape.
+ * Step 3 fully wires the SSE event dispatcher (`ai-dispatcher.ts`).
+ * Side-effects beyond the chat state itself (Tier-1 editor merge,
+ * draft handoff to the editor) layer on in Steps 6-7 by reading the
+ * dispatched state — no more changes to this file are needed for them.
  */
-
-// ─── Public types ──────────────────────────────────────────────────────
-
-export type ChatRole = 'user' | 'assistant';
-
-export interface ChatToolCall {
-  id: string; // server tool_call_id
-  name: string;
-  args: Record<string, unknown>;
-  result?: unknown;
-  isError?: boolean;
-}
-
-export interface DraftReadyCard {
-  /** Local random id — used as React key only. */
-  localId: string;
-  action: 'create' | 'update' | 'create_reminder';
-  note_id: string;
-  content: string;
-  tags: string[];
-  folder_id: string | null;
-  original_content?: string;
-  original_tags?: string[];
-  original_folder_id?: string | null;
-  /** Cleared once the user clicks "open" so the card UI can show "已打开". */
-  opened: boolean;
-}
-
-export interface PreviewReadyCard {
-  localId: string;
-  preview_id: string;
-  action: string;
-  diff: string;
-  content: string;
-  tags: string[];
-  folder_id: string | null;
-}
-
-export interface ChatMessage {
-  /** Local id — used as React key only. */
-  id: string;
-  role: ChatRole;
-  /** Streaming text accumulated from `message` events. */
-  content: string;
-  toolCalls: ChatToolCall[];
-  drafts: DraftReadyCard[];
-  previews: PreviewReadyCard[];
-  /** True while the assistant message is still receiving deltas. */
-  isStreaming: boolean;
-  /** Populated by an `error` SSE event. Mutually exclusive with content/toolCalls. */
-  error?: string;
-}
-
-export interface ChatTabState {
-  /** Local id used in React keys + active-tab tracking. Stable across renames. */
-  id: string;
-  /** Server-issued conversation id; null until the first `conversation_id` SSE event. */
-  conversationId: string | null;
-  /** Display title — first user message truncated; '新对话' until then. */
-  title: string;
-  messages: ChatMessage[];
-  /** AbortController for the in-flight request, null when idle. */
-  abortController: AbortController | null;
-  isStreaming: boolean;
-}
 
 interface AiState {
   chats: ChatTabState[];
   activeChatId: string | null;
+  /** Toast queue consumed by `<NoteAppliedToast>` (Step 6). */
+  noteAppliedNotices: NoteAppliedNotice[];
 
   newChat: () => string;
   closeChat: (id: string) => Promise<void>;
   setActiveChat: (id: string) => void;
   sendMessage: (chatId: string, text: string) => Promise<void>;
   abortStreaming: (chatId: string) => void;
+  /** Drop a notice from the queue once its toast has been dismissed. */
+  dismissNoteAppliedNotice: (noticeId: string) => void;
 }
-
-// ─── Implementation ────────────────────────────────────────────────────
 
 const TITLE_MAX = 32;
 
@@ -106,6 +56,7 @@ function localId(): string {
 export const useAiStore = create<AiState>((set, get) => ({
   chats: [],
   activeChatId: null,
+  noteAppliedNotices: [],
 
   newChat: () => {
     const id = localId();
@@ -128,6 +79,12 @@ export const useAiStore = create<AiState>((set, get) => ({
   abortStreaming: (chatId) => {
     const tab = get().chats.find((c) => c.id === chatId);
     tab?.abortController?.abort();
+  },
+
+  dismissNoteAppliedNotice: (noticeId) => {
+    set((state) => ({
+      noteAppliedNotices: state.noteAppliedNotices.filter((n) => n.id !== noticeId),
+    }));
   },
 
   closeChat: async (id) => {
@@ -170,12 +127,6 @@ export const useAiStore = create<AiState>((set, get) => ({
     });
   },
 
-  /**
-   * Fire a user message at the daemon. Step 2 implements the request
-   * shape, optimistic message insertion, and streaming flag bookkeeping.
-   * The SSE *event dispatcher* (Step 3) replaces the inline `onEvent`
-   * stub — full draft/tool/note_applied handling lands then.
-   */
   sendMessage: async (chatId, text) => {
     const trimmed = text.trim();
     if (!trimmed) return;
@@ -222,22 +173,16 @@ export const useAiStore = create<AiState>((set, get) => ({
         body: { message: trimmed, conversation_id: tab.conversationId ?? undefined },
         signal: controller.signal,
         onEvent: (event, data) => {
-          // STEP 3 will replace this stub with the full dispatcher. For
-          // now we only handle the two events the rest of the system
-          // already needs: conversation_id (so closeChat can delete the
-          // server conversation) and message (so the user sees text).
-          if (
-            event === 'conversation_id' &&
-            isObject(data) &&
-            typeof data.conversation_id === 'string'
-          ) {
-            patchTab(set, chatId, (c) => ({
-              ...c,
-              conversationId: data.conversation_id as string,
-            }));
-          } else if (event === 'message' && isObject(data) && typeof data.content === 'string') {
-            appendAssistantText(set, chatId, assistantMsg.id, data.content);
-          }
+          set((state) =>
+            dispatchAgentEvent({
+              state: { chats: state.chats, noteAppliedNotices: state.noteAppliedNotices },
+              chatId,
+              assistantMessageId: assistantMsg.id,
+              event,
+              data,
+              newLocalId: localId,
+            }),
+          );
         },
       });
     } catch (err) {
@@ -288,19 +233,6 @@ function patchAssistantMessage(
         : c,
     ),
   }));
-}
-
-function appendAssistantText(
-  set: SetState,
-  chatId: string,
-  messageId: string,
-  delta: string,
-): void {
-  patchAssistantMessage(set, chatId, messageId, (m) => ({ ...m, content: m.content + delta }));
-}
-
-function isObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 /**
