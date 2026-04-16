@@ -10,6 +10,8 @@ import {
   paths,
 } from '@owl/core';
 import { Command } from 'commander';
+import { ConversationStore } from './ai/conversations.js';
+import { createBuiltinRegistry } from './ai/tools/index.js';
 import { isDaemonRunning, readPid, removePid, writePid } from './pid.js';
 import { ReminderScheduler } from './scheduler.js';
 import { buildServer } from './server.js';
@@ -43,8 +45,19 @@ program
     ensureSpecialNotes(db);
     const deviceId = ensureDeviceId(db);
     const scheduler = new ReminderScheduler(db, sqlite, config, logger);
+    const toolRegistry = createBuiltinRegistry();
+    const conversationStore = new ConversationStore();
 
-    const server = buildServer({ db, sqlite, config, logger, deviceId, scheduler });
+    const server = buildServer({
+      db,
+      sqlite,
+      config,
+      logger,
+      deviceId,
+      scheduler,
+      toolRegistry,
+      conversationStore,
+    });
 
     // Graceful shutdown
     const shutdown = async () => {

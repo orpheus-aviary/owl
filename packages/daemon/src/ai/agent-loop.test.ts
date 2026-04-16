@@ -30,7 +30,6 @@ class MockLlmClient implements LlmClient {
   readonly seenMessages: LlmMessage[][] = [];
   constructor(private readonly chunkQueue: StreamChunk[][]) {}
 
-  // biome-ignore lint/correctness/useYield: implements async iterable contract
   async *chatCompletion(
     messages: LlmMessage[],
     _tools: LlmToolDef[],
@@ -205,9 +204,7 @@ describe('agent loop (P2-7c)', () => {
       { type: 'done', stop_reason: 'tool_use' },
     ];
     const llm = new MockLlmClient([round('a'), round('b'), round('c'), round('d')]);
-    const events = await collect(
-      runAgentLoop({ message: 'go', maxIterations: 3 }, buildDeps(llm)),
-    );
+    const events = await collect(runAgentLoop({ message: 'go', maxIterations: 3 }, buildDeps(llm)));
     const done = events.at(-1);
     assert.ok(done && done.type === 'done');
     assert.equal(done.stop_reason, 'max_iterations');
@@ -226,7 +223,8 @@ describe('agent loop (P2-7c)', () => {
     );
     const events = await collect(runAgentLoop({ message: 'one' }, deps));
     const idEvent = events.find((e) => e.type === 'conversation_id');
-    const conversationId = idEvent && idEvent.type === 'conversation_id' ? idEvent.conversation_id : '';
+    const conversationId =
+      idEvent && idEvent.type === 'conversation_id' ? idEvent.conversation_id : '';
     assert.ok(conversationId);
 
     const llm2 = new MockLlmClient([

@@ -13,6 +13,8 @@ import {
 } from '@owl/core';
 import type { OwlDatabase } from '@owl/core';
 import type Database from 'better-sqlite3';
+import { ConversationStore } from './ai/conversations.js';
+import { createBuiltinRegistry } from './ai/tools/index.js';
 import { ReminderScheduler } from './scheduler.js';
 import { buildServer } from './server.js';
 
@@ -46,6 +48,8 @@ describe('daemon API', () => {
       logger,
       deviceId,
       scheduler,
+      toolRegistry: createBuiltinRegistry(),
+      conversationStore: new ConversationStore(),
     });
     await app.ready();
   });
