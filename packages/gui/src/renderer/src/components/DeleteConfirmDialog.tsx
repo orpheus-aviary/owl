@@ -10,6 +10,7 @@ import {
 import * as api from '@/lib/api';
 import { useBrowserStore } from '@/stores/browser-store';
 import { useEditorStore } from '@/stores/editor-store';
+import { useFolderStore } from '@/stores/folder-store';
 import { useNoteStore } from '@/stores/note-store';
 import { useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -52,6 +53,7 @@ async function performDelete(noteId: string): Promise<void> {
   }
   useNoteStore.getState().fetchNotes();
   useBrowserStore.getState().fetchNotes();
+  useFolderStore.getState().fetchPanelNotes();
 }
 
 /**

@@ -1,4 +1,5 @@
 import { useRequestDeleteNote } from '@/components/DeleteConfirmDialog';
+import { FolderFilterPopover } from '@/components/FolderFilterPopover';
 import { NoteListItem } from '@/components/NoteListItem';
 import { TagFilterPopover } from '@/components/TagFilterPopover';
 import { Badge } from '@/components/ui/badge';
@@ -15,7 +16,8 @@ import * as api from '@/lib/api';
 import type { NoteTag } from '@/lib/api';
 import { type SortKey, useBrowserStore } from '@/stores/browser-store';
 import { openNoteById } from '@/stores/editor-store';
-import { ArrowDownAZ, Search, Trash2, X } from 'lucide-react';
+import { useFolderStore } from '@/stores/folder-store';
+import { ArrowDownAZ, FolderOpen, Search, Trash2, X } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
@@ -31,6 +33,7 @@ export function BrowserPage() {
     query,
     activeTags,
     sortKey,
+    folderId,
     notes,
     total,
     loading,
@@ -38,9 +41,12 @@ export function BrowserPage() {
     addTag,
     removeTag,
     setSortKey,
+    setFolderId,
     fetchNotes,
     resetFilters,
   } = useBrowserStore();
+
+  const folderName = useFolderStore((s) => s.folders.find((f) => f.id === folderId)?.name);
 
   const navigate = useNavigate();
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -200,6 +206,9 @@ export function BrowserPage() {
           {/* Tag filter */}
           <TagFilterPopover activeTags={activeTags} onToggleTag={handleToggleTag} />
 
+          {/* Folder filter */}
+          <FolderFilterPopover activeFolderId={folderId} onSelect={setFolderId} />
+
           {/* Sort */}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -218,10 +227,23 @@ export function BrowserPage() {
           </DropdownMenu>
         </div>
 
-        {/* Active tags */}
-        {activeTags.length > 0 && (
+        {/* Active filters */}
+        {(activeTags.length > 0 || folderId) && (
           <div className="flex items-center gap-1.5 flex-wrap">
             <span className="text-xs text-muted-foreground">已筛选:</span>
+            {folderId && folderName && (
+              <Badge variant="secondary" className="gap-1 text-xs px-2 py-0.5">
+                <FolderOpen className="size-3" />
+                {folderName}
+                <button
+                  type="button"
+                  onClick={() => setFolderId(undefined)}
+                  className="hover:text-destructive"
+                >
+                  <X className="size-3" />
+                </button>
+              </Badge>
+            )}
             {activeTags.map((tag) => (
               <Badge key={tag} variant="secondary" className="gap-1 text-xs px-2 py-0.5">
                 #{tag}
@@ -244,7 +266,7 @@ export function BrowserPage() {
           <div className="p-8 text-center text-sm text-muted-foreground">加载中...</div>
         ) : notes.length === 0 ? (
           <div className="p-8 text-center text-sm text-muted-foreground">
-            {query || activeTags.length > 0 ? '无匹配结果' : '暂无笔记'}
+            {query || activeTags.length > 0 || folderId ? '无匹配结果' : '暂无笔记'}
           </div>
         ) : (
           <>

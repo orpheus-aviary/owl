@@ -163,6 +163,7 @@ async function handleNoteDrop(
     await moveNoteToFolder(drag.noteId, targetFolderId);
     useEditorStore.getState().syncTabFolderId(drag.noteId, targetFolderId);
     useNoteStore.getState().fetchNotes();
+    useFolderStore.getState().fetchPanelNotes();
   } catch (err) {
     console.error('note move failed', err);
   }

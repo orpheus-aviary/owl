@@ -1,4 +1,4 @@
-import type { Folder, FolderReorderItem } from '@/lib/api';
+import type { Folder, FolderReorderItem, Note } from '@/lib/api';
 import * as api from '@/lib/api';
 import { create } from 'zustand';
 
@@ -8,6 +8,8 @@ export interface FolderNode extends Folder {
 
 interface FolderState {
   folders: Folder[];
+  /** All non-trashed notes, used to display notes inline in the folder tree. */
+  panelNotes: Note[];
   /** Ids of folders whose subtree is currently expanded in the panel. */
   expanded: Set<string>;
   /** Panel visibility toggled from the sidebar button. */
@@ -16,6 +18,7 @@ interface FolderState {
   error: string | null;
 
   fetch: () => Promise<void>;
+  fetchPanelNotes: () => Promise<void>;
   create: (name: string, parentId: string | null) => Promise<Folder | null>;
   rename: (id: string, name: string) => Promise<void>;
   move: (id: string, parentId: string | null) => Promise<void>;
@@ -82,6 +85,7 @@ export function isDescendant(folders: Folder[], ancestorId: string, targetId: st
 
 export const useFolderStore = create<FolderState>((set, get) => ({
   folders: [],
+  panelNotes: [],
   expanded: new Set<string>(),
   panelOpen: false,
   loading: false,
@@ -96,6 +100,15 @@ export const useFolderStore = create<FolderState>((set, get) => ({
       set({ error: (err as Error).message });
     } finally {
       set({ loading: false });
+    }
+  },
+
+  fetchPanelNotes: async () => {
+    try {
+      const res = await api.listNotes({ limit: 10000 });
+      set({ panelNotes: res.data ?? [] });
+    } catch {
+      // ignore — panel notes are non-critical
     }
   },
 

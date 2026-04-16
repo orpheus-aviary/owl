@@ -8,6 +8,7 @@ interface BrowserState {
   query: string;
   activeTags: string[];
   sortKey: SortKey;
+  folderId: string | undefined;
   notes: Note[];
   total: number;
   loading: boolean;
@@ -16,6 +17,7 @@ interface BrowserState {
   addTag: (tag: string) => void;
   removeTag: (tag: string) => void;
   setSortKey: (key: SortKey) => void;
+  setFolderId: (id: string | undefined) => void;
   fetchNotes: () => Promise<void>;
   resetFilters: () => void;
 }
@@ -32,6 +34,7 @@ export const useBrowserStore = create<BrowserState>((set, get) => ({
   query: '',
   activeTags: [],
   sortKey: 'updated_desc',
+  folderId: undefined,
   notes: [],
   total: 0,
   loading: false,
@@ -59,12 +62,18 @@ export const useBrowserStore = create<BrowserState>((set, get) => ({
     get().fetchNotes();
   },
 
+  setFolderId: (id: string | undefined) => {
+    set({ folderId: id });
+    get().fetchNotes();
+  },
+
   fetchNotes: async () => {
-    const { query, activeTags, sortKey } = get();
+    const { query, activeTags, sortKey, folderId } = get();
     set({ loading: true });
     try {
       const res = await api.listNotes({
         q: query || undefined,
+        folder_id: folderId,
         tags: activeTags.length > 0 ? activeTags.join(',') : undefined,
         ...parseSortKey(sortKey),
         limit: 100,
@@ -76,7 +85,7 @@ export const useBrowserStore = create<BrowserState>((set, get) => ({
   },
 
   resetFilters: () => {
-    set({ query: '', activeTags: [], sortKey: 'updated_desc' });
+    set({ query: '', activeTags: [], sortKey: 'updated_desc', folderId: undefined });
     get().fetchNotes();
   },
 }));
