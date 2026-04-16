@@ -13,6 +13,7 @@ Split into 5 sub-phases: P2-7a → 7b → 7c → 7d → 7e, each independently t
 - **search_notes**: Keep `max_chars` parameter (renamed from token_budget) to control cumulative returned content length.
 - **Conversations**: In-memory only, cleared on daemon restart.
 - **Draft mechanism**: No tab → open; Tab clean → modify; Tab dirty → conflict dialog.
+- **Write contract**: Two-tier — Tier 1 (`append_memo`, `add_todo`) direct DB write + `note_applied` event; Tier 2 (`create_note`, `update_note`, `create_reminder`) draft (source=gui) / preview (source=external). Defined in P2-7b, Tier-2 tools implemented in P2-7e.
 - **Config addition**: `max_context_chars: number` (default 30000) added to `[ai]` section.
 
 ## File Structure
@@ -31,7 +32,7 @@ packages/daemon/src/ai/
 │   ├── get-capabilities.ts
 │   ├── append-memo.ts
 │   ├── add-todo.ts
-│   ├── create-reminder.ts
+│   ├── create-reminder.ts # P2-7e
 │   ├── create-note.ts     # P2-7e
 │   ├── update-note.ts     # P2-7e
 │   └── apply-update.ts    # P2-7e
@@ -108,11 +109,11 @@ function createLlmClient(config: LlmConfig): LlmClient
 
 ---
 
-## P2-7b: Tool Registry + Read/Specialized Tools
+## P2-7b: Tool Registry + Read/Tier-1 Write Tools
 
-**Goal:** Registry of 10 tools (7 read + 3 specialized) callable standalone.
+**Goal:** Registry of 9 tools (7 read + 2 Tier-1 write) callable standalone. Tier-2 write tools added in P2-7e.
 
-**Create:** `tool-registry.ts` + 10 files under `tools/`
+**Create:** `tool-registry.ts` + 9 files under `tools/`
 
 **Key interfaces:**
 
@@ -136,20 +137,44 @@ class ToolRegistry {
 }
 ```
 
+**Write tool contract (defined here, used by P2-7b Tier-1 tools + P2-7e Tier-2 tools):**
+
+All DB-modifying tools return a shared result shape; the agent loop (P2-7c) inspects `sideEffect` and yields a matching `AgentEvent` before the `tool_result`:
+
+```ts
+interface WriteToolResult {
+  message: string           // Text shown to LLM as tool result
+  sideEffect?: {
+    type: 'note_applied' | 'draft_ready' | 'preview_ready'
+    payload: Record<string, unknown>
+  }
+}
+```
+
+Two tiers:
+
+| Tier | Tools | Behavior |
+|------|-------|----------|
+| Tier 1 (direct) | `append_memo`, `add_todo` | Tool writes DB itself, returns `sideEffect: note_applied`. Agent loop yields `note_applied { note_id, content, appended_text }`. GUI reconciles tab state — if target tab dirty, conflict UI (P2-8); else silent refresh. |
+| Tier 2 (draft/preview) | `create_note`, `update_note`, `create_reminder` (all P2-7e) | Tool does NOT write DB; returns `sideEffect: draft_ready` (source=gui) or `preview_ready` (source=external). Actual write deferred to GUI save (draft) or `apply_update` (preview). |
+
+Rationale: Tier 1 is append-only and low-risk; Tier 2 has multi-line content or scheduling side-effects that warrant user review.
+
 **Tool implementations (each wraps existing core functions):**
 
-| Tool | Core function | Notes |
-|------|--------------|-------|
-| `search_notes` | `searchNotesWithDetails` + `listNotes` | `max_chars` param truncates cumulative content. Empty query → recent by updated_at |
-| `get_note` | `getNote(db, id)` | Full note + tags |
-| `list_tags` | SQL from routes/tags.ts | search + limit params |
-| `list_folders` | `listFolders(db)` | Flat list with parent_id |
-| `get_reminders` | SQL from routes/tags.ts | from/to/status filter |
-| `get_todos` | Inline todo regex parser | Copy regex from routes/todos.ts (sync note in comment) |
-| `get_capabilities` | `registry.all()` | Return tool names + descriptions |
-| `append_memo` | `getNote` + `updateNote` | Append to SPECIAL_NOTES.MEMO |
-| `add_todo` | `getNote` + `updateNote` | Append `- [ ] content` to SPECIAL_NOTES.TODO |
-| `create_reminder` | `createNote` + parseTags | Create with `/alarm` tag, call `scheduler.onNoteChanged` |
+| Tool | Tier | Core function | Notes |
+|------|------|--------------|-------|
+| `search_notes` | read | `searchNotesWithDetails` + `listNotes` | `max_chars` param truncates cumulative content. Empty query → recent by updated_at |
+| `get_note` | read | `getNote(db, id)` | Full note + tags |
+| `list_tags` | read | SQL from routes/tags.ts | search + limit params |
+| `list_folders` | read | `listFolders(db)` | Flat list with parent_id |
+| `get_reminders` | read | `listRemindersWithStatus` — NEW function in `packages/core/src/reminders/index.ts` | JOIN `notes` + `tags` + `reminder_status` for actual pending/fired state. Params: `status?` ('pending' \| 'fired' \| 'overdue'), `from?`, `to?`, `limit?`. Do NOT reuse SQL from `routes/tags.ts` — it only queries `/alarm`+`/time` tag values, has no status semantics. |
+| `get_todos` | read | Inline todo regex parser | Copy regex from routes/todos.ts (sync note in comment) |
+| `get_capabilities` | read | `registry.all()` | Return tool names + descriptions |
+| `append_memo` | Tier 1 | `getNote` + `updateNote` | Append text to SPECIAL_NOTES.MEMO. Tool writes DB then returns `sideEffect: note_applied` with `{ note_id, content, appended_text }`. |
+| `add_todo` | Tier 1 | `getNote` + `updateNote` | Append `- [ ] content` line to SPECIAL_NOTES.TODO. Same flow as `append_memo`. |
+
+**Tier-2 tools (`create_note`, `update_note`, `create_reminder`) are defined in P2-7e.**
 
 **search_notes detail:**
 - FTS search via `searchNotesWithDetails(db, sqlite, query, limit)`
@@ -176,8 +201,9 @@ class ToolRegistry {
 type AgentEvent =
   | { type: 'tool_call'; tool: string; args: Record<string, unknown> }
   | { type: 'tool_result'; tool: string; result: unknown }
-  | { type: 'draft_ready'; action: string; note_id: string; content: string; tags: string[]; folder_id: string | null; original_content?: string; original_tags?: string[] }
-  | { type: 'preview_ready'; preview_id: string; action: string; diff: string; content: string; tags: string[] }
+  | { type: 'note_applied'; note_id: string; content: string; appended_text: string }
+  | { type: 'draft_ready'; action: 'create' | 'update' | 'create_reminder'; note_id: string; content: string; tags: string[]; folder_id: string | null; original_content?: string; original_tags?: string[]; original_folder_id?: string | null }
+  | { type: 'preview_ready'; preview_id: string; action: string; diff: string; content: string; tags: string[]; folder_id?: string | null }
   | { type: 'message'; content: string }
   | { type: 'error'; message: string }
   | { type: 'done'; conversation_id: string }
@@ -196,7 +222,7 @@ async function* runAgentLoop(options, toolRegistry, llmClient, conversations, to
    b. Reassemble stream chunks → text + tool calls
    c. Text → yield { type: 'message' }
    d. Tool calls → yield tool_call, execute, yield tool_result
-      - If result has sideEffect → yield draft_ready/preview_ready (P2-7e)
+      - If result is `WriteToolResult` with `sideEffect` → yield matching event BEFORE `tool_result`: `note_applied` (Tier 1) / `draft_ready` / `preview_ready` (Tier 2, P2-7e)
       - Append messages, continue loop
    e. No tool calls → break
 5. yield { type: 'done' }
@@ -213,8 +239,15 @@ async function* runAgentLoop(options, toolRegistry, llmClient, conversations, to
 - `trimToRounds(id, maxRounds)`: keep last N user↔assistant pairs, preserve tool call/result groups
 - `getOrCreate`: generates UUID if no ID provided
 
-**Config addition to core:**
-- Add `max_context_chars: number` (default 30000) to `AiConfig` in `packages/core/src/config/index.ts`
+**Config propagation (three places must stay in sync):**
+
+Adding `max_context_chars: number` (default 30000) requires synced updates in:
+
+1. `packages/core/src/config/index.ts` — `AiConfig` interface + `DEFAULT_CONFIG.ai` literal
+2. `packages/gui/src/renderer/src/lib/api.ts` — `OwlConfig.ai` interface (currently hardcoded to `{ context_rounds, max_fts_notes, max_recent_notes }` at line 291)
+3. `packages/gui/src/renderer/src/stores/config-store.ts` — `DEFAULT_AI` constant (line 43-47)
+
+Settings page UI control deferred to P2-8. Missing any of the three locations will cause silent fallback to the hardcoded default or type mismatch.
 
 **Gotchas:**
 - Handle parallel tool calls (multiple tool_calls in one LLM response)
@@ -275,57 +308,63 @@ export interface AppContext {
 
 ---
 
-## P2-7e: Write Tools + Draft/Preview
+## P2-7e: Tier-2 Write Tools + Draft/Preview
 
-**Goal:** `create_note`, `update_note`, `apply_update` with source-dependent behavior.
+**Goal:** `create_note`, `update_note`, `create_reminder`, `apply_update` — all Tier-2 (tool does NOT write DB; emits `draft_ready` or `preview_ready` sideEffect). `WriteToolResult` shape is defined in P2-7b.
 
-**Create:** `tools/create-note.ts`, `tools/update-note.ts`, `tools/apply-update.ts`, `ai/preview-store.ts`
+**Create:** `tools/create-note.ts`, `tools/update-note.ts`, `tools/create-reminder.ts`, `tools/apply-update.ts`, `ai/preview-store.ts`
 
 **Modify:** `tool-registry.ts`, `routes/ai.ts`, `agent-loop.ts`
 
-**Write tool result structure:**
+**Tool parameters (JSON Schema highlights):**
 
-```ts
-interface WriteToolResult {
-  message: string           // Text shown to LLM as tool result
-  sideEffect?: {
-    type: 'draft_ready' | 'preview_ready'
-    payload: Record<string, unknown>
-  }
-}
-```
-
-Agent loop detects `sideEffect` and yields it as AgentEvent before `tool_result`.
+- `create_note`: `{ content: string, tags?: string[], folder_id?: string | null }`
+- `update_note`: `{ note_id: string, content?: string, tags?: string[], folder_id?: string | null }` — all content/tags/folder optional; at least one required. Folder change is explicitly supported.
+- `create_reminder`: `{ content: string, fire_at: string (ISO), tags?: string[], folder_id?: string | null }` — `/alarm` tag synthesized from `fire_at`.
+- `apply_update`: `{ preview_id: string }` — applies a stored external preview.
 
 **source=gui (draft):**
-- `create_note`: generate `draft_${randomUUID()}`, emit `draft_ready` (no DB write)
-- `update_note`: read existing note, emit `draft_ready` with `original_content` + `original_tags`
+- `create_note`: generate `draft_${randomUUID()}`, emit `draft_ready` with `{ action: 'create', folder_id }` (no DB write)
+- `update_note`: read existing note, emit `draft_ready` with `original_content` + `original_tags` + `original_folder_id` as DB baselines for conflict detection
+- `create_reminder`: generate `draft_${randomUUID()}`, synthesize `/alarm` tag from `fire_at`, emit `draft_ready` with `{ action: 'create_reminder' }`. Scheduler hook fires when GUI saves the draft (normal `createNote` → `scheduler.onNoteChanged` flow applies).
 
 **source=external (preview):**
-- Store in `PreviewStore` (in-memory Map, 30min TTL auto-cleanup)
+- Store full payload (incl. `folder_id` for updates) in `PreviewStore` (in-memory Map, 30min TTL auto-cleanup)
 - Emit `preview_ready`
-- `apply_update` / `POST /ai/preview/apply` executes stored preview against DB
+- `apply_update` / `POST /ai/preview/apply` executes stored preview against DB — uses `patchNote`-style write so folder changes apply atomically with content/tags
 
-**draft_ready payload (from design doc 6.4):**
+**draft_ready payload:**
 
 ```ts
 {
-  action: 'create' | 'update'
-  note_id: string           // draft_xxx for create, real ID for update
+  action: 'create' | 'update' | 'create_reminder'
+  note_id: string                     // draft_xxx for create/create_reminder, real ID for update
   content: string
   tags: string[]
-  folder_id: string | null
-  original_content?: string  // update only — DB baseline
-  original_tags?: string[]   // update only
+  folder_id: string | null            // target folder (create: requested; update: requested or unchanged baseline)
+  original_content?: string           // update only — DB baseline
+  original_tags?: string[]            // update only — DB baseline
+  original_folder_id?: string | null  // update only — DB baseline; used for folder conflict detection on save
 }
 ```
 
 **GUI-side changes (minimal — full chat UI is P2-8):**
-- editorStore extensions: `isDraft` on TabState, `folderId` field, `pendingAiUpdate` field
-- `saveNote` branch: isDraft → POST /notes, replace noteId, clear isDraft
-- Full SSE event handling and conflict dialog UI deferred to P2-8
+- `editorStore` extensions on `TabState`:
+  - NEW `isDraft: boolean` — true for `draft_xxx` IDs not yet POSTed
+  - NEW `pendingAiUpdate` — full `draft_ready` payload (incl. all `original_*` baselines)
+  - NEW `originalFolderId: string | null` — save baseline mirroring `folderId`, needed for conflict detection. Since folder moves persist immediately, `openNote` sets both from `note.folderId`, and `syncTabFolderId` updates both.
+  - (`folderId` already exists on `TabState`, see `editor-store.ts:17`.)
+- `saveNote` branches:
+  - `isDraft=true` → `POST /notes` with `{ content, tags, folder_id }`, replace tab's `noteId` with returned real ID, clear `isDraft` and `pendingAiUpdate`
+  - `isDraft=false` with `pendingAiUpdate` set → use `patchNote({ content, tags, folder_id })` (see `api.ts:155-158`) instead of `updateNote` (content/tags only, see `api.ts:152-153`). Needed because AI updates may change folder.
+- Conflict checks on save (update drafts only) — compare **save baselines** against AI's assumed baselines, NOT the current edited values (which ARE the AI target and will always differ from baseline):
+  - `tab.originalContent !== pendingAiUpdate.original_content` → content conflict (DB moved under AI)
+  - `tab.originalTags` differs from `pendingAiUpdate.original_tags` → tag conflict
+  - `tab.originalFolderId !== pendingAiUpdate.original_folder_id` → folder conflict (folder moved after AI drafted)
+  - Rationale: mirrors the existing dirty model in `editor-store.ts:121, 135` — "baseline vs current". `original_*` on the pending update is AI's baseline; `tab.original*` is the tab's save baseline. Match ⇒ no concurrent change ⇒ safe to save. Defense-in-depth alternative (re-fetch DB before save) noted as future hardening.
+- Full SSE event handling (`note_applied`, `draft_ready`, `preview_ready`) and conflict dialog UI deferred to P2-8
 
-**Verify:** Write tools with source=gui return draft_ready (no DB write). source=external stores preview, apply_update writes to DB. `just test` + `just check`
+**Verify:** Tier-2 tools with source=gui return `draft_ready` with correct folder fields (no DB write). source=external stores preview, `apply_update` writes to DB including `folder_id`. Update drafts include `original_folder_id`. `just test` + `just check`
 
 ---
 
@@ -334,13 +373,13 @@ Agent loop detects `sideEffect` and yields it as AgentEvent before `tool_result`
 ```
 P2-7a (LLM Client)
     ↓
-P2-7b (Tool Registry + Read/Specialized Tools)  ← partially independent of 7a
+P2-7b (Tool Registry + Read + Tier-1 Write)  ← partially independent of 7a
     ↓
 P2-7c (Agent Loop + Conversations)  ← needs 7a + 7b
     ↓
 P2-7d (SSE Endpoint + Routes)       ← needs 7c
     ↓
-P2-7e (Write Tools + Draft/Preview) ← needs 7b + 7d
+P2-7e (Tier-2 Write + Draft/Preview) ← needs 7b + 7d
 ```
 
 ## Risks
@@ -360,6 +399,9 @@ P2-7e (Write Tools + Draft/Preview) ← needs 7b + 7d
 - `packages/core/src/notes/index.ts` — listNotes, getNote, createNote, updateNote
 - `packages/core/src/search/index.ts` — searchNotes, searchNotesWithDetails (FTS5)
 - `packages/core/src/folders/index.ts` — listFolders
-- `packages/core/src/reminders/index.ts` — reminder queries
+- `packages/core/src/reminders/index.ts` — reminder queries (authoritative status via `reminder_status` table; extend with `listRemindersWithStatus` for `get_reminders` tool)
 - `packages/daemon/src/routes/todos.ts` — todo parsing regex (to copy)
-- `packages/daemon/src/routes/tags.ts` — tag/reminder query patterns (to reference)
+- `packages/daemon/src/routes/tags.ts` — tag query patterns only (its reminder SQL is status-blind; do NOT reuse for `get_reminders`)
+- `packages/gui/src/renderer/src/lib/api.ts` — GUI config mirror (update `OwlConfig.ai` for `max_context_chars`)
+- `packages/gui/src/renderer/src/stores/config-store.ts` — `DEFAULT_AI` constant (update for `max_context_chars`)
+- `packages/gui/src/renderer/src/stores/editor-store.ts` — `TabState` with `folderId` (extend with `isDraft`, `pendingAiUpdate`, `originalFolderId` in P2-7e)
