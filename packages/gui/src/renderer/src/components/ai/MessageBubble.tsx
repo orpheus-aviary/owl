@@ -1,6 +1,9 @@
 import { MarkdownPreview } from '@/components/MarkdownPreview';
 import type { ChatMessage } from '@/stores/ai-store';
 import { AlertCircle } from 'lucide-react';
+import { DraftReadyCard } from './DraftReadyCard';
+import { PreviewReadyCard } from './PreviewReadyCard';
+import { ToolCallBlock } from './ToolCallBlock';
 
 interface MessageBubbleProps {
   message: ChatMessage;
@@ -41,29 +44,19 @@ function AssistantBubble({ message }: MessageBubbleProps) {
     );
   }
 
-  // While streaming with no body yet, show a "thinking" placeholder so
-  // the user knows their request landed (otherwise the page looks frozen
-  // until the first text_delta from the LLM).
-  const showThinking = message.isStreaming && !message.content;
+  // Tool calls + drafts + previews can arrive before the assistant text
+  // does — render them whenever they exist instead of gating on content.
+  const hasAnything =
+    message.content ||
+    message.toolCalls.length > 0 ||
+    message.drafts.length > 0 ||
+    message.previews.length > 0;
+  const showThinking = message.isStreaming && !hasAnything;
 
   return (
-    <div className="rounded-lg bg-muted/40 px-1 py-2">
-      {showThinking ? (
-        <div className="flex items-center gap-2 px-2 text-sm text-muted-foreground">
-          <span className="inline-flex gap-1">
-            <span className="size-1.5 rounded-full bg-current animate-pulse" />
-            <span
-              className="size-1.5 rounded-full bg-current animate-pulse"
-              style={{ animationDelay: '0.15s' }}
-            />
-            <span
-              className="size-1.5 rounded-full bg-current animate-pulse"
-              style={{ animationDelay: '0.3s' }}
-            />
-          </span>
-          思考中…
-        </div>
-      ) : (
+    <div className="rounded-lg bg-muted/40 px-1 py-2 space-y-2">
+      {showThinking && <ThinkingPlaceholder />}
+      {message.content && (
         <div className="relative">
           <MarkdownPreview content={message.content} className="!p-2 !overflow-visible" />
           {message.isStreaming && (
@@ -74,6 +67,46 @@ function AssistantBubble({ message }: MessageBubbleProps) {
           )}
         </div>
       )}
+      {message.toolCalls.length > 0 && (
+        <div className="px-1 space-y-1">
+          {message.toolCalls.map((tc) => (
+            <ToolCallBlock key={tc.id} call={tc} />
+          ))}
+        </div>
+      )}
+      {message.drafts.length > 0 && (
+        <div className="px-1 space-y-2">
+          {message.drafts.map((d) => (
+            <DraftReadyCard key={d.localId} draft={d} />
+          ))}
+        </div>
+      )}
+      {message.previews.length > 0 && (
+        <div className="px-1 space-y-2">
+          {message.previews.map((p) => (
+            <PreviewReadyCard key={p.localId} preview={p} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ThinkingPlaceholder() {
+  return (
+    <div className="flex items-center gap-2 px-2 text-sm text-muted-foreground">
+      <span className="inline-flex gap-1">
+        <span className="size-1.5 rounded-full bg-current animate-pulse" />
+        <span
+          className="size-1.5 rounded-full bg-current animate-pulse"
+          style={{ animationDelay: '0.15s' }}
+        />
+        <span
+          className="size-1.5 rounded-full bg-current animate-pulse"
+          style={{ animationDelay: '0.3s' }}
+        />
+      </span>
+      思考中…
     </div>
   );
 }
