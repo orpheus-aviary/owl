@@ -1,6 +1,6 @@
 # 开发进度
 
-## 当前状态：P2 实施中（P2-7e Tier-2 写工具 + draft/preview 完成 → AI 后端就绪）
+## 当前状态：P2 实施中（P2-7 完成 → P2-8 进行中：steps 1-5 / 10 已完成）
 
 ### 已完成
 
@@ -49,14 +49,35 @@
 | P2-7c | Agent loop + ConversationStore + 系统提示（Layer 1 recent fill）+ max_context_chars 配置 | — |
 | P2-7d | SSE 端点 + AI 路由（POST /ai/chat、GET/DELETE /ai/conversations、GET /ai/capabilities）+ AppContext 扩展 | — |
 | P2-7e | Tier-2 写工具（create/update_note、create_reminder、apply_update）+ PreviewStore + GUI editorStore 草稿/暂存 | — |
+| docs | P2-8 计划文档 + P2-7 计划同步实际事件契约 + PROCESS daemon-restart 历史引用清理 | `8717e6a` |
+| P2-8 step 1 | SSE client (`lib/sse-client.ts`) + 9 vitest 测试（GUI 首个测试 runner） | `74c1027` |
+| P2-8 step 2 | `/ai/*` HTTP wrappers + ai-store skeleton（newChat/closeChat/abortStreaming + sendMessage 完整 SSE wiring） | `b583630` |
+| P2-8 step 3 | 纯函数事件 dispatcher (`ai-dispatcher.ts`)，处理全部 9 类事件 + 14 个 vitest 测试 | `c8bfc86` |
+| P2-8 step 4 | AIPage shell + ChatTabBar + MessageList + MessageBubble + ChatInput | `a830fa0` |
+| P2-8 step 5 | ToolCallBlock + DraftReadyCard + PreviewReadyCard + 嵌入 MessageBubble | `b335951` |
 
-- 测试：170 个全部通过（core 80 + daemon 90）
-- Lint + Typecheck：零错误（8 个 pre-existing warnings）
-- 决策文档：`docs/plans/2026-04-14-trash-sticky-semantics.md`、`docs/plans/2026-04-17-p2-7-ai-implementation.md`
+- 测试：193 个全部通过（core 80 + daemon 90 + gui 23）
+- Lint + Typecheck：零错误（11 个 pre-existing warnings）
+- 决策文档：`docs/plans/2026-04-14-trash-sticky-semantics.md`、`docs/plans/2026-04-17-p2-7-ai-implementation.md`、`docs/plans/2026-04-17-p2-8-ai-page.md`
 
-### 下一步：P2-6 浏览页文件夹筛选 / P2-8 AI 对话页面
+### 下一步：P2-8 step 6（Tier-1 auto-merge `applyNoteAppliedFromAi` + NoteAppliedToast）
 
-**P2 设计文档：** `docs/plans/2026-04-12-p2-design.md`
+**P2-8 实施进度（10 步）：**
+
+| Step | 内容 | 状态 |
+|------|------|------|
+| 1 | `lib/sse-client.ts` + 9 vitest 测试 | ✅ |
+| 2 | `lib/api.ts` `/ai/*` wrappers + `ai-store` skeleton（newChat/closeChat/sendMessage） | ✅ |
+| 3 | `ai-dispatcher.ts` 纯函数 + 14 个事件测试（9 类事件全覆盖 + malformed/unknown） | ✅ |
+| 4 | AIPage shell + ChatTabBar + MessageList + MessageBubble + ChatInput | ✅ |
+| 5 | ToolCallBlock + DraftReadyCard + PreviewReadyCard + 嵌入 MessageBubble | ✅ |
+| 6 | `editorStore.applyNoteAppliedFromAi` + NoteAppliedToast（store onEvent wrapper 触发） | ⏳ |
+| 7 | DraftReadyCard "打开" → `editorStore.openAiDraft / stageAiUpdate` wiring | ⏳ |
+| 8 | `@codemirror/merge` 集成 + DiffView 组件 | ⏳ |
+| 9 | ConflictDialog + `editorStore.requestSaveOrConflict / resolveConflict` | ⏳ |
+| 10 | Polish: empty-state、scroll、shortcut、abort UI、error bubble、E2E manual test | ⏳ |
+
+**P2 设计文档：** `docs/plans/2026-04-12-p2-design.md`、`docs/plans/2026-04-17-p2-8-ai-page.md`
 
 P2 commit 分解（11 步）：
 
@@ -76,7 +97,7 @@ P2 commit 分解（11 步）：
 | P2-7c | Agent loop + 内存对话 + system-prompt（Layer 1 recent fill） | 后端 | ✅ |
 | P2-7d | SSE 端点 `/ai/chat` + AI 路由 + AppContext 扩展 | 后端 | ✅ |
 | P2-7e | Tier-2 写工具（create/update_note、create_reminder、apply_update）+ draft/preview | 后端 | ✅ |
-| P2-8 | AI 对话页面（聊天界面 + 草稿机制） | 前端 | ⏳ |
+| P2-8 | AI 对话页面（聊天界面 + 草稿机制） | 前端 | 🚧 5/10 |
 | P2-9 | 分屏拖拽（列表↔编辑、编辑↔预览） | 前端 | ⏳ |
 | P2-10 | reminder_status 清理（90 天 fired 记录） | 后端 | ⏳ |
 
