@@ -56,8 +56,14 @@ build-cli:
 
 # ─── Dev ────────────────────────────────────────────────
 
+# Stop daemon + rebuild core/daemon + launch GUI (safe default)
 [group('dev')]
-dev:
+dev: stop-daemon build-core build-daemon
+    pnpm run dev
+
+# Launch GUI without touching the daemon (faster HMR iteration)
+[group('dev')]
+dev-fast:
     pnpm run dev
 
 [group('dev')]

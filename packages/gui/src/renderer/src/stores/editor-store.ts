@@ -401,11 +401,18 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     if (!prompt) return true;
     const { tabId, pending } = prompt;
     if (decision === 'accept-ai') {
-      // Overwrite tab state with AI payload; pendingAiUpdate stays so
-      // saveNote routes through the PATCH path. baselines remain
-      // whatever the user had — after save they'll be rebased to the
-      // committed values by `markSaved`.
+      // Overwrite tab state with AI payload and strip the pre-stage
+      // snapshot from pendingAiUpdate — the user has explicitly taken
+      // AI's side, and leaving the snapshot in place would retrigger
+      // the same conflict on the next Cmd+S if the PATCH fails (e.g.
+      // transient 5xx, the user just retrying).
       const aiTags = deserializeTags(pending.tags);
+      const sanitisedPending: PendingAiUpdate = {
+        ...pending,
+        pre_stage_content: undefined,
+        pre_stage_tags: undefined,
+        pre_stage_folder_id: undefined,
+      };
       set((state) => ({
         conflictPrompt: null,
         tabs: state.tabs.map((t) =>
@@ -417,6 +424,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
                 folderId: pending.folder_id,
                 title: extractTitle(pending.content),
                 dirty: true,
+                pendingAiUpdate: sanitisedPending,
               }
             : t,
         ),
