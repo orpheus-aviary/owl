@@ -1,6 +1,6 @@
 # 开发进度
 
-## 当前状态：P2 实施中（P2-7 完成 → P2-8 进行中：steps 1-5 / 10 已完成）
+## 当前状态：P2 实施中（P2-7 完成 → P2-8 进行中：steps 1-7 / 10 已完成）
 
 ### 已完成
 
@@ -55,12 +55,32 @@
 | P2-8 step 3 | 纯函数事件 dispatcher (`ai-dispatcher.ts`)，处理全部 9 类事件 + 14 个 vitest 测试 | `c8bfc86` |
 | P2-8 step 4 | AIPage shell + ChatTabBar + MessageList + MessageBubble + ChatInput | `a830fa0` |
 | P2-8 step 5 | ToolCallBlock + DraftReadyCard + PreviewReadyCard + 嵌入 MessageBubble | `b335951` |
+| P2-8 step 6 | `editorStore.applyNoteAppliedFromAi` + ai-store 转发 + 全局 NoteAppliedToast + 4 个 vitest 测试 | — |
+| P2-8 step 7 | DraftReadyCard "打开" → `openAiDraft / stageAiUpdate` + `markDraftOpened` + navigate | — |
 
-- 测试：193 个全部通过（core 80 + daemon 90 + gui 23）
+- 测试：201 个全部通过（core 82 + daemon 92 + gui 27）
 - Lint + Typecheck：零错误（11 个 pre-existing warnings）
 - 决策文档：`docs/plans/2026-04-14-trash-sticky-semantics.md`、`docs/plans/2026-04-17-p2-7-ai-implementation.md`、`docs/plans/2026-04-17-p2-8-ai-page.md`
 
-### 下一步：P2-8 step 6（Tier-1 auto-merge `applyNoteAppliedFromAi` + NoteAppliedToast）
+### 下一步：P2-8 step 8（`@codemirror/merge` 集成 + DiffView 组件）
+
+### 本轮会话额外落地（计划外但必需）
+
+- daemon SSE：`reply.raw.on('close')` 替换 `req.raw.on('close')`（后者会在请求 body 读完就触发 → 几毫秒内就 abort agent loop）；`initSse` 内联 CORS echo（`reply.hijack()` 跳过了 `@fastify/cors` onSend）
+- GUI：`sse-client.ts` 初始 fetch 阶段也吞 abort；`just dev` 自动拉起 daemon（gui 加 `@owl/daemon` workspace dep + daemon `./cli` 改两 condition 兼容 `createRequire`）
+- 特殊笔记：`ensureSpecialNotes` 增加"从回收站恢复"分支；`deleteNote` / `permanentDeleteNote` 拒绝；daemon 路由 403 `SPECIAL_NOTE_PROTECTED`；GUI 删除流程前置检查 → 弹"系统笔记无法删除"对话框（不再静默失败）
+- 嵌套 button 水合错误：`TabBar` / `ChatTabBar` / `NoteListItem` 外层改成 `<div role="button">`
+- `openNote` 已存在 tab 分支也用 API 新数据刷新内容（脏 tab 只改 baseline）
+- ChatInput：裸 Enter 发送 + Shift+Enter 换行（`nativeEvent.isComposing` IME 保护）
+- MessageList：`scrollByChatId` 持久化每个 chat 的 scrollTop + `atBottomRef` sticky auto-scroll
+- MessageBubble：tool_call / drafts / previews 渲染在 content 前（时间顺序）
+- AIPage：React 19 StrictMode 双触发只建一个 chat（`useAiStore.getState()` 读实时状态）
+- 配置：删 dead field `max_fts_notes`（daemon 从未用过），Advanced 面板新增"上下文字符预算"（真正的 Layer-1 预算 `max_context_chars`）
+
+### 已落计划文档（本轮新增）
+
+- `docs/plans/2026-04-18-chat-persistence.md` — 聊天持久化 + 侧栏设计（daemon SQLite 存储，删掉 ChatTabBar，类 Claude 网页风格，允许后台 streaming）；**暂不执行**，排在 P2-8 step 8-10 后或 P3
+- `docs/plans/p3-deferred.md` — 特殊笔记可视化区分 + `append_memo` 语义讨论 + 聊天历史深度优化，统一归 P3
 
 **P2-8 实施进度（10 步）：**
 
@@ -71,8 +91,8 @@
 | 3 | `ai-dispatcher.ts` 纯函数 + 14 个事件测试（9 类事件全覆盖 + malformed/unknown） | ✅ |
 | 4 | AIPage shell + ChatTabBar + MessageList + MessageBubble + ChatInput | ✅ |
 | 5 | ToolCallBlock + DraftReadyCard + PreviewReadyCard + 嵌入 MessageBubble | ✅ |
-| 6 | `editorStore.applyNoteAppliedFromAi` + NoteAppliedToast（store onEvent wrapper 触发） | ⏳ |
-| 7 | DraftReadyCard "打开" → `editorStore.openAiDraft / stageAiUpdate` wiring | ⏳ |
+| 6 | `editorStore.applyNoteAppliedFromAi` + NoteAppliedToast（store onEvent wrapper 触发） | ✅ |
+| 7 | DraftReadyCard "打开" → `editorStore.openAiDraft / stageAiUpdate` wiring | ✅ |
 | 8 | `@codemirror/merge` 集成 + DiffView 组件 | ⏳ |
 | 9 | ConflictDialog + `editorStore.requestSaveOrConflict / resolveConflict` | ⏳ |
 | 10 | Polish: empty-state、scroll、shortcut、abort UI、error bubble、E2E manual test | ⏳ |
