@@ -152,6 +152,20 @@ describe('special notes', () => {
     const memo = db.select().from(notes).where(eq(notes.id, SPECIAL_NOTES.MEMO)).get();
     assert.ok(memo);
   });
+
+  it('restores special notes that were soft-deleted (trash_level > 0)', () => {
+    // Push memo into trash by raw SQL to bypass protective logic.
+    db.update(notes)
+      .set({ trashLevel: 2, trashedAt: new Date() })
+      .where(eq(notes.id, SPECIAL_NOTES.MEMO))
+      .run();
+    ensureSpecialNotes(db);
+
+    const memo = db.select().from(notes).where(eq(notes.id, SPECIAL_NOTES.MEMO)).get();
+    assert.ok(memo);
+    assert.equal(memo.trashLevel, 0);
+    assert.equal(memo.trashedAt, null);
+  });
 });
 
 describe('device ID', () => {

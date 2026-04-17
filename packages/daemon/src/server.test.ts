@@ -154,6 +154,23 @@ describe('daemon API', () => {
     assert.equal(getRes.json().data.trashLevel, 0);
   });
 
+  it('DELETE /notes/:id returns 403 for special notes', async () => {
+    const MEMO = '00000000-0000-0000-0000-000000000001';
+    const res = await app.inject({ method: 'DELETE', url: `/notes/${MEMO}` });
+    assert.equal(res.statusCode, 403);
+    assert.equal(res.json().error_code, 'SPECIAL_NOTE_PROTECTED');
+  });
+
+  it('POST /notes/:id/permanent-delete returns 403 for special notes', async () => {
+    const MEMO = '00000000-0000-0000-0000-000000000001';
+    const res = await app.inject({
+      method: 'POST',
+      url: `/notes/${MEMO}/permanent-delete`,
+    });
+    assert.equal(res.statusCode, 403);
+    assert.equal(res.json().error_code, 'SPECIAL_NOTE_PROTECTED');
+  });
+
   it('POST /notes/:id/permanent-delete removes permanently', async () => {
     const res = await app.inject({
       method: 'POST',

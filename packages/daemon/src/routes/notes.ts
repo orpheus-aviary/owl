@@ -1,4 +1,5 @@
 import {
+  SPECIAL_NOTES,
   batchDeleteNotes,
   batchPermanentDeleteNotes,
   batchRestoreNotes,
@@ -14,6 +15,9 @@ import {
 import type { FastifyInstance } from 'fastify';
 import type { AppContext } from '../context.js';
 import { created, fail, ok } from '../response.js';
+
+const SPECIAL_NOTE_IDS: ReadonlySet<string> = new Set(Object.values(SPECIAL_NOTES));
+const SPECIAL_PROTECTED_MSG = '系统笔记不可删除';
 
 export function registerNoteRoutes(app: FastifyInstance, ctx: AppContext): void {
   // GET /notes — list notes
@@ -106,6 +110,8 @@ export function registerNoteRoutes(app: FastifyInstance, ctx: AppContext): void 
   // DELETE /notes/:id — soft delete
   app.delete('/notes/:id', async (req, reply) => {
     const { id } = req.params as { id: string };
+    if (SPECIAL_NOTE_IDS.has(id))
+      return fail(reply, 403, SPECIAL_PROTECTED_MSG, 'SPECIAL_NOTE_PROTECTED');
     if (!deleteNote(ctx.db, id, ctx.config.trash.auto_delete_days))
       return fail(reply, 404, 'Note not found', 'NOTE_NOT_FOUND');
     ctx.scheduler.onNoteChanged(id);
@@ -124,6 +130,8 @@ export function registerNoteRoutes(app: FastifyInstance, ctx: AppContext): void 
   // POST /notes/:id/permanent-delete
   app.post('/notes/:id/permanent-delete', async (req, reply) => {
     const { id } = req.params as { id: string };
+    if (SPECIAL_NOTE_IDS.has(id))
+      return fail(reply, 403, SPECIAL_PROTECTED_MSG, 'SPECIAL_NOTE_PROTECTED');
     if (!permanentDeleteNote(ctx.db, id))
       return fail(reply, 404, 'Note not found', 'NOTE_NOT_FOUND');
     ok(reply, null, 'Note permanently deleted');

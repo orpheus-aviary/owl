@@ -3,6 +3,7 @@ import { after, before, describe, it } from 'node:test';
 import type Database from 'better-sqlite3';
 import { createDatabase } from '../db/index.js';
 import type { OwlDatabase } from '../db/index.js';
+import { ensureSpecialNotes } from '../db/special-notes.js';
 import { searchNotes, searchNotesWithDetails } from '../search/index.js';
 import {
   batchDeleteNotes,
@@ -160,6 +161,21 @@ describe('notes CRUD', () => {
     batchDeleteNotes(db, [n1.id, n2.id], 30);
     const count = batchRestoreNotes(db, [n1.id, n2.id]);
     assert.equal(count, 2);
+  });
+
+  it('refuses to trash or permanent-delete a special note', () => {
+    const MEMO = '00000000-0000-0000-0000-000000000001';
+    const TODO = '00000000-0000-0000-0000-000000000002';
+    // createDatabase doesn't seed special notes — the daemon's AppContext
+    // bootstrap does. Call it here so the guard actually has rows to find.
+    ensureSpecialNotes(db);
+    assert.equal(deleteNote(db, MEMO, 30), false);
+    assert.equal(deleteNote(db, TODO, 30), false);
+    assert.equal(permanentDeleteNote(db, MEMO), false);
+    assert.equal(permanentDeleteNote(db, TODO), false);
+    const memo = getNote(db, MEMO);
+    assert.ok(memo);
+    assert.equal(memo.trashLevel, 0);
   });
 });
 

@@ -14,8 +14,11 @@ const SPECIAL_NOTE_DEFAULTS: Record<string, { content: string }> = {
 };
 
 /**
- * Ensure special notes exist. Called on startup.
- * If user deletes them, they are automatically recreated.
+ * Ensure special notes exist and are visible (trash_level = 0). Called on
+ * startup. Handles three cases: missing → recreate from defaults; soft-
+ * deleted (trash_level > 0) → restore so they show up in the note list
+ * again; already visible → no-op. Content is preserved across restores so
+ * users don't lose what the AI `append_memo`/`append_todo` tools wrote.
  */
 export function ensureSpecialNotes(db: OwlDatabase): void {
   const now = new Date();
@@ -34,6 +37,13 @@ export function ensureSpecialNotes(db: OwlDatabase): void {
           })
           .run();
       }
+      continue;
+    }
+    if (existing.trashLevel > 0) {
+      db.update(notes)
+        .set({ trashLevel: 0, trashedAt: null, autoDeleteAt: null })
+        .where(eq(notes.id, id))
+        .run();
     }
   }
 }

@@ -4,9 +4,17 @@ import { v4 as uuidv4 } from 'uuid';
 import { updateFtsTagsText } from '../db/fts.js';
 import type { OwlDatabase } from '../db/index.js';
 import { noteTags, notes, tags } from '../db/schema.js';
+import { SPECIAL_NOTES } from '../db/special-notes.js';
 import { getFolderSubtreeIds } from '../folders/index.js';
 import type { ParsedTag } from '../tags/parser.js';
 import { contentHash } from './hash.js';
+
+const SPECIAL_NOTE_IDS: ReadonlySet<string> = new Set(Object.values(SPECIAL_NOTES));
+
+/** True for ids of system-managed notes that must never leave the list. */
+function isSpecialNote(id: string): boolean {
+  return SPECIAL_NOTE_IDS.has(id);
+}
 
 // ─── Types ─────────────────────────────────────────────
 
@@ -291,6 +299,10 @@ export function updateNote(
  * level 1 the deadline stays NULL — auto-cleanup only targets level 2.
  */
 export function deleteNote(db: OwlDatabase, id: string, thresholdDays: number): boolean {
+  // System notes (memo / todo) are always pinned to the list; refuse both
+  // soft and permanent deletion so AI tools and batch operations can't
+  // strand them in the trash behind the user's back.
+  if (isSpecialNote(id)) return false;
   const note = db.select().from(notes).where(eq(notes.id, id)).get();
   if (!note) return false;
 
@@ -333,6 +345,7 @@ export function restoreNote(db: OwlDatabase, id: string): boolean {
 
 /** Permanent delete */
 export function permanentDeleteNote(db: OwlDatabase, id: string): boolean {
+  if (isSpecialNote(id)) return false;
   const result = db.delete(notes).where(eq(notes.id, id)).run();
   return result.changes > 0;
 }

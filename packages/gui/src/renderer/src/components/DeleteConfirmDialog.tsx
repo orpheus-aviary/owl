@@ -27,18 +27,30 @@ import { create } from 'zustand';
  * preserve their edits can cancel, save manually, then delete again.
  */
 
+/** Kept in sync with `SPECIAL_NOTES` in `@owl/core/db/special-notes`. */
+const SPECIAL_NOTE_IDS: ReadonlySet<string> = new Set([
+  '00000000-0000-0000-0000-000000000001', // #随记
+  '00000000-0000-0000-0000-000000000002', // #待办
+]);
+
 interface PendingDeleteState {
+  /** Non-null when a confirm / protected dialog is showing. */
   noteId: string | null;
   title: string;
+  /** 'confirm' → regular dirty-tab confirm; 'protected' → system-note info. */
+  kind: 'confirm' | 'protected';
   open: (noteId: string, title: string) => void;
+  openProtected: (title: string) => void;
   reset: () => void;
 }
 
 export const usePendingDeleteStore = create<PendingDeleteState>((set) => ({
   noteId: null,
   title: '',
-  open: (noteId, title) => set({ noteId, title }),
-  reset: () => set({ noteId: null, title: '' }),
+  kind: 'confirm',
+  open: (noteId, title) => set({ noteId, title, kind: 'confirm' }),
+  openProtected: (title) => set({ noteId: 'protected', title, kind: 'protected' }),
+  reset: () => set({ noteId: null, title: '', kind: 'confirm' }),
 }));
 
 /** Actually delete the note via API + close its tab if open + refresh both
@@ -64,9 +76,20 @@ async function performDelete(noteId: string): Promise<void> {
 export function useRequestDeleteNote(): (noteId: string) => Promise<void> {
   const navigate = useNavigate();
   const openDialog = usePendingDeleteStore((s) => s.open);
+  const openProtected = usePendingDeleteStore((s) => s.openProtected);
 
   return useCallback(
     async (noteId: string) => {
+      // Short-circuit for system-managed notes — daemon also guards with
+      // 403, but surfacing a clear dialog up-front beats a silent failure
+      // or a confusing HTTP error toast.
+      if (SPECIAL_NOTE_IDS.has(noteId)) {
+        const editor = useEditorStore.getState();
+        const tab = editor.tabs.find((t) => t.noteId === noteId);
+        openProtected(tab?.title ?? '系统笔记');
+        return;
+      }
+
       const editor = useEditorStore.getState();
       const tab = editor.tabs.find((t) => t.noteId === noteId);
 
@@ -80,13 +103,13 @@ export function useRequestDeleteNote(): (noteId: string) => Promise<void> {
 
       await performDelete(noteId);
     },
-    [navigate, openDialog],
+    [navigate, openDialog, openProtected],
   );
 }
 
 /** The actual confirm dialog. Mount once at the App level. */
 export function DeleteConfirmDialog() {
-  const { noteId, title, reset } = usePendingDeleteStore();
+  const { noteId, title, kind, reset } = usePendingDeleteStore();
   const open = noteId !== null;
 
   const onConfirm = useCallback(async () => {
@@ -94,6 +117,26 @@ export function DeleteConfirmDialog() {
     await performDelete(noteId);
     reset();
   }, [noteId, reset]);
+
+  if (kind === 'protected') {
+    return (
+      <Dialog open={open} onOpenChange={(v) => !v && reset()}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>系统笔记无法删除</DialogTitle>
+            <DialogDescription>
+              「{title}
+              」是系统内置的笔记（如 #随记 /
+              #待办），不能移入回收站或永久删除。你可以自由编辑它的内容和标签。
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button onClick={reset}>知道了</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    );
+  }
 
   return (
     <Dialog open={open} onOpenChange={(v) => !v && reset()}>
