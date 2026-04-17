@@ -4,6 +4,9 @@ import { type SseHttpError, streamSse } from '@/lib/sse-client';
 import { create } from 'zustand';
 import { type NoteAppliedNotice, dispatchAgentEvent } from './ai-dispatcher';
 import type { ChatMessage, ChatTabState } from './ai-store-types';
+import { useEditorStore } from './editor-store';
+import { useFolderStore } from './folder-store';
+import { useNoteStore } from './note-store';
 
 export type {
   ChatRole,
@@ -183,6 +186,10 @@ export const useAiStore = create<AiState>((set, get) => ({
               newLocalId: localId,
             }),
           );
+          // Tier-1 side-effect: push the DB-reconciled content into any
+          // open editor tab. The dispatcher itself stays pure, so this
+          // forwarding lives out here. No-op when no tab is open.
+          if (event === 'note_applied') forwardNoteAppliedToEditor(data);
         },
       });
     } catch (err) {
@@ -261,4 +268,24 @@ function formatStreamError(err: unknown): string {
 
 function isSseHttpError(err: unknown): err is SseHttpError {
   return err instanceof Error && err.name === 'SseHttpError';
+}
+
+/**
+ * Forward a `note_applied` SSE payload to the editor store for Tier-1
+ * auto-merge, then refresh the sibling stores whose cached views just
+ * went stale (browser list, folder panel note preview). Silently ignores
+ * malformed payloads — the dispatcher has already logged what it could.
+ */
+function forwardNoteAppliedToEditor(data: unknown): void {
+  if (typeof data !== 'object' || data === null) return;
+  const payload = data as Record<string, unknown>;
+  const noteId = typeof payload.note_id === 'string' ? payload.note_id : null;
+  if (!noteId) return;
+  const content = typeof payload.content === 'string' ? payload.content : '';
+  const appended = typeof payload.appended_text === 'string' ? payload.appended_text : '';
+  useEditorStore.getState().applyNoteAppliedFromAi(noteId, content, appended);
+  // Fire-and-forget refreshes so the browser list / folder panel reflect
+  // the append without the user having to navigate away and back.
+  void useNoteStore.getState().fetchNotes();
+  void useFolderStore.getState().fetchPanelNotes();
 }

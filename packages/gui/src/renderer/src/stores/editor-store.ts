@@ -75,6 +75,13 @@ interface EditorState {
   openAiDraft: (draft: AiDraftInput) => void;
   /** Apply an AI `update` draft to an already-open tab, staging it for save. */
   stageAiUpdate: (noteId: string, payload: PendingAiUpdate) => void;
+  /**
+   * Tier-1 auto-merge: the daemon just appended `appendedText` to a note
+   * via `append_memo` / `append_note`. If a tab for that note is open,
+   * reconcile with whatever the user is doing locally (see action body
+   * for the three branches).
+   */
+  applyNoteAppliedFromAi: (noteId: string, latestDbContent: string, appendedText: string) => void;
   cycleMode: () => void;
   setMode: (mode: EditorMode) => void;
   toggleLineWrap: () => void;
@@ -139,7 +146,35 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     const { tabs } = get();
     const existing = tabs.find((t) => t.noteId === note.id);
     if (existing) {
-      set({ activeTabId: note.id });
+      // Tab already open — refresh from the fresh DB snapshot so the user
+      // never stares at stale content after something (AI tool, external
+      // sync) mutated the note behind our back. Dirty tabs keep the user's
+      // local edits; we only rebase the save baseline.
+      const tags = note.tags ?? [];
+      set((state) => ({
+        tabs: state.tabs.map((t) => {
+          if (t.noteId !== note.id) return t;
+          if (t.dirty) {
+            return {
+              ...t,
+              originalContent: note.content,
+              originalTags: tags,
+              originalFolderId: note.folderId,
+            };
+          }
+          return {
+            ...t,
+            title: extractTitle(note.content),
+            content: note.content,
+            originalContent: note.content,
+            tags,
+            originalTags: tags,
+            folderId: note.folderId,
+            originalFolderId: note.folderId,
+          };
+        }),
+        activeTabId: note.id,
+      }));
       return;
     }
     const tags = note.tags ?? [];
@@ -314,6 +349,37 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     set((state) => ({
       tabs: [...state.tabs.filter((t) => t.noteId !== draft.note_id), newTab],
       activeTabId: draft.note_id,
+    }));
+  },
+
+  applyNoteAppliedFromAi: (noteId, latestDbContent, appendedText) => {
+    const tab = get().tabs.find((t) => t.noteId === noteId);
+    if (!tab) return; // No-op when nothing is open for this note.
+    set((state) => ({
+      tabs: state.tabs.map((t) => {
+        if (t.noteId !== noteId) return t;
+        // Clean tab → silent overwrite. The user is not editing, so just
+        // sync the DB state in; title / baselines follow.
+        if (!t.dirty) {
+          return {
+            ...t,
+            content: latestDbContent,
+            originalContent: latestDbContent,
+            title: extractTitle(latestDbContent),
+          };
+        }
+        // Dirty tab → auto-merge: keep the user's current edits, tack
+        // AI's appended text onto the end, and rebase the save baseline
+        // onto the DB-with-append so the next Cmd+S diff is correct.
+        const merged = `${t.content}\n\n${appendedText}`;
+        return {
+          ...t,
+          content: merged,
+          originalContent: latestDbContent,
+          title: extractTitle(merged),
+          dirty: true,
+        };
+      }),
     }));
   },
 
