@@ -56,11 +56,25 @@ function serializeTags(tags: NoteTag[]): string[] {
   });
 }
 
+/**
+ * Active conflict-resolution state. Non-null when `requestSaveOrConflict`
+ * detected an AI-vs-local divergence and is waiting on the user.
+ */
+export interface ConflictPrompt {
+  tabId: string;
+  pending: PendingAiUpdate;
+  conflict: PendingUpdateConflict;
+}
+
+export type ConflictDecision = 'accept-ai' | 'keep-mine';
+
 interface EditorState {
   tabs: TabState[];
   activeTabId: string | null;
   mode: EditorMode;
   lineWrap: boolean;
+  /** Populated by `requestSaveOrConflict`; consumed by `<ConflictDialog>`. */
+  conflictPrompt: ConflictPrompt | null;
 
   openNote: (note: Note) => void;
   closeTab: (noteId: string) => void;
@@ -82,6 +96,16 @@ interface EditorState {
    * for the three branches).
    */
   applyNoteAppliedFromAi: (noteId: string, latestDbContent: string, appendedText: string) => void;
+  /**
+   * Save-or-conflict wrapper. Detects whether the tab has an AI-staged
+   * update whose assumed baselines diverge from the tab's own baselines;
+   * if so, sets `conflictPrompt` and short-circuits. Otherwise delegates
+   * to `saveNote`. Editor Cmd+S routes through this, raw callers still
+   * use `saveNote` for the fast path.
+   */
+  requestSaveOrConflict: (noteId: string) => Promise<boolean>;
+  /** Apply a conflict-prompt decision, clear the prompt, then save. */
+  resolveConflict: (decision: ConflictDecision) => Promise<boolean>;
   cycleMode: () => void;
   setMode: (mode: EditorMode) => void;
   toggleLineWrap: () => void;
@@ -141,6 +165,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   activeTabId: null,
   mode: 'edit',
   lineWrap: true,
+  conflictPrompt: null,
 
   openNote: (note: Note) => {
     const { tabs } = get();
@@ -323,6 +348,54 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     const { activeTabId } = get();
     if (!activeTabId) return true;
     return get().saveNote(activeTabId);
+  },
+
+  requestSaveOrConflict: async (noteId) => {
+    const tab = get().tabs.find((t) => t.noteId === noteId);
+    if (!tab) return true;
+    // Fast path: nothing AI-staged to reconcile.
+    if (!tab.pendingAiUpdate) return get().saveNote(noteId);
+    const conflict = detectPendingUpdateConflict(tab, tab.pendingAiUpdate);
+    const hasConflict = conflict.contentChanged || conflict.tagsChanged || conflict.folderChanged;
+    if (!hasConflict) return get().saveNote(noteId);
+    set({ conflictPrompt: { tabId: noteId, pending: tab.pendingAiUpdate, conflict } });
+    return false;
+  },
+
+  resolveConflict: async (decision) => {
+    const prompt = get().conflictPrompt;
+    if (!prompt) return true;
+    const { tabId, pending } = prompt;
+    if (decision === 'accept-ai') {
+      // Overwrite tab state with AI payload; pendingAiUpdate stays so
+      // saveNote routes through the PATCH path. baselines remain
+      // whatever the user had — after save they'll be rebased to the
+      // committed values by `markSaved`.
+      const aiTags = deserializeTags(pending.tags);
+      set((state) => ({
+        conflictPrompt: null,
+        tabs: state.tabs.map((t) =>
+          t.noteId === tabId
+            ? {
+                ...t,
+                content: pending.content,
+                tags: aiTags,
+                folderId: pending.folder_id,
+                title: extractTitle(pending.content),
+                dirty: true,
+              }
+            : t,
+        ),
+      }));
+    } else {
+      // Keep-mine: drop the pending payload so saveNote falls through
+      // to the plain PUT path with the user's in-memory content.
+      set((state) => ({
+        conflictPrompt: null,
+        tabs: state.tabs.map((t) => (t.noteId === tabId ? { ...t, pendingAiUpdate: null } : t)),
+      }));
+    }
+    return get().saveNote(tabId);
   },
 
   openAiDraft: (draft) => {

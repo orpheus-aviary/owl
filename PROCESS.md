@@ -1,6 +1,6 @@
 # 开发进度
 
-## 当前状态：P2 实施中（P2-7 完成 → P2-8 进行中：steps 1-8 / 10 已完成）
+## 当前状态：P2 实施中（P2-7 完成 → P2-8 进行中：steps 1-9 / 10 已完成）
 
 ### 已完成
 
@@ -57,13 +57,14 @@
 | P2-8 step 5 | ToolCallBlock + DraftReadyCard + PreviewReadyCard + 嵌入 MessageBubble | `b335951` |
 | P2-8 step 6 | `editorStore.applyNoteAppliedFromAi` + ai-store 转发 + 全局 NoteAppliedToast + 4 个 vitest 测试 | — |
 | P2-8 step 7 | DraftReadyCard "打开" → `openAiDraft / stageAiUpdate` + `markDraftOpened` + navigate | `54d87c8` |
-| P2-8 step 8 | `@codemirror/merge` 集成 + `components/ai/diff/DiffView.tsx`（read-only split） | — |
+| P2-8 step 8 | `@codemirror/merge` 集成 + `components/ai/diff/DiffView.tsx`（read-only split） | `bf16c9d` |
+| P2-8 step 9 | `conflictPrompt` + `requestSaveOrConflict` / `resolveConflict` + `<ConflictDialog>` 嵌入 DiffView + 5 个 vitest 测试 | — |
 
-- 测试：201 个全部通过（core 82 + daemon 92 + gui 27）
+- 测试：206 个全部通过（core 82 + daemon 92 + gui 32）
 - Lint + Typecheck：零错误（11 个 pre-existing warnings）
 - 决策文档：`docs/plans/2026-04-14-trash-sticky-semantics.md`、`docs/plans/2026-04-17-p2-7-ai-implementation.md`、`docs/plans/2026-04-17-p2-8-ai-page.md`
 
-### 下一步：P2-8 step 9（ConflictDialog + `requestSaveOrConflict` / `resolveConflict`）
+### 下一步：P2-8 step 10（Polish — empty-state / shortcut / abort UI / error bubble / E2E 手动测试）
 
 ### 本轮会话额外落地（计划外但必需）
 
@@ -95,7 +96,7 @@
 | 6 | `editorStore.applyNoteAppliedFromAi` + NoteAppliedToast（store onEvent wrapper 触发） | ✅ |
 | 7 | DraftReadyCard "打开" → `editorStore.openAiDraft / stageAiUpdate` wiring | ✅ |
 | 8 | `@codemirror/merge` 集成 + DiffView 组件 | ✅ |
-| 9 | ConflictDialog + `editorStore.requestSaveOrConflict / resolveConflict` | ⏳ |
+| 9 | ConflictDialog + `editorStore.requestSaveOrConflict / resolveConflict` | ✅ |
 | 10 | Polish: empty-state、scroll、shortcut、abort UI、error bubble、E2E manual test | ⏳ |
 
 **P2 设计文档：** `docs/plans/2026-04-12-p2-design.md`、`docs/plans/2026-04-17-p2-8-ai-page.md`

@@ -1,6 +1,24 @@
 import type { Note } from '@/lib/api';
-import { beforeEach, describe, expect, it } from 'vitest';
+import * as api from '@/lib/api';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useEditorStore } from './editor-store';
+import type { PendingAiUpdate } from './editor-store';
+
+// saveNote fires `useNoteStore.getState().fetchNotes()` fire-and-forget.
+// fetchNotes → api.request → `window.owlAPI?.daemonUrl`. In Node there's
+// no `window`. Stub it to a minimal shape so the side fetch resolves to
+// a fake-rejected promise without throwing a `ReferenceError` we can't
+// catch from here.
+(globalThis as unknown as { window: { owlAPI?: unknown } }).window = { owlAPI: undefined };
+vi.stubGlobal(
+  'fetch',
+  vi.fn().mockResolvedValue(
+    new Response(JSON.stringify({ success: true, data: { items: [], total: 0 } }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }),
+  ),
+);
 
 /**
  * Coverage for P2-8 step 6 — `applyNoteAppliedFromAi`:
@@ -79,5 +97,134 @@ describe('applyNoteAppliedFromAi', () => {
     expect(tab?.content).toBe('baseline + mine\n\nmilk\n\neggs');
     expect(tab?.originalContent).toBe('baseline\n\nmilk\n\neggs');
     expect(tab?.dirty).toBe(true);
+  });
+});
+
+describe('requestSaveOrConflict / resolveConflict', () => {
+  beforeEach(() => {
+    useEditorStore.setState({ tabs: [], activeTabId: null, conflictPrompt: null });
+    vi.restoreAllMocks();
+  });
+
+  function openWithPending(pending: PendingAiUpdate, localContent = 'baseline') {
+    useEditorStore.getState().openNote(makeNote('n1', 'baseline'));
+    // Simulate user having already edited locally before the conflict check.
+    if (localContent !== 'baseline') {
+      useEditorStore.getState().updateContent('n1', localContent);
+    }
+    useEditorStore.getState().stageAiUpdate('n1', pending);
+  }
+
+  it('no pending update → delegates to saveNote (no prompt)', async () => {
+    const patchSpy = vi.spyOn(api, 'updateNote').mockResolvedValue({
+      success: true,
+      data: { id: 'n1', content: 'baseline', tags: [] } as unknown as Note,
+    });
+    useEditorStore.getState().openNote(makeNote('n1', 'baseline'));
+    useEditorStore.getState().updateContent('n1', 'baseline + local');
+
+    await useEditorStore.getState().requestSaveOrConflict('n1');
+
+    expect(useEditorStore.getState().conflictPrompt).toBeNull();
+    expect(patchSpy).toHaveBeenCalledOnce();
+  });
+
+  it('pending update with no conflict → saves through pending path', async () => {
+    const patchSpy = vi.spyOn(api, 'patchNote').mockResolvedValue({
+      success: true,
+      data: { id: 'n1', content: 'ai version', tags: [] } as unknown as Note,
+    });
+    // AI's original baselines exactly match what the tab has → no conflict
+    openWithPending({
+      action: 'update',
+      content: 'ai version',
+      tags: [],
+      folder_id: null,
+      original_content: 'baseline',
+      original_tags: [],
+      original_folder_id: null,
+    });
+
+    await useEditorStore.getState().requestSaveOrConflict('n1');
+
+    expect(useEditorStore.getState().conflictPrompt).toBeNull();
+    expect(patchSpy).toHaveBeenCalledOnce();
+  });
+
+  it('pending update WITH conflict → sets prompt and skips save', async () => {
+    const patchSpy = vi.spyOn(api, 'patchNote').mockResolvedValue({
+      success: true,
+      data: { id: 'n1', content: 'x', tags: [] } as unknown as Note,
+    });
+    // AI thought the content was "old" but the tab's baseline is "baseline"
+    openWithPending({
+      action: 'update',
+      content: 'ai version',
+      tags: [],
+      folder_id: null,
+      original_content: 'something else',
+      original_tags: [],
+      original_folder_id: null,
+    });
+
+    await useEditorStore.getState().requestSaveOrConflict('n1');
+
+    const prompt = useEditorStore.getState().conflictPrompt;
+    expect(prompt).not.toBeNull();
+    expect(prompt?.tabId).toBe('n1');
+    expect(prompt?.conflict.contentChanged).toBe(true);
+    expect(patchSpy).not.toHaveBeenCalled();
+  });
+
+  it('resolveConflict(accept-ai) overwrites tab with AI payload and saves', async () => {
+    const patchSpy = vi.spyOn(api, 'patchNote').mockResolvedValue({
+      success: true,
+      data: { id: 'n1', content: 'ai version', tags: [] } as unknown as Note,
+    });
+    openWithPending({
+      action: 'update',
+      content: 'ai version',
+      tags: ['#ai'],
+      folder_id: null,
+      original_content: 'something else',
+      original_tags: [],
+      original_folder_id: null,
+    });
+    await useEditorStore.getState().requestSaveOrConflict('n1');
+
+    await useEditorStore.getState().resolveConflict('accept-ai');
+
+    expect(useEditorStore.getState().conflictPrompt).toBeNull();
+    expect(patchSpy).toHaveBeenCalledOnce();
+    const tab = getTab('n1');
+    expect(tab?.content).toBe('ai version');
+  });
+
+  it('resolveConflict(keep-mine) drops pendingAiUpdate and saves plain', async () => {
+    const putSpy = vi.spyOn(api, 'updateNote').mockResolvedValue({
+      success: true,
+      data: { id: 'n1', content: 'local edit', tags: [] } as unknown as Note,
+    });
+    openWithPending(
+      {
+        action: 'update',
+        content: 'ai version',
+        tags: [],
+        folder_id: null,
+        original_content: 'something else',
+        original_tags: [],
+        original_folder_id: null,
+      },
+      // simulate the user having edited locally; stageAiUpdate replaces
+      // content, so overwrite it back to what the "local" state should be
+    );
+    useEditorStore.getState().updateContent('n1', 'local edit');
+    await useEditorStore.getState().requestSaveOrConflict('n1');
+
+    await useEditorStore.getState().resolveConflict('keep-mine');
+
+    expect(useEditorStore.getState().conflictPrompt).toBeNull();
+    expect(putSpy).toHaveBeenCalledOnce();
+    expect(getTab('n1')?.pendingAiUpdate).toBeNull();
   });
 });

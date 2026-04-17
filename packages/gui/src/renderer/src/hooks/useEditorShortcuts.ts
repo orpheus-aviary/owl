@@ -15,7 +15,12 @@ type ShortcutAction = (handlers: ShortcutHandlers) => void;
 // here we only cover editor-context actions.
 const ACTIONS: Partial<Record<keyof ShortcutsConfig, ShortcutAction>> = {
   save: () => {
-    useEditorStore.getState().saveActiveNote();
+    // Route through requestSaveOrConflict so AI-staged divergences can
+    // raise a ConflictDialog before the PATCH fires. Direct callers
+    // (e.g. UnsavedDialog's "save and close") still use saveNote for
+    // the fast path where we've already committed to overwriting.
+    const { activeTabId } = useEditorStore.getState();
+    if (activeTabId) void useEditorStore.getState().requestSaveOrConflict(activeTabId);
   },
   close_tab: ({ requestCloseTab }) => {
     const { activeTabId } = useEditorStore.getState();

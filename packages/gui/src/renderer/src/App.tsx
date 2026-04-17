@@ -1,6 +1,7 @@
 import { DeleteConfirmDialog } from '@/components/DeleteConfirmDialog';
 import { FolderPanel } from '@/components/FolderPanel';
 import { extractTitle } from '@/components/NoteListItem';
+import { ConflictDialog } from '@/components/ai/ConflictDialog';
 import { NoteAppliedToast } from '@/components/ai/NoteAppliedToast';
 import { type ShortcutsConfig, moveNoteToFolder } from '@/lib/api';
 import { type DragData, isDragData, isDropTarget } from '@/lib/dnd-types';
@@ -274,6 +275,7 @@ export function App() {
       </DndContext>
       <DeleteConfirmDialog />
       <NoteAppliedToast />
+      <ConflictDialog />
     </HashRouter>
   );
 }
