@@ -200,6 +200,89 @@ describe('requestSaveOrConflict / resolveConflict', () => {
     expect(tab?.content).toBe('ai version');
   });
 
+  it('dirty tab at stage time → pre-stage content captured → conflict on save', async () => {
+    const patchSpy = vi.spyOn(api, 'patchNote').mockResolvedValue({
+      success: true,
+      data: { id: 'n1', content: 'x', tags: [] } as unknown as Note,
+    });
+    // 1. Open a clean note
+    useEditorStore.getState().openNote(makeNote('n1', 'baseline'));
+    // 2. User edits locally (tab is now dirty), baseline unchanged
+    useEditorStore.getState().updateContent('n1', 'baseline + mine');
+    expect(getTab('n1')?.dirty).toBe(true);
+    // 3. AI proposes an update — its `original_content` matches the tab's
+    //    save baseline ("baseline"), so the server-baseline detect sees
+    //    NO conflict. But stage overwrites the user's in-flight edits.
+    useEditorStore.getState().stageAiUpdate('n1', {
+      action: 'update',
+      content: 'ai version',
+      tags: [],
+      folder_id: null,
+      original_content: 'baseline',
+      original_tags: [],
+      original_folder_id: null,
+    });
+
+    await useEditorStore.getState().requestSaveOrConflict('n1');
+
+    const prompt = useEditorStore.getState().conflictPrompt;
+    expect(prompt).not.toBeNull();
+    expect(prompt?.conflict.contentChanged).toBe(true);
+    // Pre-stage local content is retained on the pending payload so the
+    // dialog can diff against it and `keep-mine` can restore it.
+    expect(prompt?.pending.pre_stage_content).toBe('baseline + mine');
+    expect(patchSpy).not.toHaveBeenCalled();
+  });
+
+  it('clean tab at stage time → no pre-stage capture → no local-edit conflict', async () => {
+    const patchSpy = vi.spyOn(api, 'patchNote').mockResolvedValue({
+      success: true,
+      data: { id: 'n1', content: 'ai', tags: [] } as unknown as Note,
+    });
+    useEditorStore.getState().openNote(makeNote('n1', 'baseline'));
+    // Skip the local edit — tab stays clean before stageAiUpdate fires.
+    useEditorStore.getState().stageAiUpdate('n1', {
+      action: 'update',
+      content: 'ai',
+      tags: [],
+      folder_id: null,
+      original_content: 'baseline',
+      original_tags: [],
+      original_folder_id: null,
+    });
+
+    await useEditorStore.getState().requestSaveOrConflict('n1');
+
+    // No user edits were overwritten, baselines match → no prompt.
+    expect(useEditorStore.getState().conflictPrompt).toBeNull();
+    expect(patchSpy).toHaveBeenCalledOnce();
+  });
+
+  it('resolveConflict(keep-mine) restores pre-stage content when present', async () => {
+    vi.spyOn(api, 'updateNote').mockResolvedValue({
+      success: true,
+      data: { id: 'n1', content: 'baseline + mine', tags: [] } as unknown as Note,
+    });
+    useEditorStore.getState().openNote(makeNote('n1', 'baseline'));
+    useEditorStore.getState().updateContent('n1', 'baseline + mine');
+    useEditorStore.getState().stageAiUpdate('n1', {
+      action: 'update',
+      content: 'ai version',
+      tags: [],
+      folder_id: null,
+      original_content: 'baseline',
+      original_tags: [],
+      original_folder_id: null,
+    });
+    await useEditorStore.getState().requestSaveOrConflict('n1');
+
+    await useEditorStore.getState().resolveConflict('keep-mine');
+
+    // Tab content should be the user's pre-stage version, not AI's.
+    expect(getTab('n1')?.content).toBe('baseline + mine');
+    expect(getTab('n1')?.pendingAiUpdate).toBeNull();
+  });
+
   it('resolveConflict(keep-mine) drops pendingAiUpdate and saves plain', async () => {
     const putSpy = vi.spyOn(api, 'updateNote').mockResolvedValue({
       success: true,

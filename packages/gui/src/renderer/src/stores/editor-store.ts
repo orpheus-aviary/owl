@@ -19,6 +19,16 @@ export interface PendingAiUpdate {
   original_content?: string;
   original_tags?: string[];
   original_folder_id?: string | null;
+  /**
+   * Snapshots of what the tab *looked like to the user* right before
+   * `stageAiUpdate` overwrote it with the AI payload. Populated only
+   * when the tab was dirty at stage time, so `keep-mine` can restore
+   * the user's in-flight work and the ConflictDialog can diff against
+   * what they actually had instead of what AI already pasted over.
+   */
+  pre_stage_content?: string;
+  pre_stage_tags?: string[];
+  pre_stage_folder_id?: string | null;
 }
 
 export interface TabState {
@@ -135,12 +145,36 @@ export function detectPendingUpdateConflict(
   tab: TabState,
   pending: PendingAiUpdate,
 ): PendingUpdateConflict {
+  // Signal 1: server-baseline mismatch. AI drafted against a stale DB
+  // read; the tab's save baseline is ahead of what AI assumed.
   const tabTagStrings = serializeTags(tab.originalTags).slice().sort();
   const aiBaseline = (pending.original_tags ?? []).slice().sort();
+  const serverBaselineMismatch = {
+    content: tab.originalContent !== (pending.original_content ?? tab.originalContent),
+    tags: tabTagStrings.join('\n') !== aiBaseline.join('\n'),
+    folder: tab.originalFolderId !== (pending.original_folder_id ?? tab.originalFolderId),
+  };
+  // Signal 2: AI's stage overwrote in-flight user edits. `stageAiUpdate`
+  // snapshots pre_stage_* only when the tab was dirty, so presence of
+  // these fields already means "user had unsaved local work" — we still
+  // compare to the AI payload so an identical overwrite (rare) doesn't
+  // spam the dialog.
+  const preStageTagsSorted = (pending.pre_stage_tags ?? []).slice().sort();
+  const aiTagsSorted = pending.tags.slice().sort();
+  const localOverwritten = {
+    content:
+      pending.pre_stage_content !== undefined && pending.pre_stage_content !== pending.content,
+    tags:
+      pending.pre_stage_tags !== undefined &&
+      preStageTagsSorted.join('\n') !== aiTagsSorted.join('\n'),
+    folder:
+      pending.pre_stage_folder_id !== undefined &&
+      pending.pre_stage_folder_id !== pending.folder_id,
+  };
   return {
-    contentChanged: tab.originalContent !== (pending.original_content ?? tab.originalContent),
-    tagsChanged: tabTagStrings.join('\n') !== aiBaseline.join('\n'),
-    folderChanged: tab.originalFolderId !== (pending.original_folder_id ?? tab.originalFolderId),
+    contentChanged: serverBaselineMismatch.content || localOverwritten.content,
+    tagsChanged: serverBaselineMismatch.tags || localOverwritten.tags,
+    folderChanged: serverBaselineMismatch.folder || localOverwritten.folder,
   };
 }
 
@@ -389,10 +423,29 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       }));
     } else {
       // Keep-mine: drop the pending payload so saveNote falls through
-      // to the plain PUT path with the user's in-memory content.
+      // to the plain PUT path. If stageAiUpdate captured a pre-stage
+      // snapshot (the user had unsaved edits when the AI payload landed
+      // on top), roll the tab back to that snapshot so the save commits
+      // what the user actually had — not the AI overwrite they rejected.
       set((state) => ({
         conflictPrompt: null,
-        tabs: state.tabs.map((t) => (t.noteId === tabId ? { ...t, pendingAiUpdate: null } : t)),
+        tabs: state.tabs.map((t) => {
+          if (t.noteId !== tabId) return t;
+          if (pending.pre_stage_content === undefined) {
+            return { ...t, pendingAiUpdate: null };
+          }
+          const restoredContent = pending.pre_stage_content;
+          const restoredTags = deserializeTags(pending.pre_stage_tags ?? []);
+          return {
+            ...t,
+            content: restoredContent,
+            tags: restoredTags,
+            folderId: pending.pre_stage_folder_id ?? t.folderId,
+            title: extractTitle(restoredContent),
+            dirty: true,
+            pendingAiUpdate: null,
+          };
+        }),
       }));
     }
     return get().saveNote(tabId);
@@ -457,6 +510,19 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   },
 
   stageAiUpdate: (noteId, payload) => {
+    const tab = get().tabs.find((t) => t.noteId === noteId);
+    // Capture whatever the user was editing right before the AI payload
+    // lands on top — only when the tab is actually dirty, since clean
+    // tabs have nothing to lose. The ConflictDialog shows this on the
+    // left pane and `keep-mine` restores from it.
+    const preStage: Partial<PendingAiUpdate> = tab?.dirty
+      ? {
+          pre_stage_content: tab.content,
+          pre_stage_tags: serializeTags(tab.tags),
+          pre_stage_folder_id: tab.folderId,
+        }
+      : {};
+    const enriched: PendingAiUpdate = { ...payload, ...preStage };
     const tags = deserializeTags(payload.tags);
     set((state) => ({
       tabs: state.tabs.map((t) =>
@@ -468,7 +534,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
               folderId: payload.folder_id,
               title: extractTitle(payload.content),
               dirty: true,
-              pendingAiUpdate: payload,
+              pendingAiUpdate: enriched,
             }
           : t,
       ),

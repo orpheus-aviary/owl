@@ -74,7 +74,11 @@ export function ConflictDialog() {
 
         {showDiff ? (
           <DiffView
-            original={tab.content}
+            // Prefer `pre_stage_content` when stageAiUpdate overwrote live
+            // edits — that's the version the user actually wrote. Fall back
+            // to `tab.content` for the server-baseline-mismatch case where
+            // the tab already held AI's version at save time.
+            original={prompt.pending.pre_stage_content ?? tab.content}
             modified={prompt.pending.content}
             className="h-96 border border-border rounded-md"
           />
