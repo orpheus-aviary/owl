@@ -16,20 +16,23 @@ import { useEffect } from 'react';
  * existing data shape in steps 5-9 without touching this file.
  */
 export function AIPage() {
-  const chats = useAiStore((s) => s.chats);
   const newChat = useAiStore((s) => s.newChat);
   const activeChat = useActiveChat();
 
   useEffect(() => {
-    if (chats.length === 0) newChat();
-  }, [chats.length, newChat]);
+    // Read the live store rather than closed-over `chats.length` — in React
+    // 19 StrictMode `useEffect` runs twice before the first re-render, both
+    // with the same closure snapshot, so the naive check would create two
+    // tabs in dev mode on the first visit.
+    if (useAiStore.getState().chats.length === 0) newChat();
+  }, [newChat]);
 
   return (
     <div className="flex flex-col h-full min-h-0">
       <ChatTabBar />
       {activeChat ? (
         <>
-          <MessageList messages={activeChat.messages} />
+          <MessageList messages={activeChat.messages} chatId={activeChat.id} />
           <ChatInput chatId={activeChat.id} isStreaming={activeChat.isStreaming} />
         </>
       ) : (

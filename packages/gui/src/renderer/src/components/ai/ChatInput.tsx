@@ -7,14 +7,14 @@ interface ChatInputProps {
   isStreaming: boolean;
 }
 
-const PLACEHOLDER = '输入消息… (⌘↩ 发送)';
+const PLACEHOLDER = '输入消息… (↩ 发送，⇧↩ 换行)';
 const ROW_HEIGHT_PX = 24;
 const MAX_ROWS = 6;
 
 /**
  * Bottom input bar — a textarea that grows with content (capped at MAX_ROWS),
- * a Send button while idle, and an Abort button while streaming. Cmd/Ctrl
- * + Enter sends; plain Enter inserts a newline (chat-style).
+ * a Send button while idle, and an Abort button while streaming. Plain
+ * Enter sends; Shift+Enter inserts a newline.
  */
 export function ChatInput({ chatId, isStreaming }: ChatInputProps) {
   const sendMessage = useAiStore((s) => s.sendMessage);
@@ -32,9 +32,12 @@ export function ChatInput({ chatId, isStreaming }: ChatInputProps) {
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-      // Cmd+Enter (mac) / Ctrl+Enter (win/linux) sends. Plain Enter falls
-      // through to default behaviour (newline) so multi-line drafts are easy.
-      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+      // Chat-style: bare Enter sends, Shift+Enter falls through to the
+      // textarea's default newline behaviour for multi-line drafts. The
+      // meta-key combos (⌘↩ / Ctrl↩) also send so muscle memory holds.
+      // Suppress during IME composition so Chinese/Japanese input
+      // candidate confirmations don't trigger a premature send.
+      if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
         e.preventDefault();
         send();
       }
@@ -79,7 +82,7 @@ export function ChatInput({ chatId, isStreaming }: ChatInputProps) {
             onClick={send}
             disabled={!text.trim()}
             className="inline-flex items-center justify-center size-9 rounded-md bg-primary text-primary-foreground hover:bg-primary/90 disabled:bg-muted disabled:text-muted-foreground"
-            title="发送 (⌘↩)"
+            title="发送 (↩)"
           >
             <Send className="size-4" />
           </button>

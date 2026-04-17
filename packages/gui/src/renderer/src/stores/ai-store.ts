@@ -34,6 +34,12 @@ interface AiState {
   activeChatId: string | null;
   /** Toast queue consumed by `<NoteAppliedToast>` (Step 6). */
   noteAppliedNotices: NoteAppliedNotice[];
+  /**
+   * Per-chat MessageList scroll position, preserved across page
+   * navigations so switching away from /ai and back doesn't reset the
+   * user to the top of the history.
+   */
+  scrollByChatId: Record<string, number>;
 
   newChat: () => string;
   closeChat: (id: string) => Promise<void>;
@@ -42,6 +48,13 @@ interface AiState {
   abortStreaming: (chatId: string) => void;
   /** Drop a notice from the queue once its toast has been dismissed. */
   dismissNoteAppliedNotice: (noticeId: string) => void;
+  /**
+   * Flip a DraftReadyCard's `opened` flag so the card's "打开" button
+   * becomes "已打开". Called after the editor accepts the draft.
+   */
+  markDraftOpened: (chatId: string, messageId: string, draftLocalId: string) => void;
+  /** Record the message list's current scrollTop for a given chat. */
+  setChatScroll: (chatId: string, scrollTop: number) => void;
 }
 
 const TITLE_MAX = 32;
@@ -60,6 +73,13 @@ export const useAiStore = create<AiState>((set, get) => ({
   chats: [],
   activeChatId: null,
   noteAppliedNotices: [],
+  scrollByChatId: {},
+
+  setChatScroll: (chatId, scrollTop) => {
+    set((state) => ({
+      scrollByChatId: { ...state.scrollByChatId, [chatId]: scrollTop },
+    }));
+  },
 
   newChat: () => {
     const id = localId();
@@ -87,6 +107,28 @@ export const useAiStore = create<AiState>((set, get) => ({
   dismissNoteAppliedNotice: (noticeId) => {
     set((state) => ({
       noteAppliedNotices: state.noteAppliedNotices.filter((n) => n.id !== noticeId),
+    }));
+  },
+
+  markDraftOpened: (chatId, messageId, draftLocalId) => {
+    set((state) => ({
+      chats: state.chats.map((c) =>
+        c.id === chatId
+          ? {
+              ...c,
+              messages: c.messages.map((m) =>
+                m.id === messageId
+                  ? {
+                      ...m,
+                      drafts: m.drafts.map((d) =>
+                        d.localId === draftLocalId ? { ...d, opened: true } : d,
+                      ),
+                    }
+                  : m,
+              ),
+            }
+          : c,
+      ),
     }));
   },
 
