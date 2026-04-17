@@ -146,6 +146,9 @@ importers:
       '@owl/core':
         specifier: workspace:*
         version: link:../core
+      '@owl/daemon':
+        specifier: workspace:*
+        version: link:../daemon
       class-variance-authority:
         specifier: ^0.7.1
         version: 0.7.1

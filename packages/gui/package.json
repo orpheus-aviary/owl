@@ -24,6 +24,7 @@
     "@electron-toolkit/utils": "^4.0.0",
     "@lezer/highlight": "^1.2.3",
     "@owl/core": "workspace:*",
+    "@owl/daemon": "workspace:*",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "codemirror": "^6.0.2",
