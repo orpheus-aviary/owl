@@ -69,16 +69,28 @@ export function NoteListItem({
     disabled: !draggable,
   });
 
+  // Use a div instead of button: TagDisplay inside renders Popover / Dialog
+  // triggers which are themselves <button>s, and a button inside a button
+  // breaks React's hydration. role + tabIndex + key handler keep this
+  // accessible for keyboard users.
   return (
-    <button
+    <div
       ref={setNodeRef}
       {...(draggable ? listeners : {})}
       {...(draggable ? attributes : {})}
-      type="button"
+      // biome-ignore lint/a11y/useSemanticElements: nested <button> breaks hydration — TagDisplay renders Popover/Dialog triggers.
+      role="button"
+      tabIndex={0}
       onClick={onClick}
       onDoubleClick={onDoubleClick}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onClick();
+        }
+      }}
       className={cn(
-        'w-full text-left px-3 py-2 border-b border-border transition-colors outline-none',
+        'w-full text-left px-3 py-2 border-b border-border transition-colors outline-none cursor-pointer select-none',
         'hover:bg-accent/50',
         isActive && 'bg-accent border-l-2 border-l-primary',
         isDragging && 'opacity-40',
@@ -120,6 +132,6 @@ export function NoteListItem({
           </div>
         </div>
       </div>
-    </button>
+    </div>
   );
 }

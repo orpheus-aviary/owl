@@ -31,13 +31,23 @@ export function ChatTabBar() {
     <div className="flex items-center border-b border-border bg-background overflow-x-auto shrink-0">
       {chats.map((tab) => {
         const isActive = tab.id === activeChatId;
+        // Wrapper is a div so the close button can nest inside without
+        // triggering React's "button in button" hydration error.
         return (
-          <button
+          <div
             key={tab.id}
-            type="button"
+            role="tab"
+            tabIndex={0}
+            aria-selected={isActive}
             onClick={() => setActiveChat(tab.id)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                setActiveChat(tab.id);
+              }
+            }}
             onMouseDown={(e) => handleMiddleClick(e, tab.id)}
-            className={`group flex items-center gap-1.5 px-3 py-1.5 text-xs border-r border-border shrink-0 max-w-48 transition-colors ${
+            className={`group flex items-center gap-1.5 px-3 py-1.5 text-xs border-r border-border shrink-0 max-w-48 transition-colors cursor-pointer select-none ${
               isActive
                 ? 'bg-accent text-accent-foreground'
                 : 'text-muted-foreground hover:text-foreground hover:bg-accent/50'
@@ -61,7 +71,7 @@ export function ChatTabBar() {
             >
               <X className="size-3" />
             </button>
-          </button>
+          </div>
         );
       })}
       <button

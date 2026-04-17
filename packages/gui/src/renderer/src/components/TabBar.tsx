@@ -27,13 +27,25 @@ export function TabBar({ onCloseTab }: TabBarProps) {
     <div className="flex items-center border-b border-border bg-background overflow-x-auto shrink-0">
       {tabs.map((tab) => {
         const isActive = tab.noteId === activeTabId;
+        // Outer wrapper is a div — not a button — because it hosts the
+        // inner close-button, and nested <button>s break hydration. We
+        // still expose it as a tab role with keyboard activation so the
+        // click target stays accessible.
         return (
-          <button
+          <div
             key={tab.noteId}
-            type="button"
+            role="tab"
+            tabIndex={0}
+            aria-selected={isActive}
             onClick={() => setActiveTab(tab.noteId)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                setActiveTab(tab.noteId);
+              }
+            }}
             onMouseDown={(e) => handleMiddleClick(e, tab.noteId)}
-            className={`group flex items-center gap-1.5 px-3 py-1.5 text-xs border-r border-border shrink-0 max-w-48 transition-colors ${
+            className={`group flex items-center gap-1.5 px-3 py-1.5 text-xs border-r border-border shrink-0 max-w-48 transition-colors cursor-pointer select-none ${
               isActive
                 ? 'bg-accent text-accent-foreground'
                 : 'text-muted-foreground hover:text-foreground hover:bg-accent/50'
@@ -54,7 +66,7 @@ export function TabBar({ onCloseTab }: TabBarProps) {
             >
               <X className="size-3" />
             </button>
-          </button>
+          </div>
         );
       })}
     </div>
