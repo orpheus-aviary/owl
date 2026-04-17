@@ -294,7 +294,6 @@ export interface OwlConfig {
   daemon: { poll_interval_min: number; port: number };
   ai: {
     context_rounds: number;
-    max_fts_notes: number;
     max_recent_notes: number;
     max_context_chars: number;
   };

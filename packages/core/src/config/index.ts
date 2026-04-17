@@ -40,7 +40,6 @@ export interface DaemonConfig {
 
 export interface AiConfig {
   context_rounds: number;
-  max_fts_notes: number;
   max_recent_notes: number;
   /**
    * Cumulative character budget for the Layer-1 "recent fill" injected
@@ -110,7 +109,7 @@ export const DEFAULT_CONFIG: OwlConfig = {
   font: { global_offset: 0, editor_font_size: 14, editor_line_height: 1.6 },
   navigation: { order: ['editor', 'browser', 'trash', 'reminders', 'ai', 'todo', 'settings'] },
   daemon: { poll_interval_min: 1, port: 47010 },
-  ai: { context_rounds: 3, max_fts_notes: 10, max_recent_notes: 5, max_context_chars: 30000 },
+  ai: { context_rounds: 3, max_recent_notes: 5, max_context_chars: 30000 },
   trash: { auto_delete_days: 30 },
   log: { max_size_mb: 10, max_backups: 5, max_age_days: 30, level: 'info' },
   editor: { default_mode: 'edit' },

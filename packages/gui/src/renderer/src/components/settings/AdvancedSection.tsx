@@ -104,18 +104,22 @@ export function AdvancedSection() {
               onCommit={(n) => patchAi({ context_rounds: n })}
             />
           </SettingRow>
-          <SettingRow label="最大搜索笔记数" help="FTS 搜索返回给 AI 的笔记上限">
-            <NumberField
-              value={ai.max_fts_notes}
-              min={1}
-              onCommit={(n) => patchAi({ max_fts_notes: n })}
-            />
-          </SettingRow>
           <SettingRow label="最近笔记上下文数" help="作为上下文注入的最近笔记数量">
             <NumberField
               value={ai.max_recent_notes}
               min={0}
               onCommit={(n) => patchAi({ max_recent_notes: n })}
+            />
+          </SettingRow>
+          <SettingRow
+            label="上下文字符预算"
+            help="最近笔记注入的累计字符上限；超出后剩余笔记改由 AI 主动 search"
+          >
+            <NumberField
+              value={ai.max_context_chars}
+              min={0}
+              width="w-24"
+              onCommit={(n) => patchAi({ max_context_chars: n })}
             />
           </SettingRow>
         </div>
