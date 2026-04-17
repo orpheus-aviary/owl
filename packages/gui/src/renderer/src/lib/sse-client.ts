@@ -47,12 +47,21 @@ export class SseHttpError extends Error {
 export async function streamSse(options: SseStreamOptions): Promise<void> {
   const warn = options.warn ?? ((msg) => console.warn('[sse-client]', msg));
 
-  const response = await fetch(options.url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
-    body: JSON.stringify(options.body),
-    signal: options.signal,
-  });
+  let response: Response;
+  try {
+    response = await fetch(options.url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
+      body: JSON.stringify(options.body),
+      signal: options.signal,
+    });
+  } catch (err) {
+    // The signal can abort either (a) before headers arrive, or (b) mid-body
+    // when pumpReader would normally catch it. Treat both the same: resolve
+    // cleanly and let the caller ignore the half-finished message.
+    if (isAbortError(err) || options.signal?.aborted) return;
+    throw err;
+  }
 
   if (!response.ok) {
     const body = await safeReadText(response);
@@ -66,7 +75,6 @@ export async function streamSse(options: SseStreamOptions): Promise<void> {
   try {
     await pumpReader(response.body, options.signal, options.onEvent, warn);
   } catch (err) {
-    // Aborts surface as DOMException; treat as clean exit.
     if (isAbortError(err) || options.signal?.aborted) return;
     throw err;
   }

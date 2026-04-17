@@ -1,4 +1,4 @@
-import type { FastifyReply } from 'fastify';
+import type { FastifyReply, FastifyRequest } from 'fastify';
 
 /**
  * Server-Sent Events helpers. We bypass Fastify's `reply.send` because once
@@ -15,15 +15,30 @@ import type { FastifyReply } from 'fastify';
  * `event` name to pick which agent event handler to fire.
  */
 
-/** Begin an SSE response — write status + headers, mark Fastify as hijacked. */
-export function initSse(reply: FastifyReply): void {
-  reply.hijack();
-  reply.raw.writeHead(200, {
+/**
+ * Begin an SSE response — write status + headers, mark Fastify as hijacked.
+ *
+ * `reply.hijack()` skips Fastify's onSend hook chain, which means the
+ * `@fastify/cors` plugin's header injection never runs. We re-apply the
+ * CORS echo inline here so browsers fetching `/ai/chat` from the GUI dev
+ * server (port 5173) pass the preflight-less POST allow-origin check.
+ */
+export function initSse(reply: FastifyReply, req: FastifyRequest): void {
+  const origin = req.headers.origin;
+  const headers: Record<string, string> = {
     'Content-Type': 'text/event-stream',
     'Cache-Control': 'no-cache, no-transform',
     Connection: 'keep-alive',
     'X-Accel-Buffering': 'no',
-  });
+  };
+  if (typeof origin === 'string' && origin) {
+    headers['Access-Control-Allow-Origin'] = origin;
+    headers['Access-Control-Allow-Credentials'] = 'true';
+    headers.Vary = 'Origin';
+  }
+
+  reply.hijack();
+  reply.raw.writeHead(200, headers);
   // Flush headers immediately so the client knows the stream is live even
   // if the first event is delayed (e.g. while the LLM is connecting).
   reply.raw.flushHeaders?.();

@@ -1,5 +1,5 @@
 import { resolveLlmConfig } from '@owl/core';
-import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import type { FastifyInstance, FastifyReply } from 'fastify';
 import { type AgentEvent, runAgentLoop } from '../ai/agent-loop.js';
 import { createLlmClient } from '../ai/llm-client.js';
 import { endSse, initSse, sendSseEvent } from '../ai/sse.js';
@@ -41,8 +41,18 @@ export function registerAiRoutes(app: FastifyInstance, ctx: AppContext): void {
       return;
     }
 
-    initSse(reply);
-    const abort = wireClientDisconnect(req, reply);
+    ctx.logger.info(
+      {
+        convo: validation.conversationId ?? '(new)',
+        messageLen: validation.message.length,
+        provider: llmConfig.api_format,
+        model: llmConfig.model,
+      },
+      'POST /ai/chat — starting agent loop',
+    );
+
+    initSse(reply, req);
+    const abort = wireClientDisconnect(reply, ctx.logger);
 
     try {
       const generator = runAgentLoop(
@@ -73,6 +83,15 @@ export function registerAiRoutes(app: FastifyInstance, ctx: AppContext): void {
 
       for await (const event of generator) {
         if (reply.raw.writableEnded) break;
+        // Error events from inside the generator bypass the outer catch —
+        // log them explicitly so production issues (LLM 401, signal aborts)
+        // show up in the daemon log even when SSE has already been opened.
+        if (event.type === 'error') {
+          ctx.logger.warn(
+            { message: event.message, signalAborted: abort.signal.aborted },
+            'agent loop yielded error event',
+          );
+        }
         sendSseEvent(reply, event.type, eventPayload(event));
       }
     } catch (err) {
@@ -184,16 +203,31 @@ interface AbortHandle {
 }
 
 /**
- * Wire the underlying socket's `close` event to an AbortController so the
+ * Wire the response socket's `close` event to an AbortController so the
  * agent loop can stop streaming when the client disconnects mid-response.
+ *
+ * Critically, we listen on `reply.raw` (the `http.ServerResponse`), NOT
+ * `req.raw`. `http.IncomingMessage` emits `close` as soon as the request
+ * body has been fully read — which for a tiny POST happens within
+ * milliseconds, long before the response stream ends. Using `req.raw`
+ * aborted every agent loop ~1ms after it started. `reply.raw`'s `close`
+ * only fires when the response stream is actually terminated (either by
+ * us calling `.end()` or by the client disconnecting mid-SSE), which is
+ * what we actually want.
  */
-function wireClientDisconnect(req: FastifyRequest, _reply: FastifyReply): AbortHandle {
+function wireClientDisconnect(reply: FastifyReply, logger: AppContext['logger']): AbortHandle {
   const controller = new AbortController();
-  const onClose = () => controller.abort(new Error('client disconnected'));
-  req.raw.on('close', onClose);
+  const onClose = () => {
+    logger.info('SSE client socket closed — aborting agent loop');
+    controller.abort(new Error('client disconnected'));
+  };
+  reply.raw.on('close', onClose);
   return {
     signal: controller.signal,
-    cleanup: () => req.raw.off('close', onClose),
+    // Detach before the outer `finally` calls `reply.raw.end()` — that
+    // end() would otherwise fire `close` and spuriously log a "client
+    // disconnected" for every clean turn completion.
+    cleanup: () => reply.raw.off('close', onClose),
   };
 }
 
