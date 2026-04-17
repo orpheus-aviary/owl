@@ -1,6 +1,6 @@
 import { useAiStore } from '@/stores/ai-store';
 import { Send, Square } from 'lucide-react';
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 interface ChatInputProps {
   chatId: string;
@@ -44,6 +44,15 @@ export function ChatInput({ chatId, isStreaming }: ChatInputProps) {
     },
     [send],
   );
+
+  // Keep focus on the textarea at the points where the user is about
+  // to type: first mount, tab switch (chatId change), and right after
+  // a stream ends (`disabled={isStreaming}` blurs the textarea, so we
+  // have to explicitly put focus back when it re-enables).
+  // biome-ignore lint/correctness/useExhaustiveDependencies: chatId is the tab-switch trigger
+  useEffect(() => {
+    if (!isStreaming) textareaRef.current?.focus();
+  }, [chatId, isStreaming]);
 
   // Auto-resize: clear inline height first so scrollHeight reflects content.
   const handleInput = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {

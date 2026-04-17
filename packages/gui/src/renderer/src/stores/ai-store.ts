@@ -101,7 +101,23 @@ export const useAiStore = create<AiState>((set, get) => ({
 
   abortStreaming: (chatId) => {
     const tab = get().chats.find((c) => c.id === chatId);
-    tab?.abortController?.abort();
+    if (!tab) return;
+    // Tag the in-flight assistant message so the bubble can render a
+    // subtle "已停止生成" hint and distinguish user-abort from an
+    // actual `error` event.
+    set((state) => ({
+      chats: state.chats.map((c) =>
+        c.id === chatId
+          ? {
+              ...c,
+              messages: c.messages.map((m) =>
+                m.role === 'assistant' && m.isStreaming ? { ...m, aborted: true } : m,
+              ),
+            }
+          : c,
+      ),
+    }));
+    tab.abortController?.abort();
   },
 
   dismissNoteAppliedNotice: (noticeId) => {

@@ -55,6 +55,8 @@ export interface ChatMessage {
   isStreaming: boolean;
   /** Populated by an `error` SSE event. */
   error?: string;
+  /** Set to true when the user clicked Stop to cut off generation. */
+  aborted?: boolean;
 }
 
 export interface ChatTabState {

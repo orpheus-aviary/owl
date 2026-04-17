@@ -1,6 +1,6 @@
 # 开发进度
 
-## 当前状态：P2 实施中（P2-7 完成 → P2-8 进行中：steps 1-9 / 10 已完成）
+## 当前状态：P2 实施中（P2-7 完成 → **P2-8 完整 10/10 步**；下一步 P2-9）
 
 ### 已完成
 
@@ -58,13 +58,80 @@
 | P2-8 step 6 | `editorStore.applyNoteAppliedFromAi` + ai-store 转发 + 全局 NoteAppliedToast + 4 个 vitest 测试 | — |
 | P2-8 step 7 | DraftReadyCard "打开" → `openAiDraft / stageAiUpdate` + `markDraftOpened` + navigate | `54d87c8` |
 | P2-8 step 8 | `@codemirror/merge` 集成 + `components/ai/diff/DiffView.tsx`（read-only split） | `bf16c9d` |
-| P2-8 step 9 | `conflictPrompt` + `requestSaveOrConflict` / `resolveConflict` + `<ConflictDialog>` 嵌入 DiffView + 5 个 vitest 测试 | — |
+| P2-8 step 9 | `conflictPrompt` + `requestSaveOrConflict` / `resolveConflict` + `<ConflictDialog>` 嵌入 DiffView + 5 个 vitest 测试 | `a993c3c` |
+| P2-8 step 9 fix | pre_stage_content 捕获（dirty-stage 触发冲突） + accept-ai 清 pre_stage 避免重试循环 + daemon `setErrorHandler` 把 500 stack 写进 log | `0e7cca5` `c53dbb0` |
+| P2-8 step 10 | ChatInput 自动聚焦（mount / chat 切换 / stream 结束）+ abort 后显示"⏹ 已停止生成"指示 + E2E 手动测试清单 | — |
 
 - 测试：206 个全部通过（core 82 + daemon 92 + gui 32）
 - Lint + Typecheck：零错误（11 个 pre-existing warnings）
 - 决策文档：`docs/plans/2026-04-14-trash-sticky-semantics.md`、`docs/plans/2026-04-17-p2-7-ai-implementation.md`、`docs/plans/2026-04-17-p2-8-ai-page.md`
 
-### 下一步：P2-8 step 10（Polish — empty-state / shortcut / abort UI / error bubble / E2E 手动测试）
+### 下一步：P2-9（分屏拖拽：列表↔编辑、编辑↔预览）
+
+### P2-8 E2E 手动测试清单
+
+跑 `just dev` 之后按顺序验证：
+
+**A. SSE + 基础对话**
+1. 编辑页随便建一条笔记 → 切到 AI 页（侧栏 Cmd+6）
+2. 第一次进去应自动建 **1** 个 chat（不是 2 个）
+3. 输入"列出我所有标签"，按 Enter 发送
+4. 预期：流式文字出现；tool_call `list_tags` 折叠块可展开看 args/result；结尾"思考中…"消失
+
+**B. Tier-1 auto-merge（append_memo）**
+5. 编辑页打开 `#随记` 笔记（干净不脏）
+6. 切到 AI 页，"在 memo 末尾追加 milk"
+7. 预期：右上角绿色 toast "AI 已更新笔记"；memo tab 内容自动更新；DB `sqlite3 owl.db "select content from notes where id like '00000000%1'"` 可查到
+
+**C. Tier-1 dirty-merge**
+8. 回到编辑页在 `#随记` tab 里再手写一行（不保存）→ tab 脏
+9. AI 页 "在 memo 追加 eggs" → 预期：toast + memo tab 内容变成"(用户本地) + eggs"，脏标志仍在；Cmd+S 走 PUT 路径保存
+10. DB 应有 milk + eggs 都在
+
+**D. Tier-2 create 草稿**
+11. AI 页 "帮我创建一个叫'旅行清单'的笔记，内容写三项"
+12. 收到 DraftReadyCard → 点"打开"
+13. 预期：切到编辑页，新 tab 标题"旅行清单"，内容预填，Tab 脏，AI 页按钮变"已打开"
+14. Cmd+S → POST 保存，Tab id 从 `draft_` 换成真实 UUID；笔记列表刷新
+
+**E. Tier-2 update（无冲突）**
+15. 挑一条已有普通笔记（比如上面建的"旅行清单"），关掉它的 tab
+16. AI 页 "把旅行清单的第三项改成'买保险'"
+17. 收到 DraftReadyCard action=update → 点"打开"
+18. 预期：笔记打开，内容是 AI 版本，Tab 脏，`pendingAiUpdate` 已 stage
+19. Cmd+S → PATCH 保存，不弹冲突，Tab 干净
+
+**F. Tier-2 update（触发冲突）**
+20. 打开"旅行清单"笔记，手动在末尾加一行 → Tab 脏
+21. **不切走**，继续在同一笔记中停留；切 AI 页 "把旅行清单的第二项改成'订机票'"
+22. 收到 DraftReadyCard → 点"打开"
+23. 回到编辑页看到内容被 AI 覆盖
+24. Cmd+S → **ConflictDialog 弹出**，"冲突项：内容"
+25. 点"查看差异" → 左栏你的本地版（含刚加的那行）、右栏 AI 版
+26. 点"保留本地" → tab 回滚到你的本地版 + 保存
+    重复一次选"接受 AI 版本" → tab 保留 AI 版 + 保存，dialog 不再弹
+
+**G. Abort UI**
+27. AI 页发一条长问题 "写一篇 500 字散文"
+28. 流式到一半点 ⏹ Stop 按钮
+29. 预期：光标消失，bubble 底部显示"⏹ 已停止生成"灰字
+30. 输入框重新获得焦点可继续输入
+
+**H. 聊天 tab 切换 + scroll 保留**
+31. 起两个 chat tab，各发几条消息
+32. 在 tab A 滚动到中间位置 → 切 tab B → 切回 tab A
+33. 预期：scrollTop 保留在你离开时的位置，不重置到顶
+
+**I. 页面离开后再回**
+34. 在 AI 页发消息中途 Cmd+1 切编辑页
+35. 切回 AI 页 → 预期：流式继续（后台运行），切走期间新增的 tool_call / 消息都在
+
+**J. 删除系统笔记保护**
+36. 浏览页/编辑页找到 `#随记`，右键 → 移到回收站
+37. 预期：弹"系统笔记无法删除"对话框（非静默失败）
+
+**K. daemon 500 诊断**
+38. 手动停 daemon；GUI 调用任何 API 时出错会在 daemon.log 留 `unhandled route error` 条目含 stack（非 Fastify 默认的空）
 
 ### 本轮会话额外落地（计划外但必需）
 
@@ -97,7 +164,7 @@
 | 7 | DraftReadyCard "打开" → `editorStore.openAiDraft / stageAiUpdate` wiring | ✅ |
 | 8 | `@codemirror/merge` 集成 + DiffView 组件 | ✅ |
 | 9 | ConflictDialog + `editorStore.requestSaveOrConflict / resolveConflict` | ✅ |
-| 10 | Polish: empty-state、scroll、shortcut、abort UI、error bubble、E2E manual test | ⏳ |
+| 10 | Polish: empty-state、scroll、shortcut、abort UI、error bubble、E2E manual test | ✅ |
 
 **P2 设计文档：** `docs/plans/2026-04-12-p2-design.md`、`docs/plans/2026-04-17-p2-8-ai-page.md`
 
@@ -119,7 +186,7 @@ P2 commit 分解（11 步）：
 | P2-7c | Agent loop + 内存对话 + system-prompt（Layer 1 recent fill） | 后端 | ✅ |
 | P2-7d | SSE 端点 `/ai/chat` + AI 路由 + AppContext 扩展 | 后端 | ✅ |
 | P2-7e | Tier-2 写工具（create/update_note、create_reminder、apply_update）+ draft/preview | 后端 | ✅ |
-| P2-8 | AI 对话页面（聊天界面 + 草稿机制） | 前端 | 🚧 5/10 |
+| P2-8 | AI 对话页面（聊天界面 + 草稿机制） | 前端 | ✅ |
 | P2-9 | 分屏拖拽（列表↔编辑、编辑↔预览） | 前端 | ⏳ |
 | P2-10 | reminder_status 清理（90 天 fired 记录） | 后端 | ⏳ |
 

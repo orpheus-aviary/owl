@@ -153,6 +153,9 @@ function AssistantBubble({ message, chatId }: { message: ChatMessage; chatId: st
           )}
         </div>
       )}
+      {message.aborted && !message.isStreaming && (
+        <div className="px-3 pb-1 text-xs text-muted-foreground/70 italic">⏹ 已停止生成</div>
+      )}
     </div>
   );
 }
