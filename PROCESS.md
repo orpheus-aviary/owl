@@ -60,11 +60,16 @@
 | P2-8 step 8 | `@codemirror/merge` 集成 + `components/ai/diff/DiffView.tsx`（read-only split） | `bf16c9d` |
 | P2-8 step 9 | `conflictPrompt` + `requestSaveOrConflict` / `resolveConflict` + `<ConflictDialog>` 嵌入 DiffView + 5 个 vitest 测试 | `a993c3c` |
 | P2-8 step 9 fix | pre_stage_content 捕获（dirty-stage 触发冲突） + accept-ai 清 pre_stage 避免重试循环 + daemon `setErrorHandler` 把 500 stack 写进 log | `0e7cca5` `c53dbb0` |
-| P2-8 step 10 | ChatInput 自动聚焦（mount / chat 切换 / stream 结束）+ abort 后显示"⏹ 已停止生成"指示 + E2E 手动测试清单 | — |
+| P2-8 step 10 | ChatInput 自动聚焦（mount / chat 切换 / stream 结束）+ abort 后显示"⏹ 已停止生成"指示 + E2E 手动测试清单 | `a3b924d` |
 
-- 测试：206 个全部通过（core 82 + daemon 92 + gui 32）
+- 测试：209 个全部通过（core 82 + daemon 92 + gui 35）
 - Lint + Typecheck：零错误（11 个 pre-existing warnings）
-- 决策文档：`docs/plans/2026-04-14-trash-sticky-semantics.md`、`docs/plans/2026-04-17-p2-7-ai-implementation.md`、`docs/plans/2026-04-17-p2-8-ai-page.md`
+- 决策文档：
+  - `docs/plans/2026-04-14-trash-sticky-semantics.md`
+  - `docs/plans/2026-04-17-p2-7-ai-implementation.md`
+  - `docs/plans/2026-04-17-p2-8-ai-page.md`
+  - `docs/plans/2026-04-18-chat-persistence.md`（未执行，P2-9 之后或 P3）
+  - `docs/plans/p3-deferred.md`（P3 集合清单）
 
 ### 下一步：P2-9（分屏拖拽：列表↔编辑、编辑↔预览）
 
@@ -133,25 +138,7 @@
 **K. daemon 500 诊断**
 38. 手动停 daemon；GUI 调用任何 API 时出错会在 daemon.log 留 `unhandled route error` 条目含 stack（非 Fastify 默认的空）
 
-### 本轮会话额外落地（计划外但必需）
-
-- daemon SSE：`reply.raw.on('close')` 替换 `req.raw.on('close')`（后者会在请求 body 读完就触发 → 几毫秒内就 abort agent loop）；`initSse` 内联 CORS echo（`reply.hijack()` 跳过了 `@fastify/cors` onSend）
-- GUI：`sse-client.ts` 初始 fetch 阶段也吞 abort；`just dev` 自动拉起 daemon（gui 加 `@owl/daemon` workspace dep + daemon `./cli` 改两 condition 兼容 `createRequire`）
-- 特殊笔记：`ensureSpecialNotes` 增加"从回收站恢复"分支；`deleteNote` / `permanentDeleteNote` 拒绝；daemon 路由 403 `SPECIAL_NOTE_PROTECTED`；GUI 删除流程前置检查 → 弹"系统笔记无法删除"对话框（不再静默失败）
-- 嵌套 button 水合错误：`TabBar` / `ChatTabBar` / `NoteListItem` 外层改成 `<div role="button">`
-- `openNote` 已存在 tab 分支也用 API 新数据刷新内容（脏 tab 只改 baseline）
-- ChatInput：裸 Enter 发送 + Shift+Enter 换行（`nativeEvent.isComposing` IME 保护）
-- MessageList：`scrollByChatId` 持久化每个 chat 的 scrollTop + `atBottomRef` sticky auto-scroll
-- MessageBubble：tool_call / drafts / previews 渲染在 content 前（时间顺序）
-- AIPage：React 19 StrictMode 双触发只建一个 chat（`useAiStore.getState()` 读实时状态）
-- 配置：删 dead field `max_fts_notes`（daemon 从未用过），Advanced 面板新增"上下文字符预算"（真正的 Layer-1 预算 `max_context_chars`）
-
-### 已落计划文档（本轮新增）
-
-- `docs/plans/2026-04-18-chat-persistence.md` — 聊天持久化 + 侧栏设计（daemon SQLite 存储，删掉 ChatTabBar，类 Claude 网页风格，允许后台 streaming）；**暂不执行**，排在 P2-8 step 8-10 后或 P3
-- `docs/plans/p3-deferred.md` — 特殊笔记可视化区分 + `append_memo` 语义讨论 + 聊天历史深度优化，统一归 P3
-
-**P2-8 实施进度（10 步）：**
+**P2-8 实施进度（10 步 ✅）：**
 
 | Step | 内容 | 状态 |
 |------|------|------|
@@ -190,9 +177,16 @@ P2 commit 分解（11 步）：
 | P2-9 | 分屏拖拽（列表↔编辑、编辑↔预览） | 前端 | ⏳ |
 | P2-10 | reminder_status 清理（90 天 fired 记录） | 后端 | ⏳ |
 
-**P2 不做（延后事项）：**
-- 远程连接（原 P2-1）— 与 P4 migration 同步机制耦合，整体留到 P4
-- `open_note_in_gui`（daemon→GUI 反向通道）— 留到 P3 CLI 场景再做
+**P2 不做（延后事项）**，完整清单见 `docs/plans/p3-deferred.md`：
+- 远程连接（原 P2-1）— 与 P4 migration 同步机制耦合，留到 P4
+- `open_note_in_gui`（daemon→GUI 反向通道）— P3 CLI 场景再做
+- 聊天持久化 + 侧栏（删 ChatTabBar 改成侧栏布局）— `docs/plans/2026-04-18-chat-persistence.md`，排在 P2-9/P2-10 后或 P3
+- 特殊笔记视觉区分（pin / badge / 侧栏快捷入口）— P3
+- `append_memo` 语义是否跟随 `#memo` 标签笔记 — P3
+- 编辑器自动补全（tag / datetime / note-link）— P3，用户 2026-04-18 提出
+- AI 聊天 → 跳转打开指定笔记（note citation / open_note 工具）— P3，用户 2026-04-18 提出
+- Semantic search / embeddings — P3（P2 只做 FTS + LLM query expansion）
+- AI 草稿 banner-instead-of-overwrite 方案（option C）— 暂时保留 stage-overwrite + pre_stage_content 方案
 
 **关键设计决策：**
 - AI 草稿走 SSE 响应事件，GUI 自行打开 Tab（无反向通道）
