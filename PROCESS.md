@@ -1,6 +1,6 @@
 # 开发进度
 
-## 当前状态：P2 实施中（P2-8 完整 10/10 步 → **P2-9 完整 4/4 步**；下一步 P2-10）
+## 当前状态：P2 实施中（P2-9 完整 4/4 → **P2-10 完成**；剩 P2-6 即 P2 收官）
 
 ### 已完成
 
@@ -66,8 +66,10 @@
 | P2-9 step 2 | `App.tsx` 外层 Group（FolderPanel 改 collapsible Panel，Cmd+B 走 imperative collapse/expand，main 不再 remount） | `c0db35b` |
 | P2-9 step 3 | `EditorPage.tsx` NoteList↔编辑区 Group；UnsavedDialog hoist 出 Group 避免非法子节点 | `831e7a9` |
 | P2-9 step 4 | `EditorPanel.tsx` split 模式 Editor↔Preview Group，切换模式/刷新都保留比例 | `98152de` |
+| P2-9 fix | Panel size props 单位字符串化（minSize `"120px"`），过滤 collapsed=0 的 save，panelOpen 持久化到 localStorage | `11116a6` `da43e8b` |
+| P2-10 | `cleanupOldFiredReminders(db, 90)` + scheduler 集成 + 2 个 core 测试 | `f61253c` |
 
-- 测试：209 个全部通过（core 82 + daemon 92 + gui 35）
+- 测试：211 个全部通过（core 84 + daemon 92 + gui 35）
 - Lint + Typecheck：零错误（11 个 pre-existing warnings）
 - 决策文档：
   - `docs/plans/2026-04-14-trash-sticky-semantics.md`
@@ -77,7 +79,7 @@
   - `docs/plans/2026-04-20-p2-9-resizable-panels.md`
   - `docs/plans/p3-deferred.md`（P3 集合清单）
 
-### 下一步：P2-10（reminder_status 90 天 fired 记录清理）
+### 下一步：P2-6（浏览页文件夹筛选 include_descendants）— P2 收尾
 
 ### P2-9 手动测试清单
 
@@ -207,7 +209,7 @@ P2 commit 分解（11 步）：
 | P2-7e | Tier-2 写工具（create/update_note、create_reminder、apply_update）+ draft/preview | 后端 | ✅ |
 | P2-8 | AI 对话页面（聊天界面 + 草稿机制） | 前端 | ✅ |
 | P2-9 | 分屏拖拽（列表↔编辑、编辑↔预览、含 FolderPanel） | 前端 | ✅ |
-| P2-10 | reminder_status 清理（90 天 fired 记录） | 后端 | ⏳ |
+| P2-10 | reminder_status 清理（90 天 fired 记录） | 后端 | ✅ |
 
 **P2 不做（延后事项）**，完整清单见 `docs/plans/p3-deferred.md`：
 - 远程连接（原 P2-1）— 与 P4 migration 同步机制耦合，留到 P4
