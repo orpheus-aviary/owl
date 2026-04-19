@@ -176,7 +176,7 @@ export function FolderPanel() {
 
   return (
     <aside
-      className="flex h-full w-full min-w-0 flex-col border-r border-border bg-sidebar text-sidebar-foreground select-none"
+      className="flex h-full w-full min-w-0 flex-col bg-sidebar text-sidebar-foreground select-none"
       aria-label="文件夹面板"
     >
       <header className="flex items-center justify-between gap-1 px-3 h-10 border-b border-border text-xs font-medium uppercase tracking-wide text-muted-foreground">

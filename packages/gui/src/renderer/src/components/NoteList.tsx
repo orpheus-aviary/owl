@@ -79,7 +79,7 @@ export function NoteList({ activeNoteId, onSelectNote }: NoteListProps) {
   const displayActiveId = activeNoteId ?? selectedId;
 
   return (
-    <div className="flex flex-col h-full min-h-0 border-r border-border">
+    <div className="flex flex-col h-full w-full min-h-0 min-w-0">
       {/* Header: new + search */}
       <div className="flex items-center gap-1 p-2 border-b border-border">
         <Button variant="ghost" size="icon" className="shrink-0 size-8" onClick={handleCreate}>
