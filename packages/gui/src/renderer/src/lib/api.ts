@@ -139,7 +139,9 @@ export function listNotes(params?: {
   const qs = new URLSearchParams();
   if (params?.q) qs.set('q', params.q);
   if (params?.folder_id) qs.set('folder_id', params.folder_id);
-  if (params?.include_descendants === false) qs.set('include_descendants', 'false');
+  if (params?.include_descendants !== undefined) {
+    qs.set('include_descendants', String(params.include_descendants));
+  }
   if (params?.trash_level !== undefined) qs.set('trash_level', String(params.trash_level));
   if (params?.tags) qs.set('tags', params.tags);
   if (params?.sort_by) qs.set('sort_by', params.sort_by);

@@ -1,10 +1,12 @@
 import { MarkdownEditor } from '@/components/MarkdownEditor';
 import { MarkdownPreview } from '@/components/MarkdownPreview';
 import { TagBar } from '@/components/TagBar';
-import { ResizeHandle } from '@/components/ui/ResizeHandle';
+import { ResizeHandle } from '@/components/ui/resize-handle';
+import { useOwlLayout } from '@/hooks/useOwlLayout';
+import { LAYOUT_KEYS } from '@/lib/layout-keys';
 import { type EditorMode, useActiveTab, useEditorStore } from '@/stores/editor-store';
 import { Columns2, Eye, Pencil } from 'lucide-react';
-import { Group, Panel, useDefaultLayout } from 'react-resizable-panels';
+import { Group, Panel } from 'react-resizable-panels';
 
 const MODE_ICONS: Record<EditorMode, typeof Pencil> = {
   edit: Pencil,
@@ -42,10 +44,7 @@ export function EditorPanel() {
   const updateContent = useEditorStore((s) => s.updateContent);
   const updateTags = useEditorStore((s) => s.updateTags);
 
-  const splitLayout = useDefaultLayout({
-    id: 'owl-editor-split',
-    storage: typeof window === 'undefined' ? undefined : window.localStorage,
-  });
+  const splitLayout = useOwlLayout(LAYOUT_KEYS.editorSplit);
 
   if (!tab) {
     return (
@@ -77,7 +76,7 @@ export function EditorPanel() {
         {mode === 'split' && (
           <Group
             orientation="horizontal"
-            id="owl-editor-split"
+            id={LAYOUT_KEYS.editorSplit}
             defaultLayout={splitLayout.defaultLayout}
             onLayoutChanged={splitLayout.onLayoutChanged}
             className="flex flex-1 min-h-0 min-w-0"

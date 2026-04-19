@@ -1,5 +1,6 @@
 import type { Folder, FolderReorderItem, Note } from '@/lib/api';
 import * as api from '@/lib/api';
+import { LAYOUT_KEYS } from '@/lib/layout-keys';
 import { create } from 'zustand';
 
 export interface FolderNode extends Folder {
@@ -83,16 +84,12 @@ export function isDescendant(folders: Folder[], ancestorId: string, targetId: st
   return false;
 }
 
-const PANEL_OPEN_KEY = 'owl-folder-panel-open';
-
 function readPanelOpen(): boolean {
-  if (typeof window === 'undefined') return false;
-  return window.localStorage.getItem(PANEL_OPEN_KEY) === '1';
+  return window.localStorage.getItem(LAYOUT_KEYS.folderPanelOpen) === '1';
 }
 
 function writePanelOpen(open: boolean): void {
-  if (typeof window === 'undefined') return;
-  window.localStorage.setItem(PANEL_OPEN_KEY, open ? '1' : '0');
+  window.localStorage.setItem(LAYOUT_KEYS.folderPanelOpen, open ? '1' : '0');
 }
 
 export const useFolderStore = create<FolderState>((set, get) => ({

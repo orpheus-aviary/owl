@@ -3,9 +3,11 @@ import { FolderPanel } from '@/components/FolderPanel';
 import { extractTitle } from '@/components/NoteListItem';
 import { ConflictDialog } from '@/components/ai/ConflictDialog';
 import { NoteAppliedToast } from '@/components/ai/NoteAppliedToast';
-import { ResizeHandle } from '@/components/ui/ResizeHandle';
+import { ResizeHandle } from '@/components/ui/resize-handle';
+import { useOwlLayout } from '@/hooks/useOwlLayout';
 import { type ShortcutsConfig, moveNoteToFolder } from '@/lib/api';
 import { type DragData, isDragData, isDropTarget } from '@/lib/dnd-types';
+import { LAYOUT_KEYS } from '@/lib/layout-keys';
 import { matchesShortcut } from '@/lib/shortcuts';
 import { useBrowserStore } from '@/stores/browser-store';
 import { useConfigStore } from '@/stores/config-store';
@@ -36,7 +38,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import { Group, Panel, useDefaultLayout, usePanelRef } from 'react-resizable-panels';
+import { Group, Panel, usePanelRef } from 'react-resizable-panels';
 import { HashRouter, NavLink, Route, Routes, useNavigate } from 'react-router-dom';
 import { AIPage } from './pages/AIPage';
 import { BrowserPage } from './pages/BrowserPage';
@@ -194,10 +196,7 @@ export function App() {
   const togglePanel = useFolderStore((s) => s.togglePanel);
 
   const folderPanelRef = usePanelRef();
-  const folderLayout = useDefaultLayout({
-    id: 'owl-folder-layout',
-    storage: typeof window === 'undefined' ? undefined : window.localStorage,
-  });
+  const folderLayout = useOwlLayout(LAYOUT_KEYS.folderLayout);
 
   // Sync imperative collapse state with the store-backed `panelOpen` flag so
   // Cmd+B / the sidebar button remain the source of truth. panelOpen itself
@@ -275,7 +274,7 @@ export function App() {
 
           <Group
             orientation="horizontal"
-            id="owl-folder-layout"
+            id={LAYOUT_KEYS.folderLayout}
             defaultLayout={folderLayout.defaultLayout}
             onLayoutChanged={(layout) => {
               // Skip save when folder is collapsed (size 0) — otherwise Cmd+B

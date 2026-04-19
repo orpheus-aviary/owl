@@ -2,11 +2,13 @@ import { EditorPanel } from '@/components/EditorPanel';
 import { NoteList } from '@/components/NoteList';
 import { TabBar } from '@/components/TabBar';
 import { type UnsavedAction, UnsavedDialog } from '@/components/UnsavedDialog';
-import { ResizeHandle } from '@/components/ui/ResizeHandle';
+import { ResizeHandle } from '@/components/ui/resize-handle';
 import { useEditorShortcuts } from '@/hooks/useEditorShortcuts';
+import { useOwlLayout } from '@/hooks/useOwlLayout';
+import { LAYOUT_KEYS } from '@/lib/layout-keys';
 import { openNoteById, useEditorStore } from '@/stores/editor-store';
 import { useCallback, useRef, useState } from 'react';
-import { Group, Panel, useDefaultLayout } from 'react-resizable-panels';
+import { Group, Panel } from 'react-resizable-panels';
 
 export function EditorPage() {
   const activeTabId = useEditorStore((s) => s.activeTabId);
@@ -14,10 +16,7 @@ export function EditorPage() {
   const pendingCloseId = useRef<string | null>(null);
   const pendingCloseTitle = useRef('');
 
-  const layout = useDefaultLayout({
-    id: 'owl-editor-layout',
-    storage: typeof window === 'undefined' ? undefined : window.localStorage,
-  });
+  const layout = useOwlLayout(LAYOUT_KEYS.editorLayout);
 
   const requestCloseTab = useCallback((noteId: string) => {
     const tab = useEditorStore.getState().tabs.find((t) => t.noteId === noteId);
@@ -56,7 +55,7 @@ export function EditorPage() {
     <>
       <Group
         orientation="horizontal"
-        id="owl-editor-layout"
+        id={LAYOUT_KEYS.editorLayout}
         defaultLayout={layout.defaultLayout}
         onLayoutChanged={layout.onLayoutChanged}
         className="flex h-full min-h-0"
@@ -74,12 +73,10 @@ export function EditorPage() {
           id="editor-area"
           defaultSize="78%"
           minSize="400px"
-          className="h-full w-full min-h-0 min-w-0"
+          className="flex h-full w-full min-h-0 min-w-0 flex-col"
         >
-          <div className="flex h-full w-full flex-col min-h-0 min-w-0">
-            <TabBar onCloseTab={requestCloseTab} />
-            <EditorPanel />
-          </div>
+          <TabBar onCloseTab={requestCloseTab} />
+          <EditorPanel />
         </Panel>
       </Group>
       <UnsavedDialog
