@@ -784,4 +784,77 @@ describe('daemon API', () => {
       await app.inject({ method: 'DELETE', url: `/folders/${b.id}` });
     });
   });
+
+  describe('GET /notes filter composition (P2-6)', () => {
+    it('combines folder_id + include_descendants + tags + q correctly', async () => {
+      // Folder tree: root → child
+      const root = (
+        await app.inject({ method: 'POST', url: '/folders', payload: { name: 'FC-Root' } })
+      ).json().data;
+      const child = (
+        await app.inject({
+          method: 'POST',
+          url: '/folders',
+          payload: { name: 'FC-Child', parent_id: root.id },
+        })
+      ).json().data;
+
+      // 3 notes:
+      //   a: root folder, tagged #mango, contains "密码" — should match everything
+      //   b: child folder, tagged #mango — matches subtree + tag, not query
+      //   c: no folder, tagged #mango, contains "密码" — matches query + tag, not folder
+      const a = (
+        await app.inject({
+          method: 'POST',
+          url: '/notes',
+          payload: { content: '密码笔记 A', folder_id: root.id, tags: ['#mango'] },
+        })
+      ).json().data;
+      const b = (
+        await app.inject({
+          method: 'POST',
+          url: '/notes',
+          payload: { content: '无关 B', folder_id: child.id, tags: ['#mango'] },
+        })
+      ).json().data;
+      const c = (
+        await app.inject({
+          method: 'POST',
+          url: '/notes',
+          payload: { content: '密码笔记 C', tags: ['#mango'] },
+        })
+      ).json().data;
+
+      // folder=root + descendants=true → a + b (subtree), filter on tag
+      const subtree = await app.inject({
+        method: 'GET',
+        url: `/notes?folder_id=${root.id}&include_descendants=true&tags=mango`,
+      });
+      const subtreeIds = (subtree.json().data as { id: string }[]).map((n) => n.id).sort();
+      assert.deepEqual(subtreeIds, [a.id, b.id].sort());
+
+      // folder=root + descendants=false → a only
+      const exact = await app.inject({
+        method: 'GET',
+        url: `/notes?folder_id=${root.id}&include_descendants=false&tags=mango`,
+      });
+      const exactIds = (exact.json().data as { id: string }[]).map((n) => n.id);
+      assert.deepEqual(exactIds, [a.id]);
+
+      // folder=root + descendants=true + q="密码" → a (b doesn't contain it)
+      const withQuery = await app.inject({
+        method: 'GET',
+        url: `/notes?folder_id=${root.id}&include_descendants=true&tags=mango&q=${encodeURIComponent('密码')}`,
+      });
+      const queryIds = (withQuery.json().data as { id: string }[]).map((n) => n.id);
+      assert.deepEqual(queryIds, [a.id]);
+
+      // Cleanup
+      await app.inject({ method: 'POST', url: `/notes/${a.id}/permanent-delete` });
+      await app.inject({ method: 'POST', url: `/notes/${b.id}/permanent-delete` });
+      await app.inject({ method: 'POST', url: `/notes/${c.id}/permanent-delete` });
+      await app.inject({ method: 'DELETE', url: `/folders/${child.id}` });
+      await app.inject({ method: 'DELETE', url: `/folders/${root.id}` });
+    });
+  });
 });

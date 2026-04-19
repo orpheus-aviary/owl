@@ -75,6 +75,10 @@ export const useBrowserStore = create<BrowserState>((set, get) => ({
       const res = await api.listNotes({
         q: query || undefined,
         folder_id: folderId,
+        // Browse-page filter is subtree-scoped: selecting a folder should
+        // match notes in that folder AND every descendant. Explicit so we
+        // don't inherit behavior from the daemon default silently.
+        include_descendants: folderId ? true : undefined,
         tags: activeTags.length > 0 ? activeTags.join(',') : undefined,
         ...parseSortKey(sortKey),
         limit: 100,
