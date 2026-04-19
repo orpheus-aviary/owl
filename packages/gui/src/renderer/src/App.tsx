@@ -3,6 +3,7 @@ import { FolderPanel } from '@/components/FolderPanel';
 import { extractTitle } from '@/components/NoteListItem';
 import { ConflictDialog } from '@/components/ai/ConflictDialog';
 import { NoteAppliedToast } from '@/components/ai/NoteAppliedToast';
+import { ResizeHandle } from '@/components/ui/ResizeHandle';
 import { type ShortcutsConfig, moveNoteToFolder } from '@/lib/api';
 import { type DragData, isDragData, isDropTarget } from '@/lib/dnd-types';
 import { matchesShortcut } from '@/lib/shortcuts';
@@ -35,6 +36,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
+import { Group, Panel, useDefaultLayout, usePanelRef } from 'react-resizable-panels';
 import { HashRouter, NavLink, Route, Routes, useNavigate } from 'react-router-dom';
 import { AIPage } from './pages/AIPage';
 import { BrowserPage } from './pages/BrowserPage';
@@ -191,6 +193,21 @@ export function App() {
   const panelOpen = useFolderStore((s) => s.panelOpen);
   const togglePanel = useFolderStore((s) => s.togglePanel);
 
+  const folderPanelRef = usePanelRef();
+  const folderLayout = useDefaultLayout({
+    id: 'owl-folder-layout',
+    storage: typeof window === 'undefined' ? undefined : window.localStorage,
+  });
+
+  // Sync imperative collapse state with the store-backed `panelOpen` flag so
+  // Cmd+B / the sidebar button remain the source of truth.
+  useEffect(() => {
+    const panel = folderPanelRef.current;
+    if (!panel) return;
+    if (panelOpen) panel.expand();
+    else panel.collapse();
+  }, [panelOpen, folderPanelRef]);
+
   const [activeDrag, setActiveDrag] = useState<DragData | null>(null);
   const sensors = useSensors(useSensor(MouseSensor, { activationConstraint: { distance: 5 } }));
 
@@ -254,20 +271,39 @@ export function App() {
             ))}
           </nav>
 
-          {panelOpen && <FolderPanel />}
-
-          {/* Main content */}
-          <main className="flex-1 overflow-hidden">
-            <Routes>
-              <Route path="/" element={<EditorPage />} />
-              <Route path="/browser" element={<BrowserPage />} />
-              <Route path="/trash" element={<TrashPage />} />
-              <Route path="/reminders" element={<RemindersPage />} />
-              <Route path="/todo" element={<TodoPage />} />
-              <Route path="/ai" element={<AIPage />} />
-              <Route path="/settings" element={<SettingsPage />} />
-            </Routes>
-          </main>
+          <Group
+            orientation="horizontal"
+            id="owl-folder-layout"
+            defaultLayout={folderLayout.defaultLayout}
+            onLayoutChanged={folderLayout.onLayoutChanged}
+            className="flex flex-1 min-w-0"
+          >
+            <Panel
+              id="folder"
+              panelRef={folderPanelRef}
+              collapsible
+              collapsedSize={0}
+              defaultSize={20}
+              minSize={13}
+              className="flex min-w-0"
+            >
+              <FolderPanel />
+            </Panel>
+            <ResizeHandle disabled={!panelOpen} className={panelOpen ? '' : 'invisible'} />
+            <Panel id="main" defaultSize={80} minSize={40} className="flex min-w-0">
+              <main className="flex-1 min-w-0 overflow-hidden">
+                <Routes>
+                  <Route path="/" element={<EditorPage />} />
+                  <Route path="/browser" element={<BrowserPage />} />
+                  <Route path="/trash" element={<TrashPage />} />
+                  <Route path="/reminders" element={<RemindersPage />} />
+                  <Route path="/todo" element={<TodoPage />} />
+                  <Route path="/ai" element={<AIPage />} />
+                  <Route path="/settings" element={<SettingsPage />} />
+                </Routes>
+              </main>
+            </Panel>
+          </Group>
         </div>
         <DragOverlay modifiers={[snapCenterToCursor]} dropAnimation={null}>
           {activeDrag && <DragOverlayCard drag={activeDrag} />}
