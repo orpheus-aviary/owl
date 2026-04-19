@@ -4,6 +4,7 @@ import {
   type OwlDatabase,
   type ReminderRecord,
   cleanupExpiredTrash,
+  cleanupOldFiredReminders,
   getNextPendingReminder,
   getNextTrashDeadline,
   getNoteTitle,
@@ -31,6 +32,7 @@ export class ReminderScheduler {
   private lastCheckTime: number = Date.now();
   private readonly HEARTBEAT_MS = 5_000;
   private readonly SLEEP_THRESHOLD_MS = 5 * 60 * 1000; // 5 minutes
+  private readonly FIRED_RETENTION_DAYS = 90;
 
   constructor(
     private readonly db: OwlDatabase,
@@ -87,6 +89,11 @@ export class ReminderScheduler {
     const deleted = cleanupExpiredTrash(this.db, this.sqlite);
     if (deleted > 0) {
       this.logger.info({ count: deleted }, 'Cleaned up expired trash notes');
+    }
+
+    const purgedFired = cleanupOldFiredReminders(this.db, this.FIRED_RETENTION_DAYS);
+    if (purgedFired > 0) {
+      this.logger.info({ count: purgedFired }, 'Purged old fired reminder records');
     }
   }
 

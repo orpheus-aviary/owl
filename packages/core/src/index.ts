@@ -83,6 +83,7 @@ export {
   getNoteTitle,
   normalizeFireAt,
   cleanupExpiredTrash,
+  cleanupOldFiredReminders,
   recomputeTrashDeadlines,
   getNextTrashDeadline,
   listRemindersWithStatus,

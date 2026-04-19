@@ -1,5 +1,5 @@
 import type Database from 'better-sqlite3';
-import { and, eq, isNotNull, lte, sql } from 'drizzle-orm';
+import { and, eq, isNotNull, lt, lte, sql } from 'drizzle-orm';
 import type { OwlDatabase } from '../db/index.js';
 import { noteTags, notes, reminderStatus, tags } from '../db/schema.js';
 
@@ -313,6 +313,27 @@ export function recomputeTrashDeadlines(db: OwlDatabase, thresholdDays: number):
     .where(eq(notes.trashLevel, 2))
     .run();
 
+  return result.changes;
+}
+
+/**
+ * Delete `reminder_status` rows with `status='fired'` older than the
+ * retention window. Pending / overdue rows are left untouched. Rows with a
+ * NULL `fired_at` (shouldn't happen for fired rows, but defensive) are
+ * skipped so we never drop records with missing timestamps.
+ */
+export function cleanupOldFiredReminders(db: OwlDatabase, retentionDays: number): number {
+  const cutoff = Date.now() - retentionDays * 86_400_000;
+  const result = db
+    .delete(reminderStatus)
+    .where(
+      and(
+        eq(reminderStatus.status, 'fired'),
+        isNotNull(reminderStatus.firedAt),
+        lt(reminderStatus.firedAt, cutoff),
+      ),
+    )
+    .run();
   return result.changes;
 }
 
