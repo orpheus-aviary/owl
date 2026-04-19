@@ -1,8 +1,10 @@
 import { MarkdownEditor } from '@/components/MarkdownEditor';
 import { MarkdownPreview } from '@/components/MarkdownPreview';
 import { TagBar } from '@/components/TagBar';
+import { ResizeHandle } from '@/components/ui/ResizeHandle';
 import { type EditorMode, useActiveTab, useEditorStore } from '@/stores/editor-store';
 import { Columns2, Eye, Pencil } from 'lucide-react';
+import { Group, Panel, useDefaultLayout } from 'react-resizable-panels';
 
 const MODE_ICONS: Record<EditorMode, typeof Pencil> = {
   edit: Pencil,
@@ -40,6 +42,11 @@ export function EditorPanel() {
   const updateContent = useEditorStore((s) => s.updateContent);
   const updateTags = useEditorStore((s) => s.updateTags);
 
+  const splitLayout = useDefaultLayout({
+    id: 'owl-editor-split',
+    storage: typeof window === 'undefined' ? undefined : window.localStorage,
+  });
+
   if (!tab) {
     return (
       <div className="flex items-center justify-center h-full">
@@ -68,14 +75,31 @@ export function EditorPanel() {
         )}
 
         {mode === 'split' && (
-          <>
-            <div className="flex-1 min-h-0 min-w-0 border-r border-border">
+          <Group
+            orientation="horizontal"
+            id="owl-editor-split"
+            defaultLayout={splitLayout.defaultLayout}
+            onLayoutChanged={splitLayout.onLayoutChanged}
+            className="flex flex-1 min-h-0 min-w-0"
+          >
+            <Panel
+              id="editor"
+              defaultSize={50}
+              minSize={25}
+              className="h-full w-full min-h-0 min-w-0"
+            >
               <MarkdownEditor value={tab.content} onChange={(v) => updateContent(tab.noteId, v)} />
-            </div>
-            <div className="flex-1 min-h-0 min-w-0">
+            </Panel>
+            <ResizeHandle />
+            <Panel
+              id="preview"
+              defaultSize={50}
+              minSize={25}
+              className="h-full w-full min-h-0 min-w-0"
+            >
               <MarkdownPreview content={tab.content} />
-            </div>
-          </>
+            </Panel>
+          </Group>
         )}
       </div>
 
