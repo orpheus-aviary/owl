@@ -1,6 +1,6 @@
 # 开发进度
 
-## 当前状态：P2 实施中（P2-9 完整 4/4 → **P2-10 完成**；剩 P2-6 即 P2 收官）
+## 当前状态：**P2 全部完成**（0/10 → 10/10）；下一阶段 P3（CLI + MCP）
 
 ### 已完成
 
@@ -68,8 +68,9 @@
 | P2-9 step 4 | `EditorPanel.tsx` split 模式 Editor↔Preview Group，切换模式/刷新都保留比例 | `98152de` |
 | P2-9 fix | Panel size props 单位字符串化（minSize `"120px"`），过滤 collapsed=0 的 save，panelOpen 持久化到 localStorage | `11116a6` `da43e8b` |
 | P2-10 | `cleanupOldFiredReminders(db, 90)` + scheduler 集成 + 2 个 core 测试 | `f61253c` |
+| P2-6 | 浏览页文件夹筛选：UI 早在 `ad6db40` 随文件夹面板一并做完；本次显式化 `include_descendants` 参数 + 加 daemon 组合测试 | `ad6db40` `1db27cc` |
 
-- 测试：211 个全部通过（core 84 + daemon 92 + gui 35）
+- 测试：212 个全部通过（core 84 + daemon 93 + gui 35）
 - Lint + Typecheck：零错误（11 个 pre-existing warnings）
 - 决策文档：
   - `docs/plans/2026-04-14-trash-sticky-semantics.md`
@@ -79,7 +80,7 @@
   - `docs/plans/2026-04-20-p2-9-resizable-panels.md`
   - `docs/plans/p3-deferred.md`（P3 集合清单）
 
-### 下一步：P2-6（浏览页文件夹筛选 include_descendants）— P2 收尾
+### 下一步：P3（CLI 子命令 + 外部 agent 调用；详见 `docs/plans/COEDIT_PLAN.md`）
 
 ### P2-9 手动测试清单
 
@@ -201,7 +202,7 @@ P2 commit 分解（11 步）：
 | P2-5a | 文件夹核心 + daemon API（CRUD + 递归 CTE + 移动笔记） | Core+API | ✅ |
 | P2-5b | GUI 文件夹侧边面板（树 + 右键 CRUD + Cmd+B + context-menu） | 前端 | ✅ |
 | P2-5c | 拖拽（dnd-kit 排序 + 拖笔记入文件夹 + editorStore.folderId 同步） | 前端 | ✅ |
-| P2-6 | 浏览页文件夹筛选（include_descendants） | 前端 | ⏳ |
+| P2-6 | 浏览页文件夹筛选（include_descendants） | 前端 | ✅ |
 | P2-7a | LLM client SDK 适配器 | 后端 | ✅ |
 | P2-7b | Tool registry + 9 工具（read + Tier-1 write） | 后端 | ✅ |
 | P2-7c | Agent loop + 内存对话 + system-prompt（Layer 1 recent fill） | 后端 | ✅ |
@@ -231,7 +232,7 @@ P2 commit 分解（11 步）：
 ### 实施阶段总览
 
 ```
-P0 ✅ → P1 ✅ → P2 实施中（P2-0 ~ P2-4 ✅，P2-5 ~ P2-10 待开发） → P3（CLI+外部调用） → P4（Migration）
+P0 ✅ → P1 ✅ → P2 ✅（10/10） → P3（CLI + 外部调用） → P4（Migration）
 ```
 
 ## 关键文件
