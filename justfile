@@ -1,4 +1,4 @@
-# owl-ts justfile
+# owl justfile
 
 # ─── Lint & Format ──────────────────────────────────────
 

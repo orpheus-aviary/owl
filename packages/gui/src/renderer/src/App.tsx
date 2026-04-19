@@ -338,7 +338,7 @@ function DragOverlayCard({ drag }: { drag: DragData }) {
     label = note ? extractTitle(note.content) : '笔记';
     Icon = FileText;
   }
-  // VSCode-style: solid blue bg (sidebar-primary — owl-ts theme's primary is
+  // VSCode-style: solid blue bg (sidebar-primary — owl theme's primary is
   // neutral white, so we borrow the sidebar accent), white text, compact pill
   // centered on cursor.
   return (

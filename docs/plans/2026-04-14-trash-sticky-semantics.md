@@ -65,7 +65,7 @@ It runs from three independent triggers:
 
 ## Schema migration
 
-First schema change in owl-ts. Implemented as idempotent `ALTER TABLE`:
+First schema change in owl. Implemented as idempotent `ALTER TABLE`:
 
 ```ts
 function migrateSchema(sqlite) {

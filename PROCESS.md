@@ -1,6 +1,16 @@
 # 开发进度
 
-## 当前状态：**P2 全部完成**（0/10 → 10/10）；下一阶段 P3（CLI + MCP）
+## 当前状态：**P2 完成（10/10）+ 仓库 rename 完成**；下一阶段 P3（CLI + npm 发包 + UX 完善）
+
+## 仓库迁移（2026-04-20）
+
+- `orpheus-aviary/owl-ts` → `orpheus-aviary/owl`（活跃 TS 版）
+- `orpheus-aviary/owl` → `orpheus-aviary/owl-go`（Go 版，归档）
+- 本地目录同步：`owl-ts` → `owl`、`owl` → `owl-go`
+- 全仓 19 处 `owl-ts` 字符串替换为 `owl`
+- `package.json` name 字段：`owl-ts` → `owl`
+
+P3 完整规划见 `docs/plans/2026-04-20-p3-plan.md`。
 
 ### 已完成
 

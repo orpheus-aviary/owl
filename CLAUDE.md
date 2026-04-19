@@ -1,7 +1,7 @@
-# owl-ts 开发规范
+# owl 开发规范
 
 ## 项目概述
-owl-ts 是猫头鹰笔记的 TypeScript 重写版，使用 Electron + Node.js。从零设计，不参考 Go 版实现。
+owl 是猫头鹰笔记的 TypeScript 重写版，使用 Electron + Node.js。从零设计，不参考 Go 版实现。
 
 ## 技术栈
 - **桌面框架**: Electron + electron-vite

@@ -57,7 +57,7 @@ CREATE TABLE IF NOT EXISTS reminder_status (
 
 **Step 3: Run tests to verify nothing broke**
 
-Run: `cd /Users/jayncp/Desktop/jayncp_mac/orpheus-aviary/owl-ts && pnpm --filter @owl/core test`
+Run: `cd /Users/jayncp/Desktop/jayncp_mac/orpheus-aviary/owl && pnpm --filter @owl/core test`
 Expected: All 53 existing tests PASS
 
 **Step 4: Commit**
@@ -461,7 +461,7 @@ feat(reminders): add syncReminders, pending queries, and trash cleanup
 
 **Step 1: Install node-notifier**
 
-Run: `cd /Users/jayncp/Desktop/jayncp_mac/orpheus-aviary/owl-ts && pnpm --filter @owl/daemon add node-notifier && pnpm --filter @owl/daemon add -D @types/node-notifier`
+Run: `cd /Users/jayncp/Desktop/jayncp_mac/orpheus-aviary/owl && pnpm --filter @owl/daemon add node-notifier && pnpm --filter @owl/daemon add -D @types/node-notifier`
 
 **Step 2: Create `packages/daemon/src/notify.ts`**
 
@@ -829,7 +829,7 @@ ctx.scheduler.onNoteChanged(id);
 
 **Step 4: Run typecheck + lint**
 
-Run: `cd /Users/jayncp/Desktop/jayncp_mac/orpheus-aviary/owl-ts && just check`
+Run: `cd /Users/jayncp/Desktop/jayncp_mac/orpheus-aviary/owl && just check`
 Expected: Zero errors
 
 **Step 5: Commit**
@@ -923,7 +923,7 @@ test(daemon): add scheduler integration tests for reminder routes
 
 **Step 1: Run full test suite**
 
-Run: `cd /Users/jayncp/Desktop/jayncp_mac/orpheus-aviary/owl-ts && pnpm test`
+Run: `cd /Users/jayncp/Desktop/jayncp_mac/orpheus-aviary/owl && pnpm test`
 Expected: All tests pass
 
 **Step 2: Run lint + typecheck**

@@ -2,7 +2,7 @@
 
 ## Context
 
-P2-7 adds AI capabilities to the owl-ts daemon. The daemon hosts an agent loop that receives user messages via SSE, calls LLM with tool-use, executes tools against the note database, and streams results back. This is the backend foundation — the GUI chat page (P2-8) builds on top.
+P2-7 adds AI capabilities to the owl daemon. The daemon hosts an agent loop that receives user messages via SSE, calls LLM with tool-use, executes tools against the note database, and streams results back. This is the backend foundation — the GUI chat page (P2-8) builds on top.
 
 Split into 5 sub-phases: P2-7a → 7b → 7c → 7d → 7e, each independently testable.
 

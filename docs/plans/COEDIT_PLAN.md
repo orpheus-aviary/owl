@@ -1,10 +1,10 @@
-# owl-ts + migration 重构计划
+# owl + migration 重构计划
 
 > owl Go → TypeScript 重写 + migration TS 实现
 
 ## 1. 技术栈（已确定）
 
-### owl-ts
+### owl
 
 | 模块 | 选型 |
 |------|------|
@@ -44,7 +44,7 @@
 ## 2. Monorepo 结构（已确定）
 
 ```
-owl-ts/
+owl/
 ├── pnpm-workspace.yaml
 ├── package.json
 ├── biome.json
