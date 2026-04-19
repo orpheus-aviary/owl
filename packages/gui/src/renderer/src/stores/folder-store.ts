@@ -83,11 +83,23 @@ export function isDescendant(folders: Folder[], ancestorId: string, targetId: st
   return false;
 }
 
+const PANEL_OPEN_KEY = 'owl-folder-panel-open';
+
+function readPanelOpen(): boolean {
+  if (typeof window === 'undefined') return false;
+  return window.localStorage.getItem(PANEL_OPEN_KEY) === '1';
+}
+
+function writePanelOpen(open: boolean): void {
+  if (typeof window === 'undefined') return;
+  window.localStorage.setItem(PANEL_OPEN_KEY, open ? '1' : '0');
+}
+
 export const useFolderStore = create<FolderState>((set, get) => ({
   folders: [],
   panelNotes: [],
   expanded: new Set<string>(),
-  panelOpen: false,
+  panelOpen: readPanelOpen(),
   loading: false,
   error: null,
 
@@ -166,9 +178,16 @@ export const useFolderStore = create<FolderState>((set, get) => ({
     }
   },
 
-  setPanelOpen: (open) => set({ panelOpen: open }),
+  setPanelOpen: (open) => {
+    writePanelOpen(open);
+    set({ panelOpen: open });
+  },
 
-  togglePanel: () => set({ panelOpen: !get().panelOpen }),
+  togglePanel: () => {
+    const next = !get().panelOpen;
+    writePanelOpen(next);
+    set({ panelOpen: next });
+  },
 
   toggleExpanded: (id) => {
     const next = new Set(get().expanded);

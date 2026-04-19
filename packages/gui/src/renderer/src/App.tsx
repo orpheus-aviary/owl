@@ -200,18 +200,14 @@ export function App() {
   });
 
   // Sync imperative collapse state with the store-backed `panelOpen` flag so
-  // Cmd+B / the sidebar button remain the source of truth. When opening, fall
-  // back to 20% if a stale localStorage left the panel at size 0 (earlier
-  // versions persisted collapsed state).
+  // Cmd+B / the sidebar button remain the source of truth. panelOpen itself
+  // is persisted in localStorage, so the initial mount matches the user's
+  // last explicit choice and the library's defaultLayout restores the width.
   useEffect(() => {
     const panel = folderPanelRef.current;
     if (!panel) return;
-    if (panelOpen) {
-      panel.expand();
-      if (panel.getSize().asPercentage < 1) panel.resize('20%');
-    } else {
-      panel.collapse();
-    }
+    if (panelOpen) panel.expand();
+    else panel.collapse();
   }, [panelOpen, folderPanelRef]);
 
   const [activeDrag, setActiveDrag] = useState<DragData | null>(null);
@@ -294,7 +290,7 @@ export function App() {
               collapsible
               collapsedSize={0}
               defaultSize="20%"
-              minSize="200px"
+              minSize="120px"
               className="h-full w-full min-h-0 min-w-0"
             >
               <FolderPanel />

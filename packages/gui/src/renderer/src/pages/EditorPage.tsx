@@ -64,7 +64,7 @@ export function EditorPage() {
         <Panel
           id="note-list"
           defaultSize="22%"
-          minSize="200px"
+          minSize="120px"
           className="h-full w-full min-h-0 min-w-0 border-r border-border"
         >
           <NoteList activeNoteId={activeTabId} onSelectNote={handleSelectNote} />
