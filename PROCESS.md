@@ -1,6 +1,6 @@
 # 开发进度
 
-## 当前状态：P2 实施中（P2-7 完成 → **P2-8 完整 10/10 步**；下一步 P2-9）
+## 当前状态：P2 实施中（P2-8 完整 10/10 步 → **P2-9 完整 4/4 步**；下一步 P2-10）
 
 ### 已完成
 
@@ -61,6 +61,11 @@
 | P2-8 step 9 | `conflictPrompt` + `requestSaveOrConflict` / `resolveConflict` + `<ConflictDialog>` 嵌入 DiffView + 5 个 vitest 测试 | `a993c3c` |
 | P2-8 step 9 fix | pre_stage_content 捕获（dirty-stage 触发冲突） + accept-ai 清 pre_stage 避免重试循环 + daemon `setErrorHandler` 把 500 stack 写进 log | `0e7cca5` `c53dbb0` |
 | P2-8 step 10 | ChatInput 自动聚焦（mount / chat 切换 / stream 结束）+ abort 后显示"⏹ 已停止生成"指示 + E2E 手动测试清单 | `a3b924d` |
+| P2-9 设计 | 2026-04-20 设计文档：3 个 Group（FolderPanel↔main / NoteList↔编辑区 / Editor↔Preview） | `353e821` |
+| P2-9 step 1 | `react-resizable-panels@4` + `components/ui/ResizeHandle.tsx`（Separator 包装） | `9953859` |
+| P2-9 step 2 | `App.tsx` 外层 Group（FolderPanel 改 collapsible Panel，Cmd+B 走 imperative collapse/expand，main 不再 remount） | `c0db35b` |
+| P2-9 step 3 | `EditorPage.tsx` NoteList↔编辑区 Group；UnsavedDialog hoist 出 Group 避免非法子节点 | `831e7a9` |
+| P2-9 step 4 | `EditorPanel.tsx` split 模式 Editor↔Preview Group，切换模式/刷新都保留比例 | `98152de` |
 
 - 测试：209 个全部通过（core 82 + daemon 92 + gui 35）
 - Lint + Typecheck：零错误（11 个 pre-existing warnings）
@@ -69,9 +74,36 @@
   - `docs/plans/2026-04-17-p2-7-ai-implementation.md`
   - `docs/plans/2026-04-17-p2-8-ai-page.md`
   - `docs/plans/2026-04-18-chat-persistence.md`（未执行，P2-9 之后或 P3）
+  - `docs/plans/2026-04-20-p2-9-resizable-panels.md`
   - `docs/plans/p3-deferred.md`（P3 集合清单）
 
-### 下一步：P2-9（分屏拖拽：列表↔编辑、编辑↔预览）
+### 下一步：P2-10（reminder_status 90 天 fired 记录清理）
+
+### P2-9 手动测试清单
+
+跑 `just dev`：
+
+**A. 外层 FolderPanel ↔ 主内容**
+1. Cmd+B 打开文件夹面板 → 出现分隔条
+2. 拖分隔条 → 文件夹面板缩放；拖到最小约 13%
+3. 任意位置刷新 → 宽度恢复
+4. Cmd+B 关闭 → 再打开 → 宽度恢复；期间编辑器光标位置保持（main 未 remount）
+
+**B. NoteList ↔ 编辑区**
+5. 编辑页拖第 2 条 → 笔记列表缩放；拖到 15% snap
+6. 切到浏览页再切回 → 宽度保留
+7. 刷新 → 宽度恢复
+
+**C. Editor ↔ Preview（split 模式）**
+8. 模式切到 split → 出现第 3 条，默认 50/50
+9. 拖到 60/40 → 切到 edit → 切回 split → 恢复 60/40
+10. 刷新 → 恢复 60/40
+
+**D. 窗口 resize**
+11. 窗口从 1400 拖到 900 → 所有面板按比例缩放，无挤爆
+
+**E. 键盘无障碍**
+12. Tab 聚焦到分隔条 → 左右方向键可微调
 
 ### P2-8 E2E 手动测试清单
 
@@ -174,7 +206,7 @@ P2 commit 分解（11 步）：
 | P2-7d | SSE 端点 `/ai/chat` + AI 路由 + AppContext 扩展 | 后端 | ✅ |
 | P2-7e | Tier-2 写工具（create/update_note、create_reminder、apply_update）+ draft/preview | 后端 | ✅ |
 | P2-8 | AI 对话页面（聊天界面 + 草稿机制） | 前端 | ✅ |
-| P2-9 | 分屏拖拽（列表↔编辑、编辑↔预览） | 前端 | ⏳ |
+| P2-9 | 分屏拖拽（列表↔编辑、编辑↔预览、含 FolderPanel） | 前端 | ✅ |
 | P2-10 | reminder_status 清理（90 天 fired 记录） | 后端 | ⏳ |
 
 **P2 不做（延后事项）**，完整清单见 `docs/plans/p3-deferred.md`：
