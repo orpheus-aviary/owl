@@ -200,12 +200,18 @@ export function App() {
   });
 
   // Sync imperative collapse state with the store-backed `panelOpen` flag so
-  // Cmd+B / the sidebar button remain the source of truth.
+  // Cmd+B / the sidebar button remain the source of truth. When opening, fall
+  // back to 20% if a stale localStorage left the panel at size 0 (earlier
+  // versions persisted collapsed state).
   useEffect(() => {
     const panel = folderPanelRef.current;
     if (!panel) return;
-    if (panelOpen) panel.expand();
-    else panel.collapse();
+    if (panelOpen) {
+      panel.expand();
+      if (panel.getSize().asPercentage < 1) panel.resize('20%');
+    } else {
+      panel.collapse();
+    }
   }, [panelOpen, folderPanelRef]);
 
   const [activeDrag, setActiveDrag] = useState<DragData | null>(null);
@@ -275,7 +281,11 @@ export function App() {
             orientation="horizontal"
             id="owl-folder-layout"
             defaultLayout={folderLayout.defaultLayout}
-            onLayoutChanged={folderLayout.onLayoutChanged}
+            onLayoutChanged={(layout) => {
+              // Skip save when folder is collapsed (size 0) — otherwise Cmd+B
+              // close would overwrite the user's saved width with zero.
+              if ((layout.folder ?? 0) > 0) folderLayout.onLayoutChanged?.(layout);
+            }}
             className="flex flex-1 min-w-0"
           >
             <Panel
@@ -283,15 +293,20 @@ export function App() {
               panelRef={folderPanelRef}
               collapsible
               collapsedSize={0}
-              defaultSize={20}
-              minSize={13}
-              className="flex min-w-0"
+              defaultSize="20%"
+              minSize="200px"
+              className="h-full w-full min-h-0 min-w-0"
             >
               <FolderPanel />
             </Panel>
             <ResizeHandle disabled={!panelOpen} className={panelOpen ? '' : 'invisible'} />
-            <Panel id="main" defaultSize={80} minSize={40} className="flex min-w-0">
-              <main className="flex-1 min-w-0 overflow-hidden">
+            <Panel
+              id="main"
+              defaultSize="80%"
+              minSize="400px"
+              className="h-full w-full min-h-0 min-w-0"
+            >
+              <main className="h-full w-full overflow-hidden">
                 <Routes>
                   <Route path="/" element={<EditorPage />} />
                   <Route path="/browser" element={<BrowserPage />} />

@@ -63,15 +63,20 @@ export function EditorPage() {
       >
         <Panel
           id="note-list"
-          defaultSize={22}
-          minSize={15}
-          className="flex min-w-0 border-r border-border"
+          defaultSize="22%"
+          minSize="200px"
+          className="h-full w-full min-h-0 min-w-0 border-r border-border"
         >
           <NoteList activeNoteId={activeTabId} onSelectNote={handleSelectNote} />
         </Panel>
         <ResizeHandle />
-        <Panel id="editor-area" defaultSize={78} minSize={50} className="flex min-w-0">
-          <div className="flex-1 flex flex-col min-h-0 min-w-0">
+        <Panel
+          id="editor-area"
+          defaultSize="78%"
+          minSize="400px"
+          className="h-full w-full min-h-0 min-w-0"
+        >
+          <div className="flex h-full w-full flex-col min-h-0 min-w-0">
             <TabBar onCloseTab={requestCloseTab} />
             <EditorPanel />
           </div>

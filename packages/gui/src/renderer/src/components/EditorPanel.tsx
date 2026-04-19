@@ -84,8 +84,8 @@ export function EditorPanel() {
           >
             <Panel
               id="editor"
-              defaultSize={50}
-              minSize={25}
+              defaultSize="50%"
+              minSize="240px"
               className="h-full w-full min-h-0 min-w-0"
             >
               <MarkdownEditor value={tab.content} onChange={(v) => updateContent(tab.noteId, v)} />
@@ -93,8 +93,8 @@ export function EditorPanel() {
             <ResizeHandle />
             <Panel
               id="preview"
-              defaultSize={50}
-              minSize={25}
+              defaultSize="50%"
+              minSize="240px"
               className="h-full w-full min-h-0 min-w-0"
             >
               <MarkdownPreview content={tab.content} />
