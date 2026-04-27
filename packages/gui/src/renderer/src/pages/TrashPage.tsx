@@ -5,8 +5,20 @@ import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import * as api from '@/lib/api';
 import type { Note } from '@/lib/api';
+import { useFolderStore } from '@/stores/folder-store';
+import { useNoteStore } from '@/stores/note-store';
 import { RotateCcw, Search, Trash2, X } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
+
+/**
+ * Refresh stores that hold non-trashed notes so a freshly restored note
+ * shows up everywhere immediately — folder-panel inline list, main note
+ * list on the editor page, etc. Trash levels and editor tabs are unaffected.
+ */
+function refreshAfterRestore(): void {
+  void useFolderStore.getState().fetchPanelNotes();
+  void useNoteStore.getState().fetchNotes();
+}
 
 /**
  * Format the time remaining until a note's sticky auto-delete deadline.
@@ -176,6 +188,7 @@ export function TrashPage() {
         return next;
       });
       fetchNotes();
+      refreshAfterRestore();
     },
     [fetchNotes],
   );
@@ -205,6 +218,7 @@ export function TrashPage() {
     await api.batchRestoreNotes([...selectedIds]);
     setSelectedIds(new Set());
     fetchNotes();
+    refreshAfterRestore();
   }, [selectedIds, fetchNotes]);
 
   const handleBatchDelete = useCallback(async () => {
