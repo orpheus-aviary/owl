@@ -4,9 +4,8 @@ import { type SseHttpError, streamSse } from '@/lib/sse-client';
 import { create } from 'zustand';
 import { type NoteAppliedNotice, dispatchAgentEvent } from './ai-dispatcher';
 import type { ChatMessage, ChatTabState } from './ai-store-types';
+import { useDataBus } from './data-bus';
 import { useEditorStore } from './editor-store';
-import { useFolderStore } from './folder-store';
-import { useNoteStore } from './note-store';
 
 export type {
   ChatRole,
@@ -342,8 +341,7 @@ function forwardNoteAppliedToEditor(data: unknown): void {
   const content = typeof payload.content === 'string' ? payload.content : '';
   const appended = typeof payload.appended_text === 'string' ? payload.appended_text : '';
   useEditorStore.getState().applyNoteAppliedFromAi(noteId, content, appended);
-  // Fire-and-forget refreshes so the browser list / folder panel reflect
-  // the append without the user having to navigate away and back.
-  void useNoteStore.getState().fetchNotes();
-  void useFolderStore.getState().fetchPanelNotes();
+  // Notify every list that depends on note state — data-bus subscribers
+  // (note-store, folder-store, browser-store) refetch automatically.
+  useDataBus.getState().bumpNotes();
 }

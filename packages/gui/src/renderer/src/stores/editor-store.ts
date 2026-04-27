@@ -1,7 +1,7 @@
 import type { Note, NoteTag } from '@/lib/api';
 import * as api from '@/lib/api';
 import { create } from 'zustand';
-import { useNoteStore } from './note-store';
+import { useDataBus } from './data-bus';
 
 export type EditorMode = 'edit' | 'split' | 'preview';
 
@@ -350,7 +350,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         });
         if (!res.data) return false;
         replaceTabAfterCreate(set, tab.noteId, res.data);
-        useNoteStore.getState().fetchNotes();
+        useDataBus.getState().bumpNotes();
         return true;
       }
 
@@ -363,7 +363,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         });
         const savedTags = res.data?.tags ?? tab.tags;
         get().markSaved(tab.noteId, tab.content, savedTags);
-        useNoteStore.getState().fetchNotes();
+        useDataBus.getState().bumpNotes();
         return true;
       }
 
@@ -371,7 +371,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       const res = await api.updateNote(tab.noteId, { content: tab.content, tags: rawTags });
       const savedTags = res.data?.tags ?? tab.tags;
       get().markSaved(tab.noteId, tab.content, savedTags);
-      useNoteStore.getState().fetchNotes();
+      useDataBus.getState().bumpNotes();
       return true;
     } catch {
       return false;

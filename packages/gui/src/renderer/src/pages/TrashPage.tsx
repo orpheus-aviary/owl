@@ -5,20 +5,9 @@ import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import * as api from '@/lib/api';
 import type { Note } from '@/lib/api';
-import { useFolderStore } from '@/stores/folder-store';
-import { useNoteStore } from '@/stores/note-store';
+import { useDataBus } from '@/stores/data-bus';
 import { RotateCcw, Search, Trash2, X } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
-
-/**
- * Refresh stores that hold non-trashed notes so a freshly restored note
- * shows up everywhere immediately — folder-panel inline list, main note
- * list on the editor page, etc. Trash levels and editor tabs are unaffected.
- */
-function refreshAfterRestore(): void {
-  void useFolderStore.getState().fetchPanelNotes();
-  void useNoteStore.getState().fetchNotes();
-}
 
 /**
  * Format the time remaining until a note's sticky auto-delete deadline.
@@ -133,10 +122,22 @@ export function TrashPage() {
     }
   }, [tab, query]);
 
+  // Refetch on local filter changes (tab/query, baked into fetchNotes' deps)
+  // OR external mutations (data-bus noteVersion). Both are intentional triggers
+  // — biome's exhaustive-deps check considers fetchNotes alone "enough" but
+  // noteVersion is the cross-page invalidation signal, must stay.
+  const noteVersion = useDataBus((s) => s.noteVersion);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: noteVersion is the bus trigger
   useEffect(() => {
     fetchNotes();
+  }, [fetchNotes, noteVersion]);
+
+  // Clear selection only on intentional tab/query switches, not on bus refreshes
+  // — so deleting an unrelated note elsewhere doesn't lose the user's selection.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: tab/query are deps-as-trigger
+  useEffect(() => {
     setSelectedIds(new Set());
-  }, [fetchNotes]);
+  }, [tab, query]);
 
   // Clean up debounce on unmount
   useEffect(() => {
@@ -188,7 +189,7 @@ export function TrashPage() {
         return next;
       });
       fetchNotes();
-      refreshAfterRestore();
+      useDataBus.getState().bumpNotes();
     },
     [fetchNotes],
   );
@@ -218,7 +219,7 @@ export function TrashPage() {
     await api.batchRestoreNotes([...selectedIds]);
     setSelectedIds(new Set());
     fetchNotes();
-    refreshAfterRestore();
+    useDataBus.getState().bumpNotes();
   }, [selectedIds, fetchNotes]);
 
   const handleBatchDelete = useCallback(async () => {

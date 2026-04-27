@@ -11,6 +11,7 @@ import { LAYOUT_KEYS } from '@/lib/layout-keys';
 import { matchesShortcut } from '@/lib/shortcuts';
 import { useBrowserStore } from '@/stores/browser-store';
 import { useConfigStore } from '@/stores/config-store';
+import { useDataBus } from '@/stores/data-bus';
 import { useEditorStore } from '@/stores/editor-store';
 import { isDescendant, useFolderStore } from '@/stores/folder-store';
 import { useNoteStore } from '@/stores/note-store';
@@ -168,8 +169,7 @@ async function handleNoteDrop(
   try {
     await moveNoteToFolder(drag.noteId, targetFolderId);
     useEditorStore.getState().syncTabFolderId(drag.noteId, targetFolderId);
-    useNoteStore.getState().fetchNotes();
-    useFolderStore.getState().fetchPanelNotes();
+    useDataBus.getState().bumpNotes();
   } catch (err) {
     console.error('note move failed', err);
   }

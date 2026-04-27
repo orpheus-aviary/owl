@@ -4,11 +4,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useEditorStore } from './editor-store';
 import type { PendingAiUpdate } from './editor-store';
 
-// saveNote fires `useNoteStore.getState().fetchNotes()` fire-and-forget.
-// fetchNotes → api.request → `window.owlAPI?.daemonUrl`. In Node there's
-// no `window`. Stub it to a minimal shape so the side fetch resolves to
-// a fake-rejected promise without throwing a `ReferenceError` we can't
-// catch from here.
+// saveNote bumps the data-bus, which fans out to note-store / folder-store /
+// browser-store subscribers — each one issues a fire-and-forget fetchNotes /
+// fetchPanelNotes against `window.owlAPI?.daemonUrl`. In Node there's no
+// `window`. Stub it to a minimal shape so those side fetches resolve to a
+// fake-success response without throwing a `ReferenceError` we can't catch.
 (globalThis as unknown as { window: { owlAPI?: unknown } }).window = { owlAPI: undefined };
 vi.stubGlobal(
   'fetch',

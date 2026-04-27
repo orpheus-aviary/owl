@@ -1,6 +1,7 @@
 import type { Note } from '@/lib/api';
 import * as api from '@/lib/api';
 import { create } from 'zustand';
+import { useDataBus } from './data-bus';
 
 interface NoteState {
   notes: Note[];
@@ -53,12 +54,19 @@ export const useNoteStore = create<NoteState>((set, get) => ({
     try {
       const res = await api.createNote({ content: '# \n\n' });
       const note = res.data ?? null;
-      if (note) {
-        await get().fetchNotes();
-      }
+      if (note) useDataBus.getState().bumpNotes();
       return note;
     } catch {
       return null;
     }
   },
 }));
+
+// Refetch on any external note mutation. data-bus is the single notify
+// channel; we listen here so every consumer of useNoteStore stays current
+// without each page wiring its own refresh logic.
+useDataBus.subscribe((state, prev) => {
+  if (state.noteVersion !== prev.noteVersion) {
+    void useNoteStore.getState().fetchNotes();
+  }
+});

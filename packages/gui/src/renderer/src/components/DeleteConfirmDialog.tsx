@@ -8,10 +8,8 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import * as api from '@/lib/api';
-import { useBrowserStore } from '@/stores/browser-store';
+import { useDataBus } from '@/stores/data-bus';
 import { useEditorStore } from '@/stores/editor-store';
-import { useFolderStore } from '@/stores/folder-store';
-import { useNoteStore } from '@/stores/note-store';
 import { useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { create } from 'zustand';
@@ -53,19 +51,16 @@ export const usePendingDeleteStore = create<PendingDeleteState>((set) => ({
   reset: () => set({ noteId: null, title: '', kind: 'confirm' }),
 }));
 
-/** Actually delete the note via API + close its tab if open + refresh both
- *  note stores. Editor-page list reads from noteStore, browser-page list
- *  reads from browserStore (with search/tag/sort state) — refresh both so
- *  whichever page the user is on reflects the deletion immediately. */
+/** Actually delete the note via API + close its tab if open + bump the
+ *  data-bus so every list (note-store, browser-store, folder-panel notes,
+ *  trash-page) refreshes through their bus subscriptions. */
 async function performDelete(noteId: string): Promise<void> {
   await api.deleteNote(noteId);
   const editor = useEditorStore.getState();
   if (editor.tabs.some((t) => t.noteId === noteId)) {
     editor.closeTab(noteId);
   }
-  useNoteStore.getState().fetchNotes();
-  useBrowserStore.getState().fetchNotes();
-  useFolderStore.getState().fetchPanelNotes();
+  useDataBus.getState().bumpNotes();
 }
 
 /**

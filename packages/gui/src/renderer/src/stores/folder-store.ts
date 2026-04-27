@@ -2,6 +2,7 @@ import type { Folder, FolderReorderItem, Note } from '@/lib/api';
 import * as api from '@/lib/api';
 import { LAYOUT_KEYS } from '@/lib/layout-keys';
 import { create } from 'zustand';
+import { useDataBus } from './data-bus';
 
 export interface FolderNode extends Folder {
   children: FolderNode[];
@@ -124,8 +125,8 @@ export const useFolderStore = create<FolderState>((set, get) => ({
   create: async (name, parentId) => {
     try {
       const res = await api.createFolder({ name, parent_id: parentId });
-      await get().fetch();
       if (parentId) get().expand(parentId);
+      useDataBus.getState().bumpFolders();
       return res.data ?? null;
     } catch (err) {
       set({ error: (err as Error).message });
@@ -136,7 +137,7 @@ export const useFolderStore = create<FolderState>((set, get) => ({
   rename: async (id, name) => {
     try {
       await api.updateFolder(id, { name });
-      await get().fetch();
+      useDataBus.getState().bumpFolders();
     } catch (err) {
       set({ error: (err as Error).message });
     }
@@ -145,8 +146,8 @@ export const useFolderStore = create<FolderState>((set, get) => ({
   move: async (id, parentId) => {
     try {
       await api.updateFolder(id, { parent_id: parentId });
-      await get().fetch();
       if (parentId) get().expand(parentId);
+      useDataBus.getState().bumpFolders();
     } catch (err) {
       set({ error: (err as Error).message });
     }
@@ -155,10 +156,12 @@ export const useFolderStore = create<FolderState>((set, get) => ({
   reorder: async (items) => {
     try {
       await api.reorderFolders(items);
-      await get().fetch();
+      useDataBus.getState().bumpFolders();
     } catch (err) {
       set({ error: (err as Error).message });
-      await get().fetch(); // refetch to reconcile after failed optimistic update
+      // Bump anyway to reconcile after a failed optimistic update —
+      // the subscriber refetches the canonical server-side list.
+      useDataBus.getState().bumpFolders();
     }
   },
 
@@ -169,7 +172,10 @@ export const useFolderStore = create<FolderState>((set, get) => ({
       const next = new Set(get().expanded);
       next.delete(id);
       set({ expanded: next });
-      await get().fetch();
+      // A folder delete reassigns its notes to unfiled (folder_id=null), so
+      // both folder tree AND note lists need to refresh.
+      useDataBus.getState().bumpFolders();
+      useDataBus.getState().bumpNotes();
     } catch (err) {
       set({ error: (err as Error).message });
     }
@@ -199,3 +205,14 @@ export const useFolderStore = create<FolderState>((set, get) => ({
     set({ expanded: next });
   },
 }));
+
+// Auto-refetch on data-bus signals. noteVersion → panelNotes (for inline
+// notes-in-folder display). folderVersion → folders (tree structure).
+useDataBus.subscribe((state, prev) => {
+  if (state.noteVersion !== prev.noteVersion) {
+    void useFolderStore.getState().fetchPanelNotes();
+  }
+  if (state.folderVersion !== prev.folderVersion) {
+    void useFolderStore.getState().fetch();
+  }
+});

@@ -1,6 +1,7 @@
 import type { Note } from '@/lib/api';
 import * as api from '@/lib/api';
 import { create } from 'zustand';
+import { useDataBus } from './data-bus';
 
 export type SortKey = 'updated_desc' | 'updated_asc' | 'created_desc' | 'created_asc';
 
@@ -94,3 +95,11 @@ export const useBrowserStore = create<BrowserState>((set, get) => ({
     get().fetchNotes();
   },
 }));
+
+// Refetch when notes change anywhere in the app — keeps the browse page
+// list consistent with mutations from EditorPage / FolderPanel / Trash etc.
+useDataBus.subscribe((state, prev) => {
+  if (state.noteVersion !== prev.noteVersion) {
+    void useBrowserStore.getState().fetchNotes();
+  }
+});
