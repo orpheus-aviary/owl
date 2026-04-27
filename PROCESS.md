@@ -1,6 +1,6 @@
 # 开发进度
 
-## 当前状态：**P2 完成（10/10）+ 仓库 rename 完成**；下一阶段 P3（CLI + npm 发包 + UX 完善）
+## 当前状态：**P3.0.5 完成（7/7 + bus 重构）**；下一阶段 P3.1（GUI `0.2.0` 首发，electron-builder + GitHub Releases）
 
 ## 仓库迁移（2026-04-20）
 
@@ -90,7 +90,25 @@ P3 完整规划见 `docs/plans/2026-04-20-p3-plan.md`。
   - `docs/plans/2026-04-20-p2-9-resizable-panels.md`
   - `docs/plans/p3-deferred.md`（P3 集合清单）
 
-### 下一步：P3（CLI 子命令 + 外部 agent 调用；详见 `docs/plans/COEDIT_PLAN.md`）
+## P3.0.5 — Pre-release 修复打磨（2026-04-28，7/7 完成）
+
+| 项 | 内容 | Hash |
+|---|---|---|
+| docs | P3.0.5 范围细化 + 双 adapter thinking 协议表 | `162a319` |
+| #10 | 拖到"未分类"区域 drop 失效 — UnfiledSection 接 useDroppable + footer 文案按拖拽类型切换 | `40bc340` |
+| #4 | 回收站恢复后文件夹树 / 主笔记列表未刷新 | `8f0df50` |
+| #4b | 跨页 stale list 统一刷新 — 新增 `stores/data-bus.ts`，note/folder/browser store 模块级订阅；附带修复 Bug A（save 后 folder tree 标题不变）+ Bug B（FolderPanel 删笔记后 TrashPage 不刷新） | `10dbee3` |
+| #9/#6/#7 | 滚动条 gutter 暗色 + 列表正文白色 + Bold/Italic 快捷键 toggle 语义（Cmd+E 让位给 useEditorShortcuts 的"聚焦编辑区"） | `76d8937` |
+| #3 | AI thinking 协议修复 — 双 adapter（OpenAI `delta.reasoning_content` + Anthropic `thinking_delta` / `signature_delta`）+ agent-loop 累积 + GUI 折叠显示 + Settings `thinking_round_trip` toggle | `7999a01` |
+| #2 | DraftReadyCard 折叠 + 单卡"同意"（Tier-1，跳过 editor）+ "同意全部 (N)" 批量按钮 + 冲突检测 / per-card 错误隔离 | `b038d2e` |
+
+- 测试：228 个全部通过（core 84 + daemon 95 + gui 49）
+- Lint + Typecheck：零错误（11 个 pre-existing warnings）
+- 移出本批：
+  - `#11` 同层级笔记拖拽排序（经查不是 regression 而是缺失功能 — 笔记无 `position` 字段）→ 推迟到 P3.4，需 schema + daemon API + GUI gap drop target 设计
+  - `#1` 图片粘贴 + 缓存目录 / `#5` VSCode 风格 tab / `#8` FIM 补全：原本就在 P3.4
+
+### 下一步：P3.1 — GUI `0.2.0` 首发（electron-builder + GitHub Releases，详见 `docs/plans/2026-04-20-p3-plan.md` §4）
 
 ### P2-9 手动测试清单
 
