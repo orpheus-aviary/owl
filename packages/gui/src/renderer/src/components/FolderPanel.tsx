@@ -299,12 +299,15 @@ function DroppableGap({
 /** Dashed drop zone pinned to the panel footer (outside the scroll area).
  *  Only rendered while a drag is active, to avoid occupying space at rest.
  *  Dropping a folder here promotes it to top-level; dropping a note here
- *  clears its folder_id. */
+ *  clears its folder_id (= moves it to 未分类). The label switches based on
+ *  what's being dragged so users see the actual destination in their words. */
 function RootBlankDrop() {
   const { active } = useDndContext();
   const data: DropTarget = { kind: 'root-blank' };
   const { setNodeRef, isOver } = useDroppable({ id: 'drop:root-blank', data });
   if (!active) return null;
+  const drag = active.data.current as DragData | undefined;
+  const label = drag?.kind === 'folder' ? '移动到根目录' : '移动到未分类';
   return (
     <div
       ref={setNodeRef}
@@ -315,7 +318,7 @@ function RootBlankDrop() {
           : 'border-border/50 text-muted-foreground/40',
       )}
     >
-      移动到根目录
+      {label}
     </div>
   );
 }
@@ -339,8 +342,21 @@ function UnfiledSection({
   onOpenNote: (id: string) => void;
   onDeleteNote: (id: string) => void;
 }) {
+  // The 未分类 section IS a drop target — dropping a note here clears its
+  // folder_id (same semantics as the panel-footer RootBlankDrop). The footer
+  // dashed zone is small and easy to miss; this section header makes the
+  // target obvious because it shows the unfiled notes you'd be joining.
+  const data: DropTarget = { kind: 'root-blank' };
+  const { setNodeRef, isOver } = useDroppable({ id: 'drop:unfiled-section', data });
+
   return (
-    <div className="mt-1 border-t border-border/50 pt-1">
+    <div
+      ref={setNodeRef}
+      className={cn(
+        'mt-1 border-t pt-1 transition-colors',
+        isOver ? 'border-sidebar-primary/60 bg-sidebar-primary/10' : 'border-border/50',
+      )}
+    >
       <button
         type="button"
         onClick={onToggle}
