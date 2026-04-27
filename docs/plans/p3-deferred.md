@@ -1,5 +1,11 @@
 # P3 Deferred — Design Notes
 
+> **Status (2026-04-28)**: Superseded by `2026-04-20-p3-plan.md`. All items
+> below have been folded into that plan's §7 P3.4 (UX 完善) queue or earlier
+> sections. This file is kept as raw material with more detailed sketches —
+> consult the main P3 plan first; come here only when you need the longer
+> notes behind a §7 line item.
+
 Collection of UX / design decisions we've talked about but aren't
 implementing in P2. Captured here so P3 planning has a concrete list to
 pull from instead of re-deriving it from conversation scrollback.
