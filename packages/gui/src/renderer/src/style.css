@@ -18,6 +18,36 @@ body {
   overflow: hidden;
 }
 
+/* Global scrollbar theming. Without these, default chromium scrollbars
+ * paint a white track on dark backgrounds — visible inside CodeMirror,
+ * the folder panel, AI chat history, every overflow-y-auto pane.
+ *
+ * Track stays slightly visible (not transparent) so users can see the
+ * scrollable area at rest. Thumb matches the existing markdown-table
+ * scrollbar so the look is consistent across surfaces. */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: oklch(0.18 0 0);
+}
+::-webkit-scrollbar-thumb {
+  background: oklch(0.35 0 0);
+  border-radius: 5px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: oklch(0.45 0 0);
+}
+::-webkit-scrollbar-corner {
+  background: oklch(0.18 0 0);
+}
+* {
+  /* Firefox fallback — same colors as the webkit rules above. */
+  scrollbar-width: thin;
+  scrollbar-color: oklch(0.35 0 0) oklch(0.18 0 0);
+}
+
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);

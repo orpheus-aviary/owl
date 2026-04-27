@@ -41,7 +41,10 @@ const owlHighlightStyle = HighlightStyle.define([
   { tag: tags.content, color: '#e2e8f0' },
   { tag: tags.quote, color: '#94a3b8', fontStyle: 'italic' },
   // Markdown markers: - * 1. > # ``` etc
-  { tag: tags.list, color: '#f59e0b' },
+  // tags.list applies to ENTIRE list spans — body included. Match content
+  // color so prose inside lists reads like normal text. The bullet/number
+  // marker keeps its own color via tags.processingInstruction below.
+  { tag: tags.list, color: '#e2e8f0' },
   { tag: tags.meta, color: '#64748b' },
   { tag: [tags.processingInstruction, tags.monospace], color: '#a78bfa' },
   // Code block tokens (both language-specific and plain fenced blocks)
@@ -113,25 +116,79 @@ const owlDarkTheme = EditorView.theme(
   { dark: true },
 );
 
-// ─── Markdown shortcuts (Cmd+B / Cmd+I) ────────────────
+// ─── Markdown shortcuts (Cmd+B / Cmd+I / Cmd+E) ─────────
 
-function wrapSelection(view: EditorView, marker: string): boolean {
+/** True iff `selected` is exactly `marker…marker` with non-marker inner text.
+ *  Disambiguates italic (`*`) from bold (`**`): a bold span `**foo**` starts
+ *  and ends with `*`, but its inner `*foo*` would also start/end with `*` —
+ *  so for the italic marker we additionally require the inner to be free of
+ *  surrounding `*`. Bold and inline-code markers don't have this overlap.
+ *  Exported for unit tests; toggleWrap itself is integration-tested manually. */
+export function isExactlyWrapped(selected: string, marker: string): boolean {
+  if (selected.length < 2 * marker.length) return false;
+  if (!selected.startsWith(marker) || !selected.endsWith(marker)) return false;
+  if (marker === '*') {
+    const inner = selected.slice(1, -1);
+    if (inner.startsWith('*') || inner.endsWith('*')) return false;
+  }
+  return true;
+}
+
+/** Toggle: wrap a plain selection with `marker`; if the selection (or its
+ *  surrounding text) is already wrapped, unwrap instead. Empty selections
+ *  fall through to a plain wrap with the cursor parked between markers. */
+function toggleWrap(view: EditorView, marker: string): boolean {
   const { state } = view;
+  const len = marker.length;
+  const docLen = state.doc.length;
   const changes = state.changeByRange((range) => {
     const selected = state.sliceDoc(range.from, range.to);
-    const wrapped = `${marker}${selected}${marker}`;
+
+    // 1) Selection itself is `**foo**` (or `*foo*`, `` `foo` ``) — strip markers
+    if (isExactlyWrapped(selected, marker)) {
+      const inner = selected.slice(len, -len);
+      return {
+        changes: { from: range.from, to: range.to, insert: inner },
+        range: EditorSelection.range(range.from, range.from + inner.length),
+      };
+    }
+
+    // 2) Selection sits INSIDE existing markers — `**foo**` with only `foo` selected.
+    // Peek the surrounding doc; if both sides match, peel them.
+    if (range.from >= len && range.to + len <= docLen) {
+      const before = state.sliceDoc(range.from - len, range.from);
+      const after = state.sliceDoc(range.to, range.to + len);
+      if (before === marker && after === marker) {
+        return {
+          changes: [
+            { from: range.from - len, to: range.from, insert: '' },
+            { from: range.to, to: range.to + len, insert: '' },
+          ],
+          range: EditorSelection.range(range.from - len, range.to - len),
+        };
+      }
+    }
+
+    // 3) Plain wrap (existing behavior).
     return {
-      changes: { from: range.from, to: range.to, insert: wrapped },
-      range: EditorSelection.cursor(range.from + marker.length + selected.length),
+      changes: { from: range.from, to: range.to, insert: `${marker}${selected}${marker}` },
+      range:
+        selected.length === 0
+          ? EditorSelection.cursor(range.from + len)
+          : EditorSelection.cursor(range.from + len + selected.length),
     };
   });
   view.dispatch(changes);
   return true;
 }
 
+// Cmd+E is reserved at the window-level capture phase (see useEditorShortcuts:65)
+// to focus the editor pane; binding Mod-e here would never fire. Inline-code
+// toggle is reachable programmatically via toggleWrap(view, '`') if a future
+// menu or alternate shortcut wants to expose it.
 const markdownKeymap = keymap.of([
-  { key: 'Mod-b', run: (view) => wrapSelection(view, '**') },
-  { key: 'Mod-i', run: (view) => wrapSelection(view, '*') },
+  { key: 'Mod-b', run: (view) => toggleWrap(view, '**') },
+  { key: 'Mod-i', run: (view) => toggleWrap(view, '*') },
 ]);
 
 // ─── List continuation ──────────────────────────────────
