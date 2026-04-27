@@ -48,6 +48,12 @@ export interface ChatMessage {
   role: ChatRole;
   /** Streaming text accumulated from `message` events. */
   content: string;
+  /**
+   * Reasoning / chain-of-thought text from `thinking` events. Rendered as a
+   * collapsible block above the bubble's main content. Empty when the model
+   * doesn't emit thinking (e.g. plain `gpt-4o-mini` chat completions).
+   */
+  thinking: string;
   toolCalls: ChatToolCall[];
   drafts: DraftReadyCard[];
   previews: PreviewReadyCard[];

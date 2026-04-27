@@ -65,6 +65,8 @@ export function dispatchAgentEvent(input: DispatchInput): DispatcherState {
       return handleConversationId(input);
     case 'message':
       return handleMessage(input);
+    case 'thinking':
+      return handleThinking(input);
     case 'tool_call':
       return handleToolCall(input);
     case 'tool_result':
@@ -106,6 +108,23 @@ function handleMessage({
     chats: patchAssistantMessage(state.chats, chatId, assistantMessageId, (m) => ({
       ...m,
       content: m.content + text,
+    })),
+  };
+}
+
+function handleThinking({
+  state,
+  chatId,
+  assistantMessageId,
+  data,
+}: DispatchInput): DispatcherState {
+  const text = readString(data, 'content');
+  if (!text) return state;
+  return {
+    ...state,
+    chats: patchAssistantMessage(state.chats, chatId, assistantMessageId, (m) => ({
+      ...m,
+      thinking: m.thinking + text,
     })),
   };
 }

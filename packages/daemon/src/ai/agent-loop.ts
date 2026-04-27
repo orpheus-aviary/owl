@@ -19,6 +19,7 @@ const DEFAULT_TIMEOUT_MS = 120_000;
 export type AgentEvent =
   | { type: 'conversation_id'; conversation_id: string }
   | { type: 'message'; content: string }
+  | { type: 'thinking'; content: string }
   | { type: 'tool_call'; tool: string; args: Record<string, unknown>; tool_call_id: string }
   | { type: 'tool_result'; tool: string; tool_call_id: string; result: unknown; is_error: boolean }
   | {
@@ -136,6 +137,11 @@ export async function* runAgentLoop(
       break;
     }
 
+    if (assembled.thinking) {
+      // Surface thinking BEFORE the visible message so GUI can render the
+      // collapsible block above the bubble's main text without reordering.
+      yield { type: 'thinking', content: assembled.thinking };
+    }
     if (assembled.text) {
       yield { type: 'message', content: assembled.text };
     }
@@ -143,10 +149,14 @@ export async function* runAgentLoop(
     // Push assistant turn into the conversation BEFORE running tools so
     // the OpenAI/Anthropic adapters see a well-formed request next round
     // (assistant tool_calls must precede the matching tool messages).
+    // reasoning_content / signature are required for round-trip on
+    // thinking-capable providers (DeepSeek V4, Anthropic Extended Thinking).
     conversation.messages.push({
       role: 'assistant',
       content: assembled.text,
       tool_calls: assembled.toolCalls.length > 0 ? assembled.toolCalls : undefined,
+      reasoning_content: assembled.thinking || undefined,
+      reasoning_signature: assembled.thinkingSignature || undefined,
     });
 
     if (assembled.toolCalls.length === 0) {
@@ -193,6 +203,8 @@ export async function* runAgentLoop(
 
 interface AssembledTurn {
   text: string;
+  thinking: string;
+  thinkingSignature: string;
   toolCalls: LlmToolCall[];
   stopReason: string | undefined;
 }
@@ -200,13 +212,17 @@ interface AssembledTurn {
 /**
  * Drain an LlmClient stream into a single assistant turn. Tool call
  * arguments arrive as `tool_call_delta` chunks that must be concatenated
- * by id; text deltas concatenate into one string.
+ * by id; text deltas concatenate into one string. Thinking deltas
+ * concatenate similarly; signature arrives whole at the end of the
+ * thinking block (Anthropic) or never (OpenAI/DeepSeek shape).
  */
 async function assembleTurn(
   stream: AsyncIterable<StreamChunk>,
   cleanup: () => void,
 ): Promise<AssembledTurn> {
   const textParts: string[] = [];
+  const thinkingParts: string[] = [];
+  let thinkingSignature = '';
   const toolCallById = new Map<string, { name: string; arguments: string; index: number }>();
   const orderById = new Map<string, number>();
   let nextIndex = 0;
@@ -217,6 +233,12 @@ async function assembleTurn(
       switch (chunk.type) {
         case 'text_delta':
           textParts.push(chunk.text);
+          break;
+        case 'thinking_delta':
+          thinkingParts.push(chunk.text);
+          break;
+        case 'thinking_signature':
+          thinkingSignature = chunk.signature;
           break;
         case 'tool_call_start':
           if (!toolCallById.has(chunk.id)) {
@@ -246,7 +268,13 @@ async function assembleTurn(
     .sort(([, a], [, b]) => a.index - b.index)
     .map(([id, entry]) => ({ id, name: entry.name, arguments: entry.arguments }));
 
-  return { text: textParts.join(''), toolCalls, stopReason };
+  return {
+    text: textParts.join(''),
+    thinking: thinkingParts.join(''),
+    thinkingSignature,
+    toolCalls,
+    stopReason,
+  };
 }
 
 // ─── Tool execution ────────────────────────────────────────────────────

@@ -4,6 +4,7 @@ import type {
   MessageCreateParamsStreaming,
   MessageParam,
   RawMessageStreamEvent,
+  ThinkingBlockParam,
   ToolUseBlockParam,
 } from '@anthropic-ai/sdk/resources/messages/messages.js';
 import type { LlmConfig } from '@owl/core';
@@ -34,7 +35,7 @@ export interface LlmToolCall {
 }
 
 export interface LlmContentBlock {
-  type: 'text' | 'tool_use' | 'tool_result';
+  type: 'text' | 'tool_use' | 'tool_result' | 'thinking';
   text?: string;
   /** tool_use: provider-assigned id; tool_result: target tool_use id. */
   id?: string;
@@ -44,6 +45,9 @@ export interface LlmContentBlock {
   /** Stringified tool result body (or human-readable error). */
   content?: string;
   is_error?: boolean;
+  /** Anthropic-only: opaque signature attached to thinking blocks. Must be
+   *  round-tripped verbatim or the next request rejects the prior turn. */
+  signature?: string;
 }
 
 export interface LlmMessage {
@@ -53,10 +57,23 @@ export interface LlmMessage {
   tool_call_id?: string;
   /** Assistant tool call requests (OpenAI-style; translated for Anthropic). */
   tool_calls?: LlmToolCall[];
+  /**
+   * Reasoning / thinking text accumulated for an assistant turn. Required by
+   * DeepSeek V4 Pro/Flash as a sibling field on the assistant message;
+   * Anthropic carries it as a content block instead (see content[]). The
+   * agent loop fills this from streamed thinking_delta chunks; round-trip
+   * is gated by config.llm.thinking_round_trip.
+   */
+  reasoning_content?: string;
+  /** Anthropic-only: signature paired with the reasoning. Forwarded to the
+   *  thinking content block when round-tripping. */
+  reasoning_signature?: string;
 }
 
 export type StreamChunk =
   | { type: 'text_delta'; text: string }
+  | { type: 'thinking_delta'; text: string }
+  | { type: 'thinking_signature'; signature: string }
   | { type: 'tool_call_start'; id: string; name: string }
   | { type: 'tool_call_delta'; id: string; arguments: string }
   | { type: 'tool_call_end'; id: string }
@@ -94,9 +111,17 @@ export function createLlmClient(config: LlmConfig): LlmClient {
 
 // ─── OpenAI Adapter ────────────────────────────────────────────────────
 
+/** Vendor extensions to OpenAI's streaming delta — DeepSeek (and other
+ *  reasoning-capable models that stay openai-shaped) inject a sibling
+ *  `reasoning_content` string on each chunk. */
+type OpenAiDeltaWithReasoning = ChatCompletionChunk.Choice.Delta & {
+  reasoning_content?: string;
+};
+
 class OpenAiAdapter implements LlmClient {
   private readonly client: OpenAI;
   private readonly model: string;
+  private readonly thinkingRoundTrip: boolean;
 
   constructor(config: LlmConfig) {
     // OpenAI SDK expects baseURL ending at /v1 (it appends /chat/completions).
@@ -107,6 +132,7 @@ class OpenAiAdapter implements LlmClient {
       apiKey: config.api_key,
     });
     this.model = config.model;
+    this.thinkingRoundTrip = config.thinking_round_trip;
   }
 
   async *chatCompletion(
@@ -117,7 +143,7 @@ class OpenAiAdapter implements LlmClient {
     const stream = await this.client.chat.completions.create(
       {
         model: this.model,
-        messages: messages.map(toOpenAiMessage),
+        messages: messages.map((m) => toOpenAiMessage(m, this.thinkingRoundTrip)),
         tools: tools.length > 0 ? tools.map(toOpenAiTool) : undefined,
         stream: true,
         max_tokens: options.max_tokens,
@@ -142,7 +168,11 @@ function* translateOpenAiChunk(
   const choice = chunk.choices[0];
   if (!choice) return;
   const { delta, finish_reason } = choice;
+  const reasoning = (delta as OpenAiDeltaWithReasoning).reasoning_content;
 
+  if (reasoning) {
+    yield { type: 'thinking_delta', text: reasoning };
+  }
   if (delta.content) {
     yield { type: 'text_delta', text: delta.content };
   }
@@ -188,14 +218,21 @@ function toOpenAiTool(tool: LlmToolDef): ChatCompletionTool {
   };
 }
 
-function toOpenAiMessage(msg: LlmMessage): ChatCompletionMessageParam {
+/** Assistant message variant that carries DeepSeek's `reasoning_content`
+ *  sibling field. The OpenAI SDK type doesn't model it (it's a vendor
+ *  extension), but the wire format passes through unchanged. */
+type AssistantWithReasoning = ChatCompletionAssistantMessageParam & {
+  reasoning_content?: string;
+};
+
+function toOpenAiMessage(msg: LlmMessage, thinkingRoundTrip: boolean): ChatCompletionMessageParam {
   switch (msg.role) {
     case 'system':
       return { role: 'system', content: contentToText(msg.content) };
     case 'user':
       return { role: 'user', content: contentToText(msg.content) };
     case 'assistant': {
-      const out: ChatCompletionAssistantMessageParam = {
+      const out: AssistantWithReasoning = {
         role: 'assistant',
         content: contentToText(msg.content) || null,
       };
@@ -205,6 +242,13 @@ function toOpenAiMessage(msg: LlmMessage): ChatCompletionMessageParam {
           type: 'function' as const,
           function: { name: tc.name, arguments: tc.arguments },
         }));
+      }
+      // DeepSeek V4 Pro/Flash requires `reasoning_content` round-tripped on
+      // the assistant turn; omitting it on multi-turn requests yields 400.
+      // Skip when round-trip is off (DeepSeek V3 reasoner / R1 reject the
+      // field; OpenAI o-series chat ignores it).
+      if (thinkingRoundTrip && msg.reasoning_content) {
+        out.reasoning_content = msg.reasoning_content;
       }
       return out;
     }
@@ -226,6 +270,7 @@ function toOpenAiMessage(msg: LlmMessage): ChatCompletionMessageParam {
 class AnthropicAdapter implements LlmClient {
   private readonly client: Anthropic;
   private readonly model: string;
+  private readonly thinkingRoundTrip: boolean;
 
   constructor(config: LlmConfig) {
     // Anthropic SDK appends `/v1/messages` itself, so strip a trailing /v1
@@ -233,6 +278,7 @@ class AnthropicAdapter implements LlmClient {
     const baseURL = config.url.replace(/\/+$/, '').replace(/\/v1$/, '');
     this.client = new Anthropic({ baseURL, apiKey: config.api_key });
     this.model = config.model;
+    this.thinkingRoundTrip = config.thinking_round_trip;
   }
 
   async *chatCompletion(
@@ -240,7 +286,10 @@ class AnthropicAdapter implements LlmClient {
     tools: LlmToolDef[],
     options: ChatOptions = {},
   ): AsyncIterable<StreamChunk> {
-    const { system, messages: anthMessages } = toAnthropicMessages(messages);
+    const { system, messages: anthMessages } = toAnthropicMessages(
+      messages,
+      this.thinkingRoundTrip,
+    );
 
     const params: MessageCreateParamsStreaming = {
       model: this.model,
@@ -307,6 +356,14 @@ function* translateAnthropicBlockDelta(
     yield { type: 'text_delta', text: delta.text };
     return;
   }
+  if (delta.type === 'thinking_delta') {
+    yield { type: 'thinking_delta', text: delta.thinking };
+    return;
+  }
+  if (delta.type === 'signature_delta') {
+    yield { type: 'thinking_signature', signature: delta.signature };
+    return;
+  }
   if (delta.type === 'input_json_delta') {
     const id = toolCallByIndex.get(event.index);
     if (id) yield { type: 'tool_call_delta', id, arguments: delta.partial_json };
@@ -329,7 +386,10 @@ function toAnthropicTool(tool: LlmToolDef): AnthropicTool {
  *   (consecutive tool results merge into one user message — Anthropic
  *   requires parallel tool results to share a single user turn)
  */
-function toAnthropicMessages(messages: LlmMessage[]): {
+function toAnthropicMessages(
+  messages: LlmMessage[],
+  thinkingRoundTrip: boolean,
+): {
   system: string | undefined;
   messages: MessageParam[];
 } {
@@ -345,7 +405,7 @@ function toAnthropicMessages(messages: LlmMessage[]): {
     } else if (msg.role === 'user') {
       out.push({ role: 'user', content: contentToText(msg.content) });
     } else {
-      out.push(buildAssistantMessage(msg));
+      out.push(buildAssistantMessage(msg, thinkingRoundTrip));
     }
   }
 
@@ -369,8 +429,18 @@ function appendToolResult(out: MessageParam[], msg: LlmMessage): void {
   }
 }
 
-function buildAssistantMessage(msg: LlmMessage): MessageParam {
-  const blocks: Array<{ type: 'text'; text: string } | ToolUseBlockParam> = [];
+function buildAssistantMessage(msg: LlmMessage, thinkingRoundTrip: boolean): MessageParam {
+  const blocks: Array<{ type: 'text'; text: string } | ToolUseBlockParam | ThinkingBlockParam> = [];
+  // Anthropic Extended Thinking: the thinking block must be the FIRST content
+  // block in the assistant turn AND carry the original signature unmodified.
+  // Drop any block missing the signature — the API rejects unsigned thinking.
+  if (thinkingRoundTrip && msg.reasoning_content && msg.reasoning_signature) {
+    blocks.push({
+      type: 'thinking',
+      thinking: msg.reasoning_content,
+      signature: msg.reasoning_signature,
+    });
+  }
   const text = contentToText(msg.content);
   if (text) blocks.push({ type: 'text', text });
   if (msg.tool_calls) {

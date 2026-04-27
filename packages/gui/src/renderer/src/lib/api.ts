@@ -279,6 +279,8 @@ export interface LlmConfig {
   model: string;
   api_key: string;
   api_format: LlmApiFormat;
+  /** Round-trip the model's reasoning/thinking back. See core config docs. */
+  thinking_round_trip: boolean;
 }
 
 export interface EditorConfig {

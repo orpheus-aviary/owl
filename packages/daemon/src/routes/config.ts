@@ -167,6 +167,9 @@ export function registerConfigRoutes(app: FastifyInstance, ctx: AppContext): voi
       model: override.model ?? base.model,
       api_key: override.api_key ?? base.api_key,
       api_format: override.api_format ?? base.api_format ?? 'openai',
+      // Test endpoint sends a single ping with no thinking — round_trip
+      // doesn't actually matter here, but keep the type complete.
+      thinking_round_trip: override.thinking_round_trip ?? base.thinking_round_trip ?? true,
     };
     const result = await pingLlm(llm);
     if (result.success) {

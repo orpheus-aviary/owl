@@ -85,6 +85,7 @@ describe('AI routes (P2-7d)', () => {
       model: 'mock',
       api_key: 'sk-test',
       api_format: 'openai',
+      thinking_round_trip: true,
     };
     scheduler = new ReminderScheduler(db, sqlite, config, logger);
     conversationStore = new ConversationStore();
@@ -142,7 +143,13 @@ describe('AI routes (P2-7d)', () => {
 
   it('POST /ai/chat 400s when LLM is not configured', async () => {
     const original = config.llm;
-    config.llm = { url: '', model: '', api_key: '', api_format: 'openai' };
+    config.llm = {
+      url: '',
+      model: '',
+      api_key: '',
+      api_format: 'openai',
+      thinking_round_trip: true,
+    };
     try {
       const res = await app.inject({
         method: 'POST',

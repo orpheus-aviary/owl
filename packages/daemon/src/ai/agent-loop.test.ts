@@ -255,6 +255,60 @@ describe('agent loop (P2-7c)', () => {
     assert.equal(conv.messages[0].role, 'system');
     assert.equal(conv.messages.filter((m) => m.role === 'system').length, 1);
   });
+
+  // ── Thinking / reasoning round-trip (P3.0.5 #3) ──
+
+  it('forwards thinking_delta to a thinking event and persists reasoning on the assistant message', async () => {
+    const llm = new MockLlmClient([
+      [
+        { type: 'thinking_delta', text: 'Hmm, ' },
+        { type: 'thinking_delta', text: 'let me consider…' },
+        { type: 'thinking_signature', signature: 'sig-abc' },
+        { type: 'text_delta', text: 'The answer is 42.' },
+        { type: 'done', stop_reason: 'end_turn' },
+      ],
+    ]);
+
+    const deps = buildDeps(llm);
+    const events = await collect(runAgentLoop({ message: 'q?' }, deps));
+
+    // Thinking event surfaces before message.
+    const types = events.map((e) => e.type);
+    assert.deepEqual(types, ['conversation_id', 'thinking', 'message', 'done']);
+    const thinking = events.find((e) => e.type === 'thinking');
+    assert.equal(
+      thinking && thinking.type === 'thinking' ? thinking.content : '',
+      'Hmm, let me consider…',
+    );
+
+    // Conversation history captures the assistant turn with both
+    // reasoning_content and reasoning_signature so a follow-up turn can
+    // round-trip them — required by DeepSeek V4 + Anthropic Extended Thinking.
+    const convId = (events[0] as { type: 'conversation_id'; conversation_id: string })
+      .conversation_id;
+    const conv = deps.conversations.get(convId);
+    const assistant = conv?.messages.find((m) => m.role === 'assistant');
+    assert.equal(assistant?.reasoning_content, 'Hmm, let me consider…');
+    assert.equal(assistant?.reasoning_signature, 'sig-abc');
+  });
+
+  it('omits reasoning fields when no thinking deltas are emitted', async () => {
+    const llm = new MockLlmClient([
+      [
+        { type: 'text_delta', text: 'plain reply' },
+        { type: 'done', stop_reason: 'end_turn' },
+      ],
+    ]);
+    const deps = buildDeps(llm);
+    const events = await collect(runAgentLoop({ message: 'q?' }, deps));
+    const convId = (events[0] as { type: 'conversation_id'; conversation_id: string })
+      .conversation_id;
+    const conv = deps.conversations.get(convId);
+    const assistant = conv?.messages.find((m) => m.role === 'assistant');
+    // No thinking emitted → no reasoning round-trip fields, keeping LlmMessage tidy.
+    assert.equal(assistant?.reasoning_content, undefined);
+    assert.equal(assistant?.reasoning_signature, undefined);
+  });
 });
 
 // ─── ConversationStore ─────────────────────────────────────────────────

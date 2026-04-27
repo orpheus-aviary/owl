@@ -2,8 +2,8 @@ import { MarkdownPreview } from '@/components/MarkdownPreview';
 import type { ChatMessage, DraftReadyCard as DraftReadyData } from '@/stores/ai-store';
 import { useAiStore } from '@/stores/ai-store';
 import { useEditorStore } from '@/stores/editor-store';
-import { AlertCircle } from 'lucide-react';
-import { useCallback } from 'react';
+import { AlertCircle, Brain, ChevronDown, ChevronRight } from 'lucide-react';
+import { useCallback, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { DraftReadyCard } from './DraftReadyCard';
 import { PreviewReadyCard } from './PreviewReadyCard';
@@ -115,6 +115,9 @@ function AssistantBubble({ message, chatId }: { message: ChatMessage; chatId: st
   return (
     <div className="rounded-lg bg-muted/40 px-1 py-2 space-y-2">
       {showThinking && <ThinkingPlaceholder />}
+      {message.thinking && (
+        <ThinkingBlock content={message.thinking} streaming={message.isStreaming} />
+      )}
       {message.toolCalls.length > 0 && (
         <div className="px-1 space-y-1">
           {message.toolCalls.map((tc) => (
@@ -155,6 +158,41 @@ function AssistantBubble({ message, chatId }: { message: ChatMessage; chatId: st
       )}
       {message.aborted && !message.isStreaming && (
         <div className="px-3 pb-1 text-xs text-muted-foreground/70 italic">⏹ 已停止生成</div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Collapsible reasoning / chain-of-thought block. Default collapsed so the
+ * bubble stays compact; users opt in if they want to peek at the model's
+ * private reasoning. Streaming auto-expands so users see progress; they can
+ * collapse it manually mid-stream and the choice is honored.
+ */
+function ThinkingBlock({ content, streaming }: { content: string; streaming: boolean }) {
+  const [open, setOpen] = useState(false);
+  const [userToggled, setUserToggled] = useState(false);
+  const isOpen = userToggled ? open : streaming;
+  const onClick = () => {
+    setUserToggled(true);
+    setOpen(!isOpen);
+  };
+  return (
+    <div className="px-1">
+      <button
+        type="button"
+        onClick={onClick}
+        className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+      >
+        {isOpen ? <ChevronDown className="size-3" /> : <ChevronRight className="size-3" />}
+        <Brain className="size-3" />
+        <span>思考过程</span>
+        {streaming && <span className="text-[10px] opacity-60">(进行中…)</span>}
+      </button>
+      {isOpen && (
+        <div className="mt-1 ml-4 pl-2 border-l-2 border-muted-foreground/20 text-xs text-muted-foreground whitespace-pre-wrap leading-relaxed">
+          {content}
+        </div>
       )}
     </div>
   );

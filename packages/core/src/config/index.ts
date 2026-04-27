@@ -13,6 +13,15 @@ export interface LlmConfig {
   api_key: string;
   /** API wire format — determines auth header and request shape. */
   api_format: LlmApiFormat;
+  /**
+   * Whether to round-trip the model's reasoning / thinking content back in
+   * subsequent requests. Required by DeepSeek V4 Pro/Flash and Anthropic
+   * Extended Thinking; forbidden by DeepSeek V3 reasoner / R1; ignored by
+   * OpenAI o-series chat completions (reasoning is hidden server-side).
+   * Default `true` matches the V4 / Anthropic trend; flip to false for
+   * DeepSeek V3 reasoner if you hit the legacy 400 error.
+   */
+  thinking_round_trip: boolean;
 }
 
 export interface WindowConfig {
@@ -104,7 +113,7 @@ export interface OwlConfig {
 // ─── Defaults ──────────────────────────────────────────
 
 export const DEFAULT_CONFIG: OwlConfig = {
-  llm: { url: '', model: '', api_key: '', api_format: 'openai' },
+  llm: { url: '', model: '', api_key: '', api_format: 'openai', thinking_round_trip: true },
   window: { width: 1000, height: 700 },
   font: { global_offset: 0, editor_font_size: 14, editor_line_height: 1.6 },
   navigation: { order: ['editor', 'browser', 'trash', 'reminders', 'ai', 'todo', 'settings'] },
@@ -186,6 +195,11 @@ export function resolveLlmConfig(config: OwlConfig): LlmConfig {
         model: config.llm.model || parsed.llm.model || '',
         api_key: config.llm.api_key || parsed.llm.api_key || '',
         api_format: config.llm.api_format || parsed.llm.api_format || 'openai',
+        // Owl-side toggle wins; aviary fallback only kicks in when owl is
+        // entirely unset. Either side could legitimately be `false`, so
+        // ?? (undefined fallback) is right — || would coerce false to true.
+        thinking_round_trip:
+          config.llm.thinking_round_trip ?? parsed.llm.thinking_round_trip ?? true,
       };
     }
   } catch {

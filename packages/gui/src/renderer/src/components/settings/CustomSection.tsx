@@ -186,6 +186,28 @@ export function CustomSection() {
           </SettingRow>
 
           <SettingRow
+            label="思考回传"
+            help="DeepSeek V4 / Anthropic Extended Thinking 必须开启；DeepSeek V3 reasoner / OpenAI o-series chat 关闭"
+          >
+            <div className="flex items-center gap-1">
+              <Button
+                size="sm"
+                variant={llm.thinking_round_trip ? 'default' : 'outline'}
+                onClick={() => patchLlm({ thinking_round_trip: true })}
+              >
+                开启
+              </Button>
+              <Button
+                size="sm"
+                variant={!llm.thinking_round_trip ? 'default' : 'outline'}
+                onClick={() => patchLlm({ thinking_round_trip: false })}
+              >
+                关闭
+              </Button>
+            </div>
+          </SettingRow>
+
+          <SettingRow
             label="测试连接"
             help={
               testResult

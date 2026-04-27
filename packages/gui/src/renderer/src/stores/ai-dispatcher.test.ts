@@ -17,6 +17,7 @@ function baseState(): {
     id: 'msg-user',
     role: 'user',
     content: 'hi',
+    thinking: '',
     toolCalls: [],
     drafts: [],
     previews: [],
@@ -26,6 +27,7 @@ function baseState(): {
     id: assistantMessageId,
     role: 'assistant',
     content: '',
+    thinking: '',
     toolCalls: [],
     drafts: [],
     previews: [],
@@ -68,6 +70,29 @@ describe('dispatchAgentEvent', () => {
       newLocalId,
     });
     expect(next.chats[0].conversationId).toBe('conv-abc');
+  });
+
+  it('thinking appends to the assistant message thinking buffer', () => {
+    const { state, chatId, assistantMessageId } = baseState();
+    const after1 = dispatchAgentEvent({
+      state,
+      chatId,
+      assistantMessageId,
+      event: 'thinking',
+      data: { content: 'Considering ' },
+      newLocalId,
+    });
+    const after2 = dispatchAgentEvent({
+      state: after1,
+      chatId,
+      assistantMessageId,
+      event: 'thinking',
+      data: { content: 'options…' },
+      newLocalId,
+    });
+    expect(activeMessage(after2, assistantMessageId).thinking).toBe('Considering options…');
+    // Visible content stays untouched — thinking lives in its own field.
+    expect(activeMessage(after2, assistantMessageId).content).toBe('');
   });
 
   it('message appends content to the streaming assistant message', () => {

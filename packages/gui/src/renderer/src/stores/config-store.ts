@@ -29,7 +29,13 @@ const DEFAULT_FONT: OwlConfig['font'] = {
 
 const DEFAULT_WINDOW: OwlConfig['window'] = { width: 1000, height: 700 };
 
-const DEFAULT_LLM: OwlConfig['llm'] = { url: '', model: '', api_key: '', api_format: 'openai' };
+const DEFAULT_LLM: OwlConfig['llm'] = {
+  url: '',
+  model: '',
+  api_key: '',
+  api_format: 'openai',
+  thinking_round_trip: true,
+};
 
 const DEFAULT_TRASH: OwlConfig['trash'] = { auto_delete_days: 30 };
 
