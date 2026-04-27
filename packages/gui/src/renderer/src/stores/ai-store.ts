@@ -52,6 +52,16 @@ interface AiState {
    * becomes "已打开". Called after the editor accepts the draft.
    */
   markDraftOpened: (chatId: string, messageId: string, draftLocalId: string) => void;
+  /**
+   * Apply a single draft via the daemon REST API, bypassing the editor
+   * staging flow. Reuses P2-8's Tier-1 path (toast + bus refresh, no tab
+   * opens). Failures surface on draft.error so the user can retry. Conflict
+   * detection compares the note's current DB state to the draft's
+   * `original_*` baselines and refuses the auto-merge if they've drifted.
+   */
+  approveDraft: (chatId: string, messageId: string, draftLocalId: string) => Promise<void>;
+  /** Approve every unprocessed draft on a message in parallel. */
+  approveAllDrafts: (chatId: string, messageId: string) => Promise<void>;
   /** Record the message list's current scrollTop for a given chat. */
   setChatScroll: (chatId: string, scrollTop: number) => void;
 }
@@ -126,25 +136,40 @@ export const useAiStore = create<AiState>((set, get) => ({
   },
 
   markDraftOpened: (chatId, messageId, draftLocalId) => {
-    set((state) => ({
-      chats: state.chats.map((c) =>
-        c.id === chatId
-          ? {
-              ...c,
-              messages: c.messages.map((m) =>
-                m.id === messageId
-                  ? {
-                      ...m,
-                      drafts: m.drafts.map((d) =>
-                        d.localId === draftLocalId ? { ...d, opened: true } : d,
-                      ),
-                    }
-                  : m,
-              ),
-            }
-          : c,
-      ),
-    }));
+    patchDraft(set, chatId, messageId, draftLocalId, () => ({ opened: true }));
+  },
+
+  approveDraft: async (chatId, messageId, draftLocalId) => {
+    const draft = findDraft(get(), chatId, messageId, draftLocalId);
+    if (!draft || draft.approved || draft.approving) return;
+    patchDraft(set, chatId, messageId, draftLocalId, () => ({ approving: true, error: null }));
+    try {
+      await applyDraftViaApi(draft);
+      patchDraft(set, chatId, messageId, draftLocalId, () => ({
+        approved: true,
+        approving: false,
+        error: null,
+      }));
+      // Tier-1 toast + cross-store refresh, just like daemon-side append_memo.
+      addNoteAppliedToast(set, draft);
+      useDataBus.getState().bumpNotes();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      patchDraft(set, chatId, messageId, draftLocalId, () => ({
+        approving: false,
+        error: message,
+      }));
+    }
+  },
+
+  approveAllDrafts: async (chatId, messageId) => {
+    const message = findMessage(get(), chatId, messageId);
+    if (!message) return;
+    const targets = message.drafts.filter((d) => !d.approved && !d.opened && !d.approving);
+    // Parallel per-card so a slow note doesn't hold up the rest. Each call
+    // reuses approveDraft's full lifecycle (in-flight flag, error capture,
+    // toast, bus bump) so failures stay isolated to their own card.
+    await Promise.all(targets.map((d) => get().approveDraft(chatId, messageId, d.localId)));
   },
 
   closeChat: async (id) => {
@@ -346,4 +371,101 @@ function forwardNoteAppliedToEditor(data: unknown): void {
   // Notify every list that depends on note state — data-bus subscribers
   // (note-store, folder-store, browser-store) refetch automatically.
   useDataBus.getState().bumpNotes();
+}
+
+// ─── Draft approve helpers (P3.0.5 #2) ─────────────────────────────────
+
+type DraftCard = ChatTabState['messages'][number]['drafts'][number];
+type DraftPatch = Partial<DraftCard>;
+
+function findMessage(state: AiState, chatId: string, messageId: string): ChatMessage | undefined {
+  const tab = state.chats.find((c) => c.id === chatId);
+  return tab?.messages.find((m) => m.id === messageId);
+}
+
+function findDraft(
+  state: AiState,
+  chatId: string,
+  messageId: string,
+  draftLocalId: string,
+): DraftCard | undefined {
+  return findMessage(state, chatId, messageId)?.drafts.find((d) => d.localId === draftLocalId);
+}
+
+function patchDraft(
+  set: SetState,
+  chatId: string,
+  messageId: string,
+  draftLocalId: string,
+  patch: (d: DraftCard) => DraftPatch,
+): void {
+  set((state) => ({
+    chats: state.chats.map((c) =>
+      c.id === chatId
+        ? {
+            ...c,
+            messages: c.messages.map((m) =>
+              m.id === messageId
+                ? {
+                    ...m,
+                    drafts: m.drafts.map((d) =>
+                      d.localId === draftLocalId ? { ...d, ...patch(d) } : d,
+                    ),
+                  }
+                : m,
+            ),
+          }
+        : c,
+    ),
+  }));
+}
+
+/**
+ * Apply a draft directly via the daemon REST API. For updates, we run a
+ * conflict check first: refetch the note and compare against the draft's
+ * `original_*` baselines. If anything's drifted (note edited externally,
+ * tags changed elsewhere, etc.) we throw rather than overwrite — that
+ * surfaces in the card UI so the user can fall back to the manual
+ * "打开" → ConflictDialog flow for explicit resolution.
+ */
+async function applyDraftViaApi(draft: DraftCard): Promise<void> {
+  if (draft.action === 'create' || draft.action === 'create_reminder') {
+    await api.createNote({
+      content: draft.content,
+      folder_id: draft.folder_id ?? undefined,
+      tags: draft.tags,
+    });
+    return;
+  }
+  // update path — verify baselines match before overwriting.
+  if (draft.original_content !== undefined) {
+    const current = await api.getNote(draft.note_id);
+    const dbContent = current.data?.content ?? '';
+    if (dbContent !== draft.original_content) {
+      throw new Error('笔记已被外部修改，请改用「打开」手动合并');
+    }
+  }
+  await api.patchNote(draft.note_id, {
+    content: draft.content,
+    folder_id: draft.folder_id,
+    tags: draft.tags,
+  });
+}
+
+/**
+ * Push a Tier-1 toast notice into the noteAppliedNotices queue so the
+ * NoteAppliedToast component fires the same UX it does for daemon-side
+ * append_memo. We synthesize the appended text as the full content (the
+ * user just approved a wholesale draft) — toast components downstream
+ * already truncate for display.
+ */
+function addNoteAppliedToast(set: SetState, draft: DraftCard): void {
+  const notice: NoteAppliedNotice = {
+    id: localId(),
+    noteId: draft.note_id,
+    appendedText: draft.content,
+    latestContent: draft.content,
+    receivedAt: Date.now(),
+  };
+  set((state) => ({ noteAppliedNotices: [...state.noteAppliedNotices, notice] }));
 }

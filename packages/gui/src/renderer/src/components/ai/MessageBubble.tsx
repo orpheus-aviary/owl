@@ -126,17 +126,12 @@ function AssistantBubble({ message, chatId }: { message: ChatMessage; chatId: st
         </div>
       )}
       {message.drafts.length > 0 && (
-        <div className="px-1 space-y-2">
-          {message.drafts.map((d) => (
-            <DraftReadyCard
-              key={d.localId}
-              draft={d}
-              onOpen={(draft) => {
-                void openDraft(draft);
-              }}
-            />
-          ))}
-        </div>
+        <DraftSection
+          drafts={message.drafts}
+          chatId={chatId}
+          messageId={message.id}
+          onOpen={openDraft}
+        />
       )}
       {message.previews.length > 0 && (
         <div className="px-1 space-y-2">
@@ -194,6 +189,60 @@ function ThinkingBlock({ content, streaming }: { content: string; streaming: boo
           {content}
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * Draft cards section + a "同意全部" button when 2+ unprocessed drafts exist.
+ * Approve goes through ai-store.approveDraft → daemon REST API directly,
+ * NOT through editor staging — that's the Tier-1 path so the user doesn't
+ * have to context-switch into the editor for routine accept-the-AI flows.
+ */
+function DraftSection({
+  drafts,
+  chatId,
+  messageId,
+  onOpen,
+}: {
+  drafts: DraftReadyData[];
+  chatId: string;
+  messageId: string;
+  onOpen: (draft: DraftReadyData) => Promise<void>;
+}) {
+  const approveDraft = useAiStore((s) => s.approveDraft);
+  const approveAllDrafts = useAiStore((s) => s.approveAllDrafts);
+  const unprocessed = drafts.filter((d) => !d.opened && !d.approved);
+  const anyApproving = drafts.some((d) => d.approving);
+  const showBatch = unprocessed.length >= 2;
+  return (
+    <div className="px-1 space-y-2">
+      {showBatch && (
+        <div className="flex justify-end">
+          <button
+            type="button"
+            onClick={() => {
+              void approveAllDrafts(chatId, messageId);
+            }}
+            disabled={anyApproving}
+            className="text-xs px-2.5 py-1 rounded border border-border bg-muted/40 hover:bg-muted disabled:opacity-50"
+          >
+            同意全部 ({unprocessed.length})
+          </button>
+        </div>
+      )}
+      {drafts.map((d) => (
+        <DraftReadyCard
+          key={d.localId}
+          draft={d}
+          onOpen={(draft) => {
+            void onOpen(draft);
+          }}
+          onApprove={(draft) => {
+            void approveDraft(chatId, messageId, draft.localId);
+          }}
+        />
+      ))}
     </div>
   );
 }

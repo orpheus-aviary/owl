@@ -30,6 +30,17 @@ export interface DraftReadyCard {
   original_folder_id?: string | null;
   /** Flipped to true once the user clicks "open". */
   opened: boolean;
+  /** Flipped to true after a successful Tier-1 auto-merge ("同意"). */
+  approved: boolean;
+  /** True while an approve API call is in flight — disables the buttons. */
+  approving: boolean;
+  /**
+   * Surface-level error from a failed approve. Used to render a red
+   * indicator + retry button on the card; null when there's no error.
+   * Conflict detection (note edited externally since the AI drafted) lands
+   * here too so the user sees why the auto-merge was held back.
+   */
+  error: string | null;
 }
 
 export interface PreviewReadyCard {

@@ -214,6 +214,9 @@ function handleDraftReady({
         ? (data.original_folder_id as string | null)
         : undefined,
     opened: false,
+    approved: false,
+    approving: false,
+    error: null,
   };
   return {
     ...state,
