@@ -1,7 +1,7 @@
 import * as api from '@/lib/api';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ChatMessage, ChatTabState, DraftReadyCard } from './ai-store-types';
 import { useAiStore } from './ai-store';
+import type { ChatMessage, ChatTabState, DraftReadyCard } from './ai-store-types';
 
 // Stub window + fetch the same way editor-store.test does — store reads
 // hit `window.owlAPI?.daemonUrl` and fetch under the hood; we mock the
@@ -62,9 +62,7 @@ function seedStore(drafts: DraftReadyCard[]): void {
 }
 
 function getDraft(localId: string): DraftReadyCard | undefined {
-  return useAiStore
-    .getState()
-    .chats[0].messages[0].drafts.find((d) => d.localId === localId);
+  return useAiStore.getState().chats[0].messages[0].drafts.find((d) => d.localId === localId);
 }
 
 describe('approveDraft (P3.0.5 #2)', () => {
