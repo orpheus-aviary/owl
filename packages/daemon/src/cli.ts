@@ -2,6 +2,9 @@
 
 import { existsSync, mkdirSync } from 'node:fs';
 import {
+  IncompatibleDbError,
+  LATEST_KNOWN_VERSION,
+  MigrationRequiredError,
   createDatabase,
   createLogger,
   ensureDeviceId,
@@ -41,7 +44,36 @@ program
       name: 'daemon',
     });
 
-    const { db, sqlite } = createDatabase({ dbPath: paths.dbPath() });
+    // Write pid BEFORE opening the database so the migration runner's Layer 1
+    // daemon probe can see us the instant this process exists. If DB open
+    // fails, removePid() runs in the catch below.
+    writePid();
+
+    let db: ReturnType<typeof createDatabase>['db'];
+    let sqlite: ReturnType<typeof createDatabase>['sqlite'];
+    try {
+      ({ db, sqlite } = createDatabase({ dbPath: paths.dbPath() }));
+    } catch (err) {
+      removePid();
+      if (err instanceof MigrationRequiredError) {
+        logger.error({ dbPath: err.dbPath }, 'database requires migration');
+        console.error(`\n数据库需要迁移至 v${LATEST_KNOWN_VERSION}。`);
+        console.error('请运行 `just migrate`（GUI 内迁移 UI 将在后续版本提供）。\n');
+        process.exit(1);
+      }
+      if (err instanceof IncompatibleDbError) {
+        logger.error(
+          { dbVersion: err.dbVersion, maxSupported: err.maxSupported },
+          'incompatible database',
+        );
+        console.error(
+          `\n数据库来自更新版本（v${err.dbVersion}），本应用支持到 v${err.maxSupported}。`,
+        );
+        console.error('请升级应用。\n');
+        process.exit(1);
+      }
+      throw err;
+    }
 
     ensureSpecialNotes(db);
     const deviceId = ensureDeviceId(db);
@@ -80,13 +112,13 @@ program
         host: '127.0.0.1',
         port: config.daemon.port,
       });
-      writePid();
       logger.info({ address, pid: process.pid }, 'Daemon started');
       console.log(`Owl daemon running at ${address} (PID: ${process.pid})`);
       scheduler.start();
     } catch (err) {
       logger.error({ err }, 'Failed to start daemon');
       console.error('Failed to start daemon:', err);
+      removePid();
       process.exit(1);
     }
   });

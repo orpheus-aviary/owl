@@ -91,6 +91,14 @@ dev-daemon:
 stop-daemon:
     node packages/daemon/dist/cli.js stop-daemon
 
+# ─── Migration ──────────────────────────────────────────
+
+# Run the one-shot v0.2 -> v0.3 legacy database migration. Interactive —
+# prompts y/N before rebuilding. Requires daemon + GUI to be stopped.
+[group('migration')]
+migrate: build-core
+    node packages/core/scripts/migrate.mjs
+
 # ─── Clean ──────────────────────────────────────────────
 
 [group('clean')]

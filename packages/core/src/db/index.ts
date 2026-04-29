@@ -1,6 +1,13 @@
 import BetterSqlite3 from 'better-sqlite3';
 import { drizzle } from 'drizzle-orm/better-sqlite3';
-import { createFts } from './fts.js';
+import {
+  IncompatibleDbError,
+  LATEST_KNOWN_VERSION,
+  MigrationRequiredError,
+  applyForwardMigrations,
+  applyInitialSchema,
+  isSchemaEmpty,
+} from './migrate.js';
 import * as schema from './schema.js';
 
 export type OwlDatabase = ReturnType<typeof drizzle<typeof schema>>;
@@ -15,12 +22,17 @@ export interface DatabaseOptions {
 }
 
 /**
- * Initialize the owl database:
- * 1. Open SQLite with better-sqlite3
- * 2. Enable WAL mode + foreign keys
- * 3. Create tables from SQL DDL
- * 4. Create FTS5 virtual table + triggers
- * 5. Return drizzle ORM instance
+ * Open an owl database, dispatching on PRAGMA user_version:
+ *
+ *   v > LATEST_KNOWN_VERSION                  -> IncompatibleDbError (refuse)
+ *   v == 0 && schema empty (brand new file)   -> apply 0001_initial.sql
+ *   v == 0 && schema non-empty (pre-v0.3 db)  -> MigrationRequiredError
+ *   0 < v < LATEST                            -> apply forward migrations
+ *   v == LATEST                               -> open as-is
+ *
+ * Order matters: the v>LATEST check must come before v==0 handling, or a
+ * future database at user_version=2 would be misread as "brand new" when it
+ * isn't.
  */
 export function createDatabase(options: DatabaseOptions): {
   db: OwlDatabase;
@@ -38,83 +50,29 @@ export function createDatabase(options: DatabaseOptions): {
   }
   sqlite.pragma('busy_timeout = 5000');
 
-  createTables(sqlite);
-  migrateSchema(sqlite);
-  createFts(sqlite);
+  const v = sqlite.pragma('user_version', { simple: true }) as number;
+
+  if (v > LATEST_KNOWN_VERSION) {
+    sqlite.close();
+    throw new IncompatibleDbError(dbPath, v);
+  }
+
+  if (v === 0) {
+    if (isSchemaEmpty(sqlite)) {
+      applyInitialSchema(sqlite);
+    } else {
+      sqlite.close();
+      throw new MigrationRequiredError(dbPath);
+    }
+  } else if (v < LATEST_KNOWN_VERSION) {
+    applyForwardMigrations(sqlite, v, LATEST_KNOWN_VERSION);
+  }
+  // else v === LATEST_KNOWN_VERSION: open as-is
 
   const db = drizzle(sqlite, { schema });
 
   return { db, sqlite };
 }
-
-function createTables(sqlite: BetterSqlite3.Database): void {
-  sqlite.exec(DDL);
-}
-
-/**
- * Idempotent schema migrations for pre-existing databases. Each check does a
- * `PRAGMA table_info` lookup and adds any missing columns. Safe to run on
- * every startup.
- */
-function migrateSchema(sqlite: BetterSqlite3.Database): void {
-  const notesCols = sqlite.pragma('table_info(notes)') as { name: string }[];
-  const hasAutoDeleteAt = notesCols.some((c) => c.name === 'auto_delete_at');
-  if (!hasAutoDeleteAt) {
-    sqlite.prepare('ALTER TABLE notes ADD COLUMN auto_delete_at INTEGER').run();
-  }
-}
-
-const DDL = `
-  CREATE TABLE IF NOT EXISTS folders (
-    id          TEXT PRIMARY KEY,
-    name        TEXT NOT NULL,
-    parent_id   TEXT REFERENCES folders(id) ON DELETE SET NULL,
-    position    INTEGER NOT NULL DEFAULT 0,
-    created_at  INTEGER NOT NULL,
-    updated_at  INTEGER NOT NULL,
-    device_id   TEXT
-  );
-
-  CREATE TABLE IF NOT EXISTS notes (
-    id            TEXT PRIMARY KEY,
-    folder_id     TEXT REFERENCES folders(id) ON DELETE SET NULL,
-    trash_level   INTEGER NOT NULL DEFAULT 0,
-    created_at    INTEGER NOT NULL,
-    updated_at    INTEGER NOT NULL,
-    trashed_at    INTEGER,
-    auto_delete_at INTEGER,
-    device_id     TEXT,
-    content_hash  TEXT,
-    content       TEXT NOT NULL
-  );
-
-  CREATE TABLE IF NOT EXISTS tags (
-    id         TEXT PRIMARY KEY,
-    tag_type   TEXT NOT NULL,
-    tag_value  TEXT,
-    UNIQUE(tag_type, tag_value)
-  );
-
-  CREATE TABLE IF NOT EXISTS note_tags (
-    note_id  TEXT NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
-    tag_id   TEXT NOT NULL REFERENCES tags(id),
-    PRIMARY KEY (note_id, tag_id)
-  );
-
-  CREATE TABLE IF NOT EXISTS local_metadata (
-    key    TEXT PRIMARY KEY,
-    value  TEXT
-  );
-
-  CREATE TABLE IF NOT EXISTS reminder_status (
-    note_id   TEXT NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
-    tag_id    TEXT NOT NULL REFERENCES tags(id),
-    fire_at   INTEGER NOT NULL,
-    status    TEXT NOT NULL DEFAULT 'pending',
-    fired_at  INTEGER,
-    PRIMARY KEY (note_id, tag_id)
-  );
-`;
 
 export { schema };
 export { updateFtsTagsText } from './fts.js';

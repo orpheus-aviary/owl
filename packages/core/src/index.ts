@@ -2,6 +2,20 @@
 export { createDatabase, schema, updateFtsTagsText } from './db/index.js';
 export type { OwlDatabase, DatabaseOptions } from './db/index.js';
 export { SPECIAL_NOTES, ensureSpecialNotes, ensureDeviceId } from './db/special-notes.js';
+export {
+  LATEST_KNOWN_VERSION,
+  migrateLegacyDb,
+  MigrationRequiredError,
+  IncompatibleDbError,
+  MigrationBusyError,
+  SourceDbCorruptionError,
+  SchemaMismatchError,
+} from './db/migrate.js';
+export type {
+  MigrateOptions,
+  MigrateResult,
+  MigrationBusyReason,
+} from './db/migrate.js';
 
 // Config
 export { loadConfig, saveConfig, resolveLlmConfig, DEFAULT_CONFIG } from './config/index.js';

@@ -10,7 +10,7 @@
     }
   },
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && node scripts/copy-sql.mjs",
     "test": "node --test dist/**/*.test.js"
   },
   "dependencies": {
