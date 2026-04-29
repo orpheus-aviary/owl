@@ -21,15 +21,15 @@ check: lint typecheck
 # ─── Test ───────────────────────────────────────────────
 
 [group('test')]
-test:
+test: ensure-node-abi
     pnpm run test
 
 [group('test')]
-test-core:
+test-core: ensure-node-abi
     pnpm --filter @owl/core run test
 
 [group('test')]
-test-daemon:
+test-daemon: ensure-node-abi
     pnpm --filter @owl/daemon run test
 
 # ─── Build ──────────────────────────────────────────────
@@ -56,34 +56,78 @@ build-cli:
 
 # Produce the macOS arm64 dmg via electron-builder.
 # `pnpm package` internally runs build:deps + build:icons + electron-vite build
-# + install-app-deps (Electron-ABI rebuild). After packaging, plain `node`
-# cannot load better-sqlite3 until you `just unpackage`.
+# + install-app-deps (Electron-ABI rebuild). After packaging, better-sqlite3
+# is on Electron ABI — `just test` / `just migrate` will auto-switch it back
+# to Node ABI via ensure-node-abi.
 [group('build')]
-package:
+package: ensure-electron-abi
     pnpm --filter @owl/gui package
 
-# Restore the Node ABI build of better-sqlite3 so `just test` works again
-# after `just package`. Must rebuild the .pnpm store copy explicitly — pnpm
-# `rebuild` at workspace root only touches the hoisted copy, but workspace
-# packages resolve through `.pnpm/better-sqlite3@<ver>/`.
+# Escape hatch: force-rebuild better-sqlite3 for Node ABI. Normally you don't
+# need this — `just test` depends on ensure-node-abi which only rebuilds when
+# the current binding is NOT Node-loadable. Run this manually if the probe
+# ever lies (corrupt .node file, CI cache weirdness, etc.).
 [group('build')]
 unpackage:
     cd node_modules/.pnpm/better-sqlite3@*/node_modules/better-sqlite3 && pnpm run install
+
+# ─── ABI toggling ───────────────────────────────────────
+#
+# better-sqlite3 ships a single compiled .node per install, and its ABI
+# version must match the runtime that loads it. Node 22 is NODE_MODULE_VERSION
+# 137; Electron 34 is 132. `pnpm install` produces a Node-ABI binding; only
+# `electron-builder install-app-deps` (run from packages/gui, not repo root,
+# so it locates electron-builder.yml and actually triggers @electron/rebuild)
+# produces an Electron-ABI one. Switching between `just dev` (Electron) and
+# `just test` (Node) therefore requires a rebuild.
+#
+# The ensure-*-abi recipes probe by instantiating a real Database — merely
+# require()'ing the JS wrapper does NOT load the .node binding, so a looser
+# probe would always pass and silently skip the rebuild. Instantiation
+# succeeds → Node ABI active; instantiation fails with NODE_MODULE_VERSION
+# error → Electron ABI active. Measures truth on disk, not a stale marker.
+
+# Guarantee the current better-sqlite3 binding is Node-loadable. Prepended to
+# every test / migrate recipe. No-op (~200ms) when already on Node ABI.
+[private]
+ensure-node-abi:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if (cd packages/core && node -e "const D = require('better-sqlite3'); new D(':memory:').close();" 2>/dev/null); then
+        echo "[abi] better-sqlite3 already on Node ABI — skip"
+    else
+        echo "[abi] rebuilding better-sqlite3 for Node ABI..."
+        cd node_modules/.pnpm/better-sqlite3@*/node_modules/better-sqlite3 && pnpm run install
+    fi
+
+# Guarantee the current better-sqlite3 binding is Electron-loadable. Prepended
+# to every dev / package recipe. No-op when Node's probe fails (which we take
+# to mean Electron ABI is already in place).
+[private]
+ensure-electron-abi:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if (cd packages/core && node -e "const D = require('better-sqlite3'); new D(':memory:').close();" 2>/dev/null); then
+        echo "[abi] rebuilding better-sqlite3 for Electron ABI..."
+        cd packages/gui && pnpm exec electron-builder install-app-deps
+    else
+        echo "[abi] better-sqlite3 not Node-loadable — assume Electron ABI, skip"
+    fi
 
 # ─── Dev ────────────────────────────────────────────────
 
 # Stop daemon + rebuild core/daemon + launch GUI (safe default)
 [group('dev')]
-dev: stop-daemon build-core build-daemon
+dev: ensure-electron-abi stop-daemon build-core build-daemon
     pnpm run dev
 
 # Launch GUI without touching the daemon (faster HMR iteration)
 [group('dev')]
-dev-fast:
+dev-fast: ensure-electron-abi
     pnpm run dev
 
 [group('dev')]
-dev-daemon:
+dev-daemon: ensure-node-abi
     pnpm --filter @owl/daemon run dev
 
 # Stop the running daemon process.
@@ -96,7 +140,7 @@ stop-daemon:
 # Run the one-shot v0.2 -> v0.3 legacy database migration. Interactive —
 # prompts y/N before rebuilding. Requires daemon + GUI to be stopped.
 [group('migration')]
-migrate: build-core
+migrate: ensure-node-abi build-core
     node packages/core/scripts/migrate.mjs
 
 # ─── Clean ──────────────────────────────────────────────
