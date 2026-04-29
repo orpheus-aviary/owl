@@ -1,6 +1,6 @@
 # 开发进度
 
-## 当前状态：**v0.2.0 已发版**（2026-04-29，macOS arm64 dmg on GitHub Releases）；下一阶段 **P3.2 CLI**
+## 当前状态：**v0.2.0 已发版**（2026-04-29）；P3.2-a migration runner **设计已提交（v5）**，待实施
 
 ## 仓库迁移（2026-04-20）
 
@@ -152,10 +152,29 @@ P3 完整规划见 `docs/plans/2026-04-20-p3-plan.md`。
 
 ### 下一阶段：P3.2 — CLI 核心开发
 
-详见 `docs/plans/2026-04-20-p3-plan.md` §5。交付 `@orpheus-aviary/owl-cli` 通过 `npm i -g` 发布，包含：
+详见 `docs/plans/2026-04-20-p3-plan.md` §5。P3.2 切成 4 个独立子提交：
+
+| 子阶段 | 范围 | 状态 |
+|---|---|---|
+| **P3.2-a** migration runner | `user_version` 分派 + `0001_initial.sql` + `migrateLegacyDb` rebuild + `just migrate` + daemon 拒启动 + 5 种 error + 14 测试场景 | **设计 v5 已提交** (`a313c45`)，实施待启动 |
+| P3.2-b GUI modal | `whenReady` precheck + MigrationDialog，复用 `migrateLegacyDb` | 未开始 |
+| P3.2-c CLI 核心 | apps/cli + commander + daemon-detect + HTTP/direct 双模式 + `owl migrate` + tsup bundle + publishable manifest | 未开始 |
+| P3.2-d SSE reverse channel | `/events` + `open_note` 事件 + GUI 订阅 + `owl open` | 未开始 |
+
+P3.2-a 设计文档：`docs/plans/2026-04-29-p3-2-a-migration-runner-design.md`（v1→v5 五轮审查，位于 800 行）。关键技术点：
+
+- `locking_mode=EXCLUSIVE` + 触发读作为主安全边界（覆盖到 file swap 前一刻）；三层锁（pid/flock/sqlite）
+- 单 `old` 连接 `ATTACH new AS dest`，`main → dest` 显式列 COPY
+- FTS 先 `delete-all` 再 set-based 重建，严格复现业务层 `hashTags.join(' ')` 格式
+- `main.foreign_key_check` 预检 + `dest.foreign_key_check` 纵深（schema-qualified pragma 语法）
+- 毫秒 backup ts + 嵌套 try/finally + 自有 probeDaemonPid 避免 core↔daemon 循环
+- daemon `writePid()` 时序提前到 `createDatabase` 之前（同一 commit 内）
+
+实施前必读：`CLAUDE.md`（代码风格）、`docs/plans/2026-04-29-p3-2-a-migration-runner-design.md`（本设计）、`docs/plans/2026-04-20-p3-plan.md` §5.5（上级规划）。
+
+后续（未开始）：
 - commander 命令集（search / get / create / edit / memo / todo / remind / open / doctor）
 - daemon 检测 + HTTP/direct 双模式
-- Schema migration rebuild（`user_version` 单一 truth source，一次性迁移分支带 backup）
 - `open_note_in_gui` SSE 反向通道
 
 ### P2-9 手动测试清单
