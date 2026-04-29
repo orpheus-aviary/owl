@@ -297,6 +297,39 @@ describe('migrate — migrateLegacyDb happy path', () => {
     assert.ok(!existsSync(`${dbPath}.old-pre-v0.3`));
     assert.ok(!existsSync(`${dbPath}.migrate.lock`));
   });
+
+  // T16: onProgress emits 4 phases in strict order during happy path rebuild
+  it('T16: emits backup → copy → fts-rebuild → swap in order', async () => {
+    const dbPath = join(tmp, 't16.db');
+    seedLegacyV02Db(dbPath);
+    seedRichLegacyData(dbPath);
+
+    const phases: string[] = [];
+    const result = await migrateLegacyDb(dbPath, {
+      onProgress: (phase) => phases.push(phase),
+    });
+
+    assert.ok(!result.alreadyMigrated);
+    assert.deepStrictEqual(phases, ['backup', 'copy', 'fts-rebuild', 'swap']);
+  });
+
+  // T17: alreadyMigrated short-circuit emits no phases
+  it('T17: already-migrated short-circuit does not emit phases', async () => {
+    const dbPath = join(tmp, 't17.db');
+    seedLegacyV02Db(dbPath);
+    seedRichLegacyData(dbPath);
+
+    // First run migrates; don't observe phases here.
+    await migrateLegacyDb(dbPath);
+
+    // Second run should short-circuit to alreadyMigrated and skip emits.
+    const phases: string[] = [];
+    const result = await migrateLegacyDb(dbPath, {
+      onProgress: (phase) => phases.push(phase),
+    });
+    assert.equal(result.alreadyMigrated, true);
+    assert.deepStrictEqual(phases, []);
+  });
 });
 
 describe('migrate — lock layers and error paths', () => {

@@ -64,24 +64,30 @@ async function waitForDaemonReady({ timeoutMs }: { timeoutMs: number }): Promise
 }
 
 /**
- * Ensure a daemon is reachable. If already running, do nothing and mark the
- * daemon as NOT owned by this GUI. If not running, spawn and wait for ready.
+ * Ensure a daemon is reachable. If already running, mark as NOT owned by
+ * this GUI and return true. Otherwise spawn + wait, returning true iff the
+ * spawned daemon became reachable.
+ *
+ * The boolean is consumed by the MigrationDialog flow: a false return after
+ * migration success means we should NOT destroy the migration window — the
+ * renderer needs to show the daemon-failed banner instead.
  */
-export async function ensureDaemonRunning(): Promise<void> {
+export async function ensureDaemonRunning(): Promise<boolean> {
   if (await checkDaemon()) {
     daemonStartedByGui = false;
-    return;
+    return true;
   }
   const spawned = spawnDaemon();
   if (!spawned) {
     daemonStartedByGui = false;
-    return;
+    return false;
   }
   const ready = await waitForDaemonReady({ timeoutMs: 10_000 });
   daemonStartedByGui = ready;
   if (!ready) {
     console.error('Daemon spawn returned but /status never responded');
   }
+  return ready;
 }
 
 /** Get the daemon API base URL. */

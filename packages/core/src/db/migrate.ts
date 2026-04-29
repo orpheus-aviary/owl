@@ -134,14 +134,20 @@ export class SchemaMismatchError extends Error {
 
 // ----- Public API ------------------------------------------------------------
 
+export type MigratePhase = 'backup' | 'copy' | 'fts-rebuild' | 'swap';
+
 export interface MigrateOptions {
   /**
-   * Progress reporter reserved for the GUI MigrationDialog (P3.2-b). NOT
-   * WIRED at 0.3.0 — accepting the parameter now so adding progress later
-   * doesn't break any caller's signature. Implementations in 0.3.0 MUST NOT
-   * call it; treat it as a sealed future hook.
+   * Progress reporter for the GUI MigrationDialog. Emitted at 4 phase
+   * boundaries in order: 'backup' -> 'copy' -> 'fts-rebuild' -> 'swap'.
+   * Every call is best-effort; exceptions thrown by the callback are
+   * swallowed so renderer-side IPC drops don't abort migration. The
+   * runtime yields (setImmediate) after each emit to let the IPC queue
+   * flush to the renderer (better-sqlite3 is synchronous).
+   *
+   * alreadyMigrated short-circuit does NOT emit any phase.
    */
-  onProgress?: (phase: 'backup' | 'copy' | 'fts-rebuild' | 'swap', pct?: number) => void;
+  onProgress?: (phase: MigratePhase) => void;
 }
 
 export interface MigrateResult {
@@ -263,6 +269,23 @@ function verifyExpectedColumns(sqlite: BetterSqlite3.Database, dbPath: string): 
   }
 }
 
+// ----- Progress emit --------------------------------------------------------
+
+/**
+ * Best-effort emit to the GUI MigrationDialog. Exceptions thrown by the
+ * callback are swallowed (IPC drops shouldn't abort migration). `setImmediate`
+ * yield flushes the IPC queue — better-sqlite3 is synchronous, without the
+ * yield the 4 phases would arrive batched at the renderer after swap.
+ */
+async function emitPhase(opts: MigrateOptions | undefined, phase: MigratePhase): Promise<void> {
+  try {
+    opts?.onProgress?.(phase);
+  } catch {
+    /* best-effort: renderer-side exception must not abort migration */
+  }
+  await new Promise<void>((resolve) => setImmediate(resolve));
+}
+
 // ----- migrateLegacyDb ------------------------------------------------------
 
 /**
@@ -302,7 +325,7 @@ const FTS_REBUILD =
  */
 export async function migrateLegacyDb(
   dbPath: string,
-  _options?: MigrateOptions,
+  options?: MigrateOptions,
 ): Promise<MigrateResult> {
   // ----- Idempotency short-circuit ------------------------------------------
   // Reading user_version up-front lets us skip the rebuild entirely when the
@@ -409,6 +432,7 @@ export async function migrateLegacyDb(
       }
 
       // Online backup (consistent snapshot). ms-precision ts avoids same-second collision.
+      await emitPhase(options, 'backup');
       const ts = Date.now();
       const backupPath = `${dbPath}.v0.2-backup-${ts}`;
       await backupDatabase(old, backupPath);
@@ -432,6 +456,7 @@ export async function migrateLegacyDb(
       txStarted = true;
 
       // Copy rows FK-safe. auto_delete_at is projected NULL when source lacks it.
+      await emitPhase(options, 'copy');
       const autoProj = hasAutoDeleteAt ? 'auto_delete_at' : 'NULL';
       for (const stmt of COPY_TEMPLATE) {
         old.prepare(stmt.replace('$AUTO', autoProj)).run();
@@ -444,6 +469,7 @@ export async function migrateLegacyDb(
       }
 
       // FTS rebuild: wipe any posting left by the INSERT trigger, then set-based.
+      await emitPhase(options, 'fts-rebuild');
       old.prepare(FTS_DELETE_ALL).run();
       old.prepare(FTS_REBUILD).run();
 
@@ -460,6 +486,7 @@ export async function migrateLegacyDb(
 
       // ----- Phase C — atomic file swap ----------------------------------
       old.close();
+      await emitPhase(options, 'swap');
 
       const preSwapPath = `${dbPath}.old-pre-v0.3`;
       try {

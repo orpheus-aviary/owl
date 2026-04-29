@@ -62,12 +62,6 @@ export interface FolderReorderItem {
 
 // ─── API Client ─────────────────────────────────────────
 
-declare global {
-  interface Window {
-    owlAPI: { daemonUrl: string };
-  }
-}
-
 /**
  * Resolve the daemon base URL. Exported so `sse-client` callers can
  * compose the `/ai/chat` URL without re-implementing this lookup.

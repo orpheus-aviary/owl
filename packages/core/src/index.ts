@@ -13,9 +13,12 @@ export {
 } from './db/migrate.js';
 export type {
   MigrateOptions,
+  MigratePhase,
   MigrateResult,
   MigrationBusyReason,
 } from './db/migrate.js';
+export { probeStartupState } from './db/probe.js';
+export type { StartupProbeResult } from './db/probe.js';
 
 // Config
 export { loadConfig, saveConfig, resolveLlmConfig, DEFAULT_CONFIG } from './config/index.js';

@@ -1,6 +1,6 @@
 # 开发进度
 
-## 当前状态：**P3.2-b 设计已定**（2026-04-30），进入实施阶段
+## 当前状态：**P3.2-b MigrationDialog 已实施**（2026-04-30），271/271 测试 + 真库 smoke 通过，等待 commit
 
 ## 仓库迁移（2026-04-20）
 
@@ -157,7 +157,7 @@ P3 完整规划见 `docs/plans/2026-04-20-p3-plan.md`。
 | 子阶段 | 范围 | 状态 |
 |---|---|---|
 | **P3.2-a** migration runner | `user_version` 分派 + `0001_initial.sql` + `migrateLegacyDb` rebuild + `just migrate` + daemon 拒启动 + 5 种 error + 15 测试场景 | **已 ship**（commit `38e9243`，245/245 测试 + 真库 smoke 通过） |
-| P3.2-b GUI modal | `whenReady` precheck + MigrationDialog（4 屏 confirm/running/success/error），复用 `migrateLegacyDb`；把 P3.2-a 的 sealed `onProgress` 升级为实时 emit；9 条 review issue 全部修复 | **设计完成**（`docs/plans/2026-04-30-p3-2-b-migration-dialog-design.md`，目标 +26 测试 / 总 271） |
+| P3.2-b GUI modal | `whenReady` precheck + MigrationDialog（4 屏 confirm/running/success/error），复用 `migrateLegacyDb`；把 P3.2-a 的 sealed `onProgress` 升级为实时 emit；9 条 review issue 全部修复 | **已 ship**（2026-04-30，271/271 测试 + 真库 smoke 通过） |
 | P3.2-c CLI 核心 | apps/cli + commander + daemon-detect + HTTP/direct 双模式 + `owl migrate` + tsup bundle + publishable manifest | 未开始 |
 | P3.2-d SSE reverse channel | `/events` + `open_note` 事件 + GUI 订阅 + `owl open` | 未开始 |
 
