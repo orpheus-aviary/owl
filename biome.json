@@ -33,6 +33,6 @@
     }
   },
   "files": {
-    "ignore": ["node_modules", "dist", "out", "*.db"]
+    "ignore": ["node_modules", "dist", "out", "release", "*.db"]
   }
 }

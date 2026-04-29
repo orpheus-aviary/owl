@@ -1,0 +1,30 @@
+appId: com.orpheusaviary.owl
+productName: Owl
+directories:
+  output: release
+  buildResources: resources
+
+files:
+  - out/**
+  - package.json
+  - '!**/*.{ts,map,md,flow}'
+  - '!**/node_modules/*/{test,tests,__tests__,example,examples,doc,docs}/**'
+# Workspace deps (@owl/core, @owl/daemon) + their transitive deps
+# are picked up via packages/gui/package.json dependencies (path A in §2.4).
+
+asar: false
+
+mac:
+  target:
+    - target: dmg
+      arch:
+        - arm64
+  category: public.app-category.productivity
+  icon: resources/icon.icns
+  hardenedRuntime: false
+  gatekeeperAssess: false
+  identity: null
+
+dmg:
+  artifactName: Owl-${version}-${arch}.${ext}
+  writeUpdateInfo: false

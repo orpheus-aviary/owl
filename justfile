@@ -54,6 +54,20 @@ build-gui:
 build-cli:
     pnpm --filter @owl/cli run build
 
+# Produce the macOS arm64 dmg via electron-builder.
+# `pnpm package` internally runs build:deps + build:icons + electron-vite build
+# + install-app-deps (Electron-ABI rebuild). After packaging, plain `node`
+# cannot load better-sqlite3 until you `just unpackage`.
+[group('build')]
+package:
+    pnpm --filter @owl/gui package
+
+# Restore the Node ABI build of better-sqlite3 so `just test` works again
+# after `just package`.
+[group('build')]
+unpackage:
+    pnpm --filter @owl/core --filter @owl/daemon rebuild better-sqlite3
+
 # ─── Dev ────────────────────────────────────────────────
 
 # Stop daemon + rebuild core/daemon + launch GUI (safe default)

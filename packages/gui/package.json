@@ -1,6 +1,6 @@
 {
   "name": "@owl/gui",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "main": "out/main/index.js",
@@ -8,7 +8,10 @@
     "dev": "electron-vite dev",
     "build": "electron-vite build",
     "preview": "electron-vite preview",
-    "test": "vitest run"
+    "test": "vitest run",
+    "build:icons": "node scripts/build-icons.mjs",
+    "build:deps": "pnpm -F @owl/core build && pnpm -F @owl/daemon build",
+    "package": "pnpm build:deps && pnpm build:icons && electron-vite build && electron-builder install-app-deps && electron-builder --mac --arm64 --config electron-builder.yml"
   },
   "dependencies": {
     "@codemirror/autocomplete": "^6.20.1",
@@ -54,6 +57,7 @@
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^4.3.0",
     "electron": "^34.0.0",
+    "electron-builder": "^25.1.8",
     "electron-vite": "^5.0.0",
     "tailwindcss": "^4.0.0",
     "typescript": "^5.7.0",

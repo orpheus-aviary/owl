@@ -2,9 +2,10 @@ import { join } from 'node:path';
 import { is } from '@electron-toolkit/utils';
 import { loadConfig } from '@owl/core';
 import { BrowserWindow, app, shell } from 'electron';
-import { checkDaemon, spawnDaemon } from './daemon.js';
+import { ensureDaemonRunning, stopDaemonGracefully } from './daemon.js';
 
 let mainWindow: BrowserWindow | null = null;
+let isQuitting = false;
 
 function createWindow(): void {
   // Read window size from config so user customisations take effect next launch.
@@ -34,6 +35,14 @@ function createWindow(): void {
     mainWindow?.show();
   });
 
+  // Red-cross close: hide on macOS so dock icon + renderer state stay alive.
+  mainWindow.on('close', (event) => {
+    if (!isQuitting && process.platform === 'darwin') {
+      event.preventDefault();
+      mainWindow?.hide();
+    }
+  });
+
   // Open external links in system browser
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url);
@@ -57,21 +66,16 @@ function createWindow(): void {
 }
 
 app.whenReady().then(async () => {
-  // Auto-start daemon if not running
-  const running = await checkDaemon();
-  if (!running) {
-    spawnDaemon();
-    // Wait for daemon to be ready
-    for (let i = 0; i < 10; i++) {
-      await new Promise((r) => setTimeout(r, 500));
-      if (await checkDaemon()) break;
-    }
-  }
-
+  await ensureDaemonRunning();
   createWindow();
 
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    const existing = BrowserWindow.getAllWindows();
+    if (existing.length > 0) {
+      existing[0].show();
+    } else {
+      createWindow();
+    }
   });
 });
 
@@ -79,4 +83,17 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
     app.quit();
   }
+  // macOS: keep app alive in dock; red-cross only hides the window.
+});
+
+app.on('before-quit', async (event) => {
+  if (isQuitting) return;
+  event.preventDefault();
+  isQuitting = true;
+  try {
+    await stopDaemonGracefully();
+  } catch (err) {
+    console.error('Error stopping daemon on quit:', err);
+  }
+  app.quit();
 });
