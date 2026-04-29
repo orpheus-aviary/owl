@@ -1,6 +1,6 @@
 # 开发进度
 
-## 当前状态：**P3.1 打包已跑通（smoke 1/2/3 绿，未 tag）**；下一步 `v0.2.0` tag + `gh release create`
+## 当前状态：**v0.2.0 已发版**（2026-04-29，macOS arm64 dmg on GitHub Releases）；下一阶段 **P3.2 CLI**
 
 ## 仓库迁移（2026-04-20）
 
@@ -110,6 +110,12 @@ P3 完整规划见 `docs/plans/2026-04-20-p3-plan.md`。
 
 ## P3.1 — GUI `0.2.0` 首发（2026-04-29，smoke 1/2/3 绿，未 tag）
 
+## P3.1 — GUI `0.2.0` 首发（2026-04-29 发版 ✅）
+
+**Release**: https://github.com/orpheus-aviary/owl/releases/tag/v0.2.0
+**Commits**（main）: `ef0c989` fix(daemon) → `31e5299` feat(gui) → `bbf600e` docs
+**Assets**: `Owl-0.2.0-arm64.dmg`（129 MB）+ `.sha256`（`fc95bad4…d2c236`）
+
 基线：228/228 测试（core 84 + daemon 95 + gui 49）。设计文档 `docs/plans/2026-04-28-p3-1-gui-0.2.0-release-design.md`。
 
 | 项 | 内容 | 备注 |
@@ -140,9 +146,17 @@ P3 完整规划见 `docs/plans/2026-04-20-p3-plan.md`。
 
 ### 还没做
 
-- [ ] 用户手动验收（visual red-cross 行为、`#真实` 数据完整性、拖 `/Applications` 右键打开首次启动）
-- [ ] `gh release create v0.2.0` 挂 dmg + SHA256
-- [ ] commit batch（config + code + docs 分开还是合并待讨论）
+- [ ] 下一个版本（0.2.1 / 0.3.0）决定是否恢复 asar（`pnpm deploy` 路径 B）
+- [ ] Windows / Linux + GitHub Actions CI matrix
+- [ ] 正式 codesign / notarize（Apple Developer 依赖）
+
+### 下一阶段：P3.2 — CLI 核心开发
+
+详见 `docs/plans/2026-04-20-p3-plan.md` §5。交付 `@orpheus-aviary/owl-cli` 通过 `npm i -g` 发布，包含：
+- commander 命令集（search / get / create / edit / memo / todo / remind / open / doctor）
+- daemon 检测 + HTTP/direct 双模式
+- Schema migration rebuild（`user_version` 单一 truth source，一次性迁移分支带 backup）
+- `open_note_in_gui` SSE 反向通道
 
 ### P2-9 手动测试清单
 

@@ -63,10 +63,12 @@ package:
     pnpm --filter @owl/gui package
 
 # Restore the Node ABI build of better-sqlite3 so `just test` works again
-# after `just package`.
+# after `just package`. Must rebuild the .pnpm store copy explicitly — pnpm
+# `rebuild` at workspace root only touches the hoisted copy, but workspace
+# packages resolve through `.pnpm/better-sqlite3@<ver>/`.
 [group('build')]
 unpackage:
-    pnpm --filter @owl/core --filter @owl/daemon rebuild better-sqlite3
+    cd node_modules/.pnpm/better-sqlite3@*/node_modules/better-sqlite3 && pnpm run install
 
 # ─── Dev ────────────────────────────────────────────────
 
