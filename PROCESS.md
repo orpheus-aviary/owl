@@ -1,6 +1,6 @@
 # 开发进度
 
-## 当前状态：**P3.0.5 完成（7/7 + bus 重构）**；下一阶段 P3.1（GUI `0.2.0` 首发，electron-builder + GitHub Releases）
+## 当前状态：**P3.1 打包已跑通（smoke 1/2/3 绿，未 tag）**；下一步 `v0.2.0` tag + `gh release create`
 
 ## 仓库迁移（2026-04-20）
 
@@ -108,7 +108,41 @@ P3 完整规划见 `docs/plans/2026-04-20-p3-plan.md`。
   - `#11` 同层级笔记拖拽排序（经查不是 regression 而是缺失功能 — 笔记无 `position` 字段）→ 推迟到 P3.4，需 schema + daemon API + GUI gap drop target 设计
   - `#1` 图片粘贴 + 缓存目录 / `#5` VSCode 风格 tab / `#8` FIM 补全：原本就在 P3.4
 
-### 下一步：P3.1 — GUI `0.2.0` 首发（electron-builder + GitHub Releases，详见 `docs/plans/2026-04-20-p3-plan.md` §4）
+## P3.1 — GUI `0.2.0` 首发（2026-04-29，smoke 1/2/3 绿，未 tag）
+
+基线：228/228 测试（core 84 + daemon 95 + gui 49）。设计文档 `docs/plans/2026-04-28-p3-1-gui-0.2.0-release-design.md`。
+
+| 项 | 内容 | 备注 |
+|---|---|---|
+| 配置 | `packages/gui/electron-builder.yml` + `resources/owl-logo-original.png` + `scripts/build-icons.mjs`（sips + iconutil）+ `resources/.gitignore`（`icon.icns`） | 无新 deps（macOS 自带工具） |
+| 主进程 | `daemon.ts` 改 Electron-as-Node spawn（`process.execPath` + `ELECTRON_RUN_AS_NODE=1` + `...process.env`）+ `daemonStartedByGui` 标记 + `stopDaemonGracefully`（SIGTERM → 3s → SIGKILL，仅自己拥有时执行） | 外部 daemon 不会被 GUI 退出误杀 |
+| 退出语义 | `index.ts` 改单门 Cmd+Q：红叉 `hide()`（保 dock + renderer state）、`activate` 优先 show 已有窗口、`before-quit` await stopDaemonGracefully | macOS 标准交互 |
+| daemon CLI | `packages/daemon/src/cli.ts`：`program.parse(process.argv, { from: 'node' })`。Electron-as-Node 下 `process.versions.electron` 为真 → commander 默认 `from: 'electron'` 只 strip argv[0] → script path 被误读为 subcommand → daemon 死在 "unknown command" | 一行 fix，必需 |
+| pnpm 兼容 | 根 `.npmrc: node-linker=hoisted` | workspace symlink + electron-builder 打包必备 |
+| asar 策略 | `asar: false`（妥协） | pnpm workspace symlink + electron-builder asarUnpack 过滤器冲突（`packages/core/dist/*` 不在 `packages/gui/` 下）。代价：dmg 大一点、冷启动略慢。0.2.1 可用 `pnpm deploy` 改回 |
+| postinstall | `electron-builder install-app-deps` **不设 postinstall**，挪到 `pnpm package` 脚本内 | 若 postinstall 跑 → `.pnpm/better-sqlite3` rebuild 为 Electron ABI 132 → 所有 `just test` 段错误 |
+| scripts | `packages/gui/package.json` `version=0.2.0` + `package` / `build:deps` / `build:icons` / postinstall 调整 | — |
+| justfile | `just package` / `just unpackage`（后者 rebuild better-sqlite3 回 Node ABI，便于 package 后再跑 test） | — |
+| README | 根目录新增极简 README（状态 + 中文下载说明「右键→打开」绕 Gatekeeper + 数据目录 + 开发命令） | — |
+| P3 主计划同步 | `docs/plans/2026-04-20-p3-plan.md` §2.2 daemon 归属扩展、§4 P3.1 技术要点完全重写、§7 加 tray 条目、§9.3 加 tag 策略分歧 | 设计文档 §7 要求的落地 |
+
+### 实测 smoke 结果
+
+- **Smoke 1（daemon 在 packaged app 内能否 spawn）**✓：Owl.app 启动 → `ensureDaemonRunning` → Electron-as-Node spawn → `daemon.pid=91006`、`/status` 返回 uptime 9.7s、`logs/daemon.log.30` 写入"Daemon started" / "Scheduler starting" / "Reminder scheduled"
+- **Smoke 2（better-sqlite3 + FTS + CRUD）**✓：`GET /notes?limit=1` 返回真实数据；`POST /notes` 新建；`POST /notes/:id/permanent-delete` 永久删除测试笔记（已清理干净，`#真实` 笔记未动）
+- **Smoke 3a（Cmd+Q 停自己拉起的 daemon）**✓：`kill $APP_PID` → `before-quit` 触发 `stopDaemonGracefully` → daemon 收到 SIGTERM → "Daemon shutting down..." + "Reminder scheduler stopped" + `daemon.pid` 被清
+- **Smoke 3b（红叉隐藏）**：osascript 无 Accessibility 权限无法自动 click；逻辑已代码审查（`win.on('close')` + `event.preventDefault()` + `hide()`），留作用户手动验证
+- **Smoke 3c（外部 daemon 不被 GUI 退出误杀）**✓：先手动 `node packages/daemon/dist/cli.js daemon` 起 pid 45875 → 启 Owl.app → Owl 走 checkDaemon 命中、不 spawn 新 daemon（`daemonStartedByGui=false`）→ kill Owl.app → 外部 daemon 仍 alive、pid 未变、`/status` uptime 增加；最后手动 SIGTERM 清理外部 daemon
+
+### 产物
+
+`packages/gui/release/Owl-0.2.0-arm64.dmg` ≈ 129 MB（asar 关闭）。
+
+### 还没做
+
+- [ ] 用户手动验收（visual red-cross 行为、`#真实` 数据完整性、拖 `/Applications` 右键打开首次启动）
+- [ ] `gh release create v0.2.0` 挂 dmg + SHA256
+- [ ] commit batch（config + code + docs 分开还是合并待讨论）
 
 ### P2-9 手动测试清单
 
