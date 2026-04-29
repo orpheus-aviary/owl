@@ -122,4 +122,8 @@ program
     }
   });
 
-program.parse();
+// `from: 'node'` is explicit so the CLI works both from plain node and from
+// Electron-as-Node (ELECTRON_RUN_AS_NODE=1). Without this, commander detects
+// `process.versions.electron` and only strips argv[0], misreading the script
+// path as the first subcommand.
+program.parse(process.argv, { from: 'node' });
