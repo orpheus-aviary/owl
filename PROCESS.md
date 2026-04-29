@@ -1,6 +1,6 @@
 # 开发进度
 
-## 当前状态：**P3.2-b MigrationDialog 已实施**（2026-04-30），271/271 测试 + 真库 smoke 通过，等待 commit
+## 当前状态：**P3.2-b MigrationDialog 已 ship**（2026-04-30，commit `e302838`，271/271 测试 + 真库 smoke S1-S8 通过）。下一步：P3.2-c CLI 核心 或 P3.2-d SSE reverse channel。
 
 ## 仓库迁移（2026-04-20）
 
@@ -186,7 +186,7 @@ P3 完整规划见 `docs/plans/2026-04-20-p3-plan.md`。
 关键设计决策兑现：
 - **幂等保护**（增量 #1）：`migrateLegacyDb` 入口 peek `user_version`，v=LATEST 返回 `{ alreadyMigrated: true }`（T15）
 - **Forward migration 骨架**（增量 #2）：`applyForwardMigrations` 空实现 + 文件头列 5 项未来 TODO（事务/JS migration/destructive flag/user_version bookkeeping/锁复用）
-- **onProgress 签名占位**（增量 #3）：`MigrateOptions.onProgress` 签名已定，0.3.0 sealed hook（P3.2-b 补）
+- **onProgress 签名占位**（增量 #3）：`MigrateOptions.onProgress` 签名已定，0.3.0 sealed hook（P3.2-b 已接入 4 phase 实时 emit，并去掉原 `pct?` 占位）
 - **`backupDatabase` 抽出**（增量 #4）：独立工具模块，迁移逻辑调它 — 为未来 `owl export` / 定期备份零成本复用
 - `0001_initial.sql` **不**内嵌 `PRAGMA user_version`（runner 统一 stamp）
 - `probeDaemonPid` 自有实现，避开 `core↔daemon` 循环
@@ -201,6 +201,66 @@ P3 完整规划见 `docs/plans/2026-04-20-p3-plan.md`。
 - `pnpm run lint`：零错误，13 warnings（+1 新：`migrateLegacyDb` cognitive complexity，Phase A/B/C 结构固有）
 - `pnpm run typecheck`：全 workspace 零错误
 - `pnpm run test`：245/245 pass（core 101 + daemon 95 + gui 49）
+
+---
+
+### P3.2-b 实施详情（2026-04-30，commit `e302838`）
+
+基线：245/245（P3.2-a 后）。
+现在：**271/271 测试**（core 108 + daemon 95 + gui 68）— core +7（migrate T16/T17 + probe PR1-PR5），gui +19（main 新增 project 12：precheck P1-P5 + ipc E1-E7；renderer +7：MigrationDialog M1-M7）。
+
+文件改动（30 files，+2146/-432）：
+
+| 文件 | 变动 |
+|---|---|
+| `packages/core/src/db/migrate.ts` | [改] `onProgress` 从 sealed 升级为 4 phase 实时 emit（backup → copy → fts-rebuild → swap，每次 `setImmediate` yield + try/catch 包住）；去掉签名里的 `pct?` 占位；新增 `MigratePhase` 类型导出 |
+| `packages/core/src/db/migrate.test.ts` | [改] +T16（4 phase 有序 emit）+ T17（alreadyMigrated 不 emit） |
+| `packages/core/src/db/probe.ts` | [新] `probeStartupState(dbPath)` 只读探测 `user_version` + schema 非空，`readonly: true` + `fileMustExist: true` 不创建 WAL/SHM、不 stamp |
+| `packages/core/src/db/probe.test.ts` | [新] PR1-PR5：not-found / v=LATEST / v=0+空 / v=0+非空 / v=99 |
+| `packages/core/src/index.ts` | [改] barrel 补 `probeStartupState` + `StartupProbeResult` + `MigratePhase` |
+| `packages/gui/src/main/window.ts` | [新] `createWindow` 从 `main/index.ts` 抽出；接受 `{startupMode?, onClose?}`；startupMode 通过 `webPreferences.additionalArguments: ['--startup-mode=<json>']` 透传给 preload |
+| `packages/gui/src/main/migration-precheck.ts` | [新] `runMigrationPrecheck(dbPath)` 纯映射，调 `@owl/core` 的 `probeStartupState` 产出 3 态 `StartupMode`（normal / migrate-required / incompatible）；`@owl/gui` 不直接 import better-sqlite3 |
+| `packages/gui/src/main/migration-precheck.test.ts` | [新] P1-P5：mock probeStartupState 覆盖纯映射分支 |
+| `packages/gui/src/main/migration-ipc.ts` | [新] `registerMigrationIpc(win, dbPath, createPostMigrationWindow)` — 5 IPC：`migration:start`（invoke）/ `:progress` / `:daemon-failed`（send）/ `:done` / `:quit`；`mapMigrationError` 命名导出为纯函数，独立可测；`:done` 成功路径 `win.destroy() + createPostMigrationWindow()`（避免 argv 污染造成 preload 死循环） |
+| `packages/gui/src/main/migration-ipc.test.ts` | [新] E1-E7：5 error class + 通用 Error + 非 Error 映射 |
+| `packages/gui/src/main/daemon.ts` | [改] `ensureDaemonRunning` 返回类型 `Promise<void>` → `Promise<boolean>`；失败时 `migration:done` 推 `daemon-failed` 事件，窗口不 destroy |
+| `packages/gui/src/main/index.ts` | [改] `whenReady` 先跑 precheck；normal 分支 daemon + createWindow；其它分支 createWindow({startupMode}) + registerMigrationIpc；`onClose` 抽到顶层函数供两条路径共享 |
+| `packages/gui/src/preload/index.ts` | [改] 解析 `process.argv` 中 `--startup-mode=<json>`；暴露 `startupMode` + `migration.{start, onProgress, onDaemonFailed, done, quit}`；malformed JSON 兜底 normal |
+| `packages/gui/src/renderer/src/App.tsx` | [改] 顶层分流：mode ≠ 'normal' 渲染 `MigrationDialog`，否则 `MainApp`；无 Router |
+| `packages/gui/src/renderer/src/MainApp.tsx` | [新] 原 App body 整体搬来（HashRouter + DndContext + 侧栏 + Routes 7 页），仅把函数名改为 `MainApp` |
+| `packages/gui/src/renderer/src/pages/MigrationDialog/` | [新] 4 屏状态机：`index.tsx`（container）+ `ConfirmScreen` / `RunningScreen`（4 步 lucide 图标）/ `SuccessScreen`（含 daemon-failed banner 分支）/ `ErrorScreen` + `errorCopy.ts`（reason → title/body/showRetry 查表）+ `MigrationDialog.test.tsx`（M1-M7） |
+| `packages/gui/src/renderer/src/types/owl-api.d.ts` | [新] `window.owlAPI` 全量类型声明；替换 `lib/api.ts:67` 的局部 `declare global` |
+| `packages/gui/src/renderer/src/test-setup.ts` | [新] renderer vitest setupFiles：默认 mock `window.owlAPI` + `afterEach(cleanup)`（@testing-library/react@16 不自动清理） |
+| `packages/gui/src/renderer/src/lib/api.ts` | [改] 删掉原局部的 `declare global { interface Window { owlAPI: { daemonUrl: string } } }` |
+| `packages/gui/vitest.config.ts` | [改] 改成 `projects`：renderer（jsdom + `@vitejs/plugin-react` + `react`/`react-dom` 显式 alias + `dedupe` + `@testing-library` inline）/ main（node） |
+| `packages/gui/package.json` | [改] 新增 devDeps：`jsdom@^25`、`@testing-library/react@^16.3`、`@testing-library/user-event@^14.6` |
+
+关键设计决策兑现（与 design doc 对齐）：
+- **只读探测下沉 @owl/core**：`@owl/gui` 不直接 import better-sqlite3，只调 `probeStartupState`；测试 `migration-precheck.test.ts` 可 `vi.mock('@owl/core', ...)` 测纯映射
+- **startupMode 三态**：`normal` / `migrate-required` / `incompatible`；incompatible 跳过 confirm，直接落到 error 屏，仅「退出」按钮
+- **argv 污染死循环规避**：成功后 `win.destroy()` + `createWindow()` 重建（不 `loadURL/reload`）；`registerMigrationIpc` 接受 `createPostMigrationWindow` 注入回调，避免 `migration-ipc.ts` ↔ `main/index.ts` 循环 import，同时保留红叉 hide 的 `onClose`
+- **daemon 启动失败兜底**：`ensureDaemonRunning` 返 `boolean`；false 时主进程推 `migration:daemon-failed`，SuccessScreen 底部出红 banner +「再试一次」/「退出」，不 destroy 窗口防止用户没地方看错误
+- **Cmd+Q 中途**：`daemonStartedByGui=false` 全程，`before-quit` 的 `stopDaemonGracefully` 无副作用；残局恢复（`owl doctor --recover`）出本阶段 scope（post-P3）
+- **mapMigrationError**：命名 export，独立纯函数 7 case 单测；renderer 和 main 端映射彻底解耦
+- **4 phase emit 位置**：
+  - `backup`：`wal_checkpoint(TRUNCATE)` 通过后、`backupDatabase(...)` 之前（>90% 耗时花这）
+  - `copy`：`BEGIN` 之后、首条 `INSERT INTO dest.*` 之前
+  - `fts-rebuild`：FTS `delete-all` 之前
+  - `swap`：`old.close()` 之后、首个 `renameSync` 之前
+  - 每次 emit 后 `setImmediate` yield 让 IPC 消息刷到 renderer（better-sqlite3 同步，不 yield 会批量丢过去，renderer 看到时已 swap 完）
+- **React 19 + testing-library hook dispatcher bug**：pnpm 严格布局会产生 2 份 react 模块实例，触发 "Cannot read properties of null (reading 'useState')"；修复组合必须 4 个都上：`plugins: [react()]` + react/react-dom 显式 alias 指向 workspace root + `dedupe` + `server.deps.inline: [/@testing-library\//]`
+- **@testing-library/react@16 不自动 cleanup**：必须在 setup 文件 `afterEach(cleanup)`，否则 DOM 叠加 `getByRole` 报 multiple
+
+验证：
+- `pnpm run lint`：零错误，13 warnings（P3.2-a 基线保持）
+- `pnpm run typecheck`：全 workspace 零错误
+- `pnpm run test`：271/271 pass（core 108 + daemon 95 + gui 68）
+- 真库 smoke S1-S8 全通过（v=1 52 条 ↔ v=0 还原 ↔ lock_file 错误 ↔ incompatible v=99 三种流程）
+
+遗留（post-P3 / P3.2-c+d）：
+- `owl migrate` 子命令 → P3.2-c
+- `owl doctor --recover`（Cmd+Q 中途强杀 + `.old-pre-v0.3` 残局） → post-P3 / 0.4.0+
+- 迁移进度 pct → 未来有大数据场景时再加
 
 ---
 
