@@ -16,6 +16,7 @@ import { Command } from 'commander';
 import { ConversationStore } from './ai/conversations.js';
 import { PreviewStore } from './ai/preview-store.js';
 import { createBuiltinRegistry } from './ai/tools/index.js';
+import { EventsBus } from './events/bus.js';
 import { isDaemonRunning, readPid, removePid, writePid } from './pid.js';
 import { ReminderScheduler } from './scheduler.js';
 import { buildServer } from './server.js';
@@ -81,6 +82,7 @@ program
     const toolRegistry = createBuiltinRegistry();
     const conversationStore = new ConversationStore();
     const previewStore = new PreviewStore();
+    const eventsBus = new EventsBus();
 
     const server = buildServer({
       db,
@@ -92,6 +94,7 @@ program
       toolRegistry,
       conversationStore,
       previewStore,
+      eventsBus,
     });
 
     // Graceful shutdown
@@ -99,7 +102,11 @@ program
       logger.info('Daemon shutting down...');
       scheduler.stop();
       removePid();
+      // server.close() triggers fastify's preClose → onClose chain. The
+      // /events route registers a preClose hook that ends live SSE streams
+      // so this call returns promptly instead of waiting out the SIGKILL.
       await server.close();
+      eventsBus.close();
       sqlite.close();
       process.exit(0);
     };

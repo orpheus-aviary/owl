@@ -16,6 +16,7 @@ import type Database from 'better-sqlite3';
 import { ConversationStore } from './ai/conversations.js';
 import { PreviewStore } from './ai/preview-store.js';
 import { createBuiltinRegistry } from './ai/tools/index.js';
+import { EventsBus } from './events/bus.js';
 import { ReminderScheduler } from './scheduler.js';
 import { buildServer } from './server.js';
 
@@ -52,6 +53,7 @@ describe('daemon API', () => {
       toolRegistry: createBuiltinRegistry(),
       conversationStore: new ConversationStore(),
       previewStore: new PreviewStore(),
+      eventsBus: new EventsBus(),
     });
     await app.ready();
   });

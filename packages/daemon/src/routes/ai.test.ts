@@ -15,6 +15,7 @@ import { ConversationStore } from '../ai/conversations.js';
 import type { LlmClient, LlmMessage, LlmToolDef, StreamChunk } from '../ai/llm-client.js';
 import { PreviewStore } from '../ai/preview-store.js';
 import { createBuiltinRegistry } from '../ai/tools/index.js';
+import { EventsBus } from '../events/bus.js';
 import { ReminderScheduler } from '../scheduler.js';
 import { buildServer } from '../server.js';
 
@@ -101,6 +102,7 @@ describe('AI routes (P2-7d)', () => {
       toolRegistry: createBuiltinRegistry(),
       conversationStore,
       previewStore,
+      eventsBus: new EventsBus(),
       llmClientFactory: (_cfg: LlmConfig): LlmClient => {
         if (!nextLlm) throw new Error('test forgot to set nextLlm');
         const client = nextLlm;

@@ -4,6 +4,7 @@ import type { ConversationStore } from './ai/conversations.js';
 import type { LlmClient } from './ai/llm-client.js';
 import type { PreviewStore } from './ai/preview-store.js';
 import type { ToolRegistry } from './ai/tool-registry.js';
+import type { EventsBus } from './events/bus.js';
 import type { ReminderScheduler } from './scheduler.js';
 
 /** Shared application context passed to all route handlers. */
@@ -22,6 +23,8 @@ export interface AppContext {
   conversationStore: ConversationStore;
   /** In-memory preview stash for external-agent Tier-2 writes. */
   previewStore: PreviewStore;
+  /** Reverse-channel event bus (daemon → GUI); see routes/events.ts. */
+  eventsBus: EventsBus;
   /**
    * Override the per-request LLM client factory. Production uses the
    * default `createLlmClient`; tests inject mocks here to drive the agent
