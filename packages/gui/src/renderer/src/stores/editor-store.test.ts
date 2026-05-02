@@ -116,7 +116,7 @@ describe('requestSaveOrConflict / resolveConflict', () => {
   }
 
   it('no pending update → delegates to saveNote (no prompt)', async () => {
-    const patchSpy = vi.spyOn(api, 'updateNote').mockResolvedValue({
+    const patchSpy = vi.spyOn(api, 'patchNote').mockResolvedValue({
       success: true,
       data: { id: 'n1', content: 'baseline', tags: [] } as unknown as Note,
     });
@@ -259,7 +259,7 @@ describe('requestSaveOrConflict / resolveConflict', () => {
   });
 
   it('resolveConflict(keep-mine) restores pre-stage content when present', async () => {
-    vi.spyOn(api, 'updateNote').mockResolvedValue({
+    vi.spyOn(api, 'patchNote').mockResolvedValue({
       success: true,
       data: { id: 'n1', content: 'baseline + mine', tags: [] } as unknown as Note,
     });
@@ -284,7 +284,7 @@ describe('requestSaveOrConflict / resolveConflict', () => {
   });
 
   it('resolveConflict(keep-mine) drops pendingAiUpdate and saves plain', async () => {
-    const putSpy = vi.spyOn(api, 'updateNote').mockResolvedValue({
+    const putSpy = vi.spyOn(api, 'patchNote').mockResolvedValue({
       success: true,
       data: { id: 'n1', content: 'local edit', tags: [] } as unknown as Note,
     });

@@ -151,17 +151,14 @@ export const getNote = (id: string) => request<Note>('GET', `/notes/${id}`);
 export const createNote = (data: { content: string; folder_id?: string; tags?: string[] }) =>
   request<Note>('POST', '/notes', data);
 
-export const updateNote = (id: string, data: { content: string; tags?: string[] }) =>
-  request<Note>('PUT', `/notes/${id}`, data);
-
 export const patchNote = (
   id: string,
   data: { content?: string; folder_id?: string | null; tags?: string[] },
 ) => request<Note>('PATCH', `/notes/${id}`, data);
 
-export const deleteNote = (id: string) => request<null>('DELETE', `/notes/${id}`);
+export const deleteNote = (id: string) => request<Note>('DELETE', `/notes/${id}`);
 
-export const restoreNote = (id: string) => request<null>('POST', `/notes/${id}/restore`);
+export const restoreNote = (id: string) => request<Note>('POST', `/notes/${id}/restore`);
 
 export const permanentDeleteNote = (id: string) =>
   request<null>('POST', `/notes/${id}/permanent-delete`);
@@ -377,5 +374,5 @@ export function tagsToStrings(tags: NoteTag[]): string[] {
 /** Update a single tag's value on a note (replaces the tag, keeps all others). */
 export async function editTagOnNote(note: Note, tagId: string, newValue: string): Promise<void> {
   const updatedTags = note.tags.map((t) => (t.id === tagId ? { ...t, tagValue: newValue } : t));
-  await updateNote(note.id, { content: note.content, tags: tagsToStrings(updatedTags) });
+  await patchNote(note.id, { content: note.content, tags: tagsToStrings(updatedTags) });
 }

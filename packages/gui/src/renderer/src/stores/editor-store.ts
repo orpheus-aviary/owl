@@ -367,8 +367,15 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         return true;
       }
 
-      // Branch 3: ordinary user edit → PUT /notes/:id (existing path)
-      const res = await api.updateNote(tab.noteId, { content: tab.content, tags: rawTags });
+      // Branch 3: ordinary user edit → PATCH /notes/:id. PUT is strict
+      // replace as of P3.2-c (requires content + tags + folder_id together);
+      // ordinary save sends the full current state including folderId so
+      // both paths converge on the same endpoint.
+      const res = await api.patchNote(tab.noteId, {
+        content: tab.content,
+        tags: rawTags,
+        folder_id: tab.folderId,
+      });
       const savedTags = res.data?.tags ?? tab.tags;
       get().markSaved(tab.noteId, tab.content, savedTags);
       useDataBus.getState().bumpNotes();
