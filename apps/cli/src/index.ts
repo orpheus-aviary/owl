@@ -7,6 +7,7 @@ import { runEdit } from './commands/edit.js';
 import { runFoldersList, runTagsList } from './commands/folders.js';
 import { runGet } from './commands/get.js';
 import { runMigrate } from './commands/migrate.js';
+import { runOpen } from './commands/open.js';
 import { runSearch } from './commands/search.js';
 import { runTag } from './commands/tag.js';
 import { runTrashList } from './commands/trash.js';
@@ -263,6 +264,20 @@ export function buildProgram(): Command {
       });
       const report = await runDoctor({ ...flags, pretty: opts.pretty }, { config, streams });
       if (report.status === 'fail') process.exit(EXIT_CODES.ENV);
+    });
+
+  // ── open ──
+  program
+    .command('open')
+    .description('focus the GUI editor on a note by id (ignores --direct/--db; HTTP only)')
+    .argument('<id>', 'note id')
+    .action(async (id: string, _flags: Record<string, unknown>, cmd: Command) => {
+      const opts = cmd.optsWithGlobals() as GlobalOptions;
+      // Do NOT forward opts.db — `open` is a GUI-only action that reads
+      // only daemon.port from config. Global --direct / --db are accepted
+      // at the root parser but ignored here.
+      const config = resolveConfig(opts.config !== undefined ? { configPath: opts.config } : {});
+      await runOpen(id, { pretty: opts.pretty ?? false }, { config, streams });
     });
 
   // ── migrate ──
