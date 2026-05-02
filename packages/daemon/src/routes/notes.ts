@@ -112,8 +112,10 @@ export function registerNoteRoutes(app: FastifyInstance, ctx: AppContext): void 
     const { id } = req.params as { id: string };
     if (SPECIAL_NOTE_IDS.has(id))
       return fail(reply, 403, SPECIAL_PROTECTED_MSG, 'SPECIAL_NOTE_PROTECTED');
-    if (!deleteNote(ctx.db, id, ctx.config.trash.auto_delete_days))
-      return fail(reply, 404, 'Note not found', 'NOTE_NOT_FOUND');
+    const note = deleteNote(ctx.db, ctx.sqlite, id, {
+      autoDeleteDays: ctx.config.trash.auto_delete_days,
+    });
+    if (!note) return fail(reply, 404, 'Note not found', 'NOTE_NOT_FOUND');
     ctx.scheduler.onNoteChanged(id);
     ok(reply, null, 'Note moved to trash');
   });
@@ -121,8 +123,8 @@ export function registerNoteRoutes(app: FastifyInstance, ctx: AppContext): void 
   // POST /notes/:id/restore
   app.post('/notes/:id/restore', async (req, reply) => {
     const { id } = req.params as { id: string };
-    if (!restoreNote(ctx.db, id))
-      return fail(reply, 404, 'Note not found or not in trash', 'RESTORE_FAILED');
+    const note = restoreNote(ctx.db, ctx.sqlite, id);
+    if (!note) return fail(reply, 404, 'Note not found or not in trash', 'RESTORE_FAILED');
     ctx.scheduler.onNoteChanged(id);
     ok(reply, null, 'Note restored');
   });
@@ -141,7 +143,7 @@ export function registerNoteRoutes(app: FastifyInstance, ctx: AppContext): void 
   app.post('/notes/batch-delete', async (req, reply) => {
     const body = req.body as { ids: string[] };
     if (!body.ids?.length) return fail(reply, 400, 'IDs required', 'MISSING_IDS');
-    const count = batchDeleteNotes(ctx.db, body.ids, ctx.config.trash.auto_delete_days);
+    const count = batchDeleteNotes(ctx.db, ctx.sqlite, body.ids, ctx.config.trash.auto_delete_days);
     if (count > 0) ctx.scheduler.scheduleNextTrashCleanup();
     ok(reply, { count }, `${count} notes moved to trash`);
   });
@@ -150,7 +152,7 @@ export function registerNoteRoutes(app: FastifyInstance, ctx: AppContext): void 
   app.post('/notes/batch-restore', async (req, reply) => {
     const body = req.body as { ids: string[] };
     if (!body.ids?.length) return fail(reply, 400, 'IDs required', 'MISSING_IDS');
-    const count = batchRestoreNotes(ctx.db, body.ids);
+    const count = batchRestoreNotes(ctx.db, ctx.sqlite, body.ids);
     if (count > 0) ctx.scheduler.scheduleNextTrashCleanup();
     ok(reply, { count }, `${count} notes restored`);
   });

@@ -5,6 +5,7 @@ import { createDatabase } from '../db/index.js';
 import type { OwlDatabase } from '../db/index.js';
 import { ensureSpecialNotes } from '../db/special-notes.js';
 import { searchNotes, searchNotesWithDetails } from '../search/index.js';
+import { AlreadyTrashedError, VersionMismatchError } from './errors.js';
 import {
   batchDeleteNotes,
   batchRestoreNotes,
@@ -105,7 +106,7 @@ describe('notes CRUD', () => {
 
   it('soft deletes a note', () => {
     const note = createNote(db, sqlite, { content: 'Delete me' });
-    assert.ok(deleteNote(db, note.id, 30));
+    assert.ok(deleteNote(db, sqlite, note.id, { autoDeleteDays: 30 }));
 
     const deleted = getNote(db, note.id);
     assert.ok(deleted);
@@ -116,9 +117,9 @@ describe('notes CRUD', () => {
 
   it('stamps auto_delete_at when reaching level 2', () => {
     const note = createNote(db, sqlite, { content: 'Promote me' });
-    deleteNote(db, note.id, 30); // → level 1
+    deleteNote(db, sqlite, note.id, { autoDeleteDays: 30 }); // → level 1
     const before = Date.now();
-    deleteNote(db, note.id, 7); // → level 2
+    deleteNote(db, sqlite, note.id, { autoDeleteDays: 7 }); // → level 2
     const promoted = getNote(db, note.id);
     assert.ok(promoted);
     assert.equal(promoted.trashLevel, 2);
@@ -131,10 +132,10 @@ describe('notes CRUD', () => {
 
   it('restores a note and clears auto_delete_at', () => {
     const note = createNote(db, sqlite, { content: 'Restore me' });
-    deleteNote(db, note.id, 30);
-    deleteNote(db, note.id, 30); // level 2, stamped
+    deleteNote(db, sqlite, note.id, { autoDeleteDays: 30 });
+    deleteNote(db, sqlite, note.id, { autoDeleteDays: 30 }); // level 2, stamped
     assert.ok(getNote(db, note.id)?.autoDeleteAt);
-    assert.ok(restoreNote(db, note.id));
+    assert.ok(restoreNote(db, sqlite, note.id));
 
     const restored = getNote(db, note.id);
     assert.ok(restored);
@@ -151,15 +152,15 @@ describe('notes CRUD', () => {
   it('batch deletes notes', () => {
     const n1 = createNote(db, sqlite, { content: 'Batch 1' });
     const n2 = createNote(db, sqlite, { content: 'Batch 2' });
-    const count = batchDeleteNotes(db, [n1.id, n2.id], 30);
+    const count = batchDeleteNotes(db, sqlite, [n1.id, n2.id], 30);
     assert.equal(count, 2);
   });
 
   it('batch restores notes', () => {
     const n1 = createNote(db, sqlite, { content: 'Batch restore 1' });
     const n2 = createNote(db, sqlite, { content: 'Batch restore 2' });
-    batchDeleteNotes(db, [n1.id, n2.id], 30);
-    const count = batchRestoreNotes(db, [n1.id, n2.id]);
+    batchDeleteNotes(db, sqlite, [n1.id, n2.id], 30);
+    const count = batchRestoreNotes(db, sqlite, [n1.id, n2.id]);
     assert.equal(count, 2);
   });
 
@@ -169,13 +170,159 @@ describe('notes CRUD', () => {
     // createDatabase doesn't seed special notes — the daemon's AppContext
     // bootstrap does. Call it here so the guard actually has rows to find.
     ensureSpecialNotes(db);
-    assert.equal(deleteNote(db, MEMO, 30), false);
-    assert.equal(deleteNote(db, TODO, 30), false);
+    assert.equal(deleteNote(db, sqlite, MEMO, { autoDeleteDays: 30 }), null);
+    assert.equal(deleteNote(db, sqlite, TODO, { autoDeleteDays: 30 }), null);
     assert.equal(permanentDeleteNote(db, MEMO), false);
     assert.equal(permanentDeleteNote(db, TODO), false);
     const memo = getNote(db, MEMO);
     assert.ok(memo);
     assert.equal(memo.trashLevel, 0);
+  });
+
+  // ─── CAS & opts (P3.2-c §4.3) ────────────────────────────
+
+  it('updateNote with matching expectedUpdatedAt succeeds', () => {
+    const note = createNote(db, sqlite, { content: 'cas-update-1' });
+    const baseline = note.updatedAt.getTime();
+    const updated = updateNote(
+      db,
+      sqlite,
+      note.id,
+      { content: 'updated' },
+      { expectedUpdatedAt: baseline },
+    );
+    assert.ok(updated);
+    assert.equal(updated.content, 'updated');
+  });
+
+  it('updateNote with mismatched expectedUpdatedAt throws VersionMismatchError', () => {
+    const note = createNote(db, sqlite, { content: 'cas-update-2' });
+    assert.throws(
+      () =>
+        updateNote(
+          db,
+          sqlite,
+          note.id,
+          { content: 'clobber' },
+          { expectedUpdatedAt: note.updatedAt.getTime() - 1 },
+        ),
+      (err: unknown) =>
+        err instanceof VersionMismatchError &&
+        err.id === note.id &&
+        err.expected === note.updatedAt.getTime() - 1,
+    );
+    // Content must remain untouched
+    const after = getNote(db, note.id);
+    assert.equal(after?.content, 'cas-update-2');
+  });
+
+  it('updateNote returns null for missing id', () => {
+    const result = updateNote(db, sqlite, '00000000-0000-0000-0000-deadbeefdead', { content: 'x' });
+    assert.equal(result, null);
+  });
+
+  it('deleteNote returns the updated note (not boolean)', () => {
+    const note = createNote(db, sqlite, { content: 'del-ret' });
+    const result = deleteNote(db, sqlite, note.id, { autoDeleteDays: 30 });
+    assert.ok(result);
+    assert.equal(result.id, note.id);
+    assert.equal(result.trashLevel, 1);
+    assert.equal(result.autoDeleteAt, null);
+  });
+
+  it('deleteNote with matching expectedUpdatedAt succeeds', () => {
+    const note = createNote(db, sqlite, { content: 'cas-del-1' });
+    const result = deleteNote(db, sqlite, note.id, {
+      autoDeleteDays: 30,
+      expectedUpdatedAt: note.updatedAt.getTime(),
+    });
+    assert.ok(result);
+    assert.equal(result.trashLevel, 1);
+  });
+
+  it('deleteNote with mismatched expectedUpdatedAt throws VersionMismatchError', () => {
+    const note = createNote(db, sqlite, { content: 'cas-del-2' });
+    assert.throws(
+      () =>
+        deleteNote(db, sqlite, note.id, {
+          autoDeleteDays: 30,
+          expectedUpdatedAt: note.updatedAt.getTime() - 1,
+        }),
+      (err: unknown) => err instanceof VersionMismatchError && err.id === note.id,
+    );
+    // Untouched
+    assert.equal(getNote(db, note.id)?.trashLevel, 0);
+  });
+
+  it('deleteNote rejects trashed note when rejectIfTrashed=true', () => {
+    const note = createNote(db, sqlite, { content: 'reject-trashed' });
+    deleteNote(db, sqlite, note.id, { autoDeleteDays: 30 }); // → level 1
+    assert.throws(
+      () => deleteNote(db, sqlite, note.id, { autoDeleteDays: 30, rejectIfTrashed: true }),
+      (err: unknown) =>
+        err instanceof AlreadyTrashedError && err.id === note.id && err.currentTrashLevel === 1,
+    );
+    // Still at level 1, no upgrade
+    assert.equal(getNote(db, note.id)?.trashLevel, 1);
+  });
+
+  it('deleteNote default (rejectIfTrashed absent) still upgrades level 1 → 2', () => {
+    const note = createNote(db, sqlite, { content: 'upgrade-path' });
+    deleteNote(db, sqlite, note.id, { autoDeleteDays: 30 });
+    const promoted = deleteNote(db, sqlite, note.id, { autoDeleteDays: 7 });
+    assert.ok(promoted);
+    assert.equal(promoted.trashLevel, 2);
+    assert.ok(promoted.autoDeleteAt);
+  });
+
+  it('deleteNote returns null for missing id', () => {
+    const result = deleteNote(db, sqlite, '00000000-0000-0000-0000-deadbeefdead', {
+      autoDeleteDays: 30,
+    });
+    assert.equal(result, null);
+  });
+
+  it('restoreNote returns the updated note (not boolean)', () => {
+    const note = createNote(db, sqlite, { content: 'restore-ret' });
+    deleteNote(db, sqlite, note.id, { autoDeleteDays: 30 });
+    const result = restoreNote(db, sqlite, note.id);
+    assert.ok(result);
+    assert.equal(result.trashLevel, 0);
+  });
+
+  it('restoreNote with matching expectedUpdatedAt succeeds', () => {
+    const note = createNote(db, sqlite, { content: 'cas-restore-1' });
+    const deleted = deleteNote(db, sqlite, note.id, { autoDeleteDays: 30 });
+    assert.ok(deleted);
+    const result = restoreNote(db, sqlite, note.id, {
+      expectedUpdatedAt: deleted.updatedAt.getTime(),
+    });
+    assert.ok(result);
+    assert.equal(result.trashLevel, 0);
+  });
+
+  it('restoreNote with mismatched expectedUpdatedAt throws VersionMismatchError', () => {
+    const note = createNote(db, sqlite, { content: 'cas-restore-2' });
+    const deleted = deleteNote(db, sqlite, note.id, { autoDeleteDays: 30 });
+    assert.ok(deleted);
+    assert.throws(
+      () =>
+        restoreNote(db, sqlite, note.id, { expectedUpdatedAt: deleted.updatedAt.getTime() - 1 }),
+      (err: unknown) => err instanceof VersionMismatchError && err.id === note.id,
+    );
+    // Still trashed
+    assert.equal(getNote(db, note.id)?.trashLevel, 1);
+  });
+
+  it('restoreNote returns null for missing id', () => {
+    const result = restoreNote(db, sqlite, '00000000-0000-0000-0000-deadbeefdead');
+    assert.equal(result, null);
+  });
+
+  it('restoreNote returns null for not-trashed note', () => {
+    const note = createNote(db, sqlite, { content: 'fresh' });
+    const result = restoreNote(db, sqlite, note.id);
+    assert.equal(result, null);
   });
 });
 
@@ -217,7 +364,7 @@ describe('listAlarmNotes', () => {
       content: '# Trashed alarm',
       tags: [{ tagType: '/alarm', tagValue: '2026-05-01T10:00:00' }],
     });
-    deleteNote(db, note.id, 30);
+    deleteNote(db, sqlite, note.id, { autoDeleteDays: 30 });
 
     const result = listAlarmNotes(db, sqlite);
     // Only the alarm note from the first test should remain

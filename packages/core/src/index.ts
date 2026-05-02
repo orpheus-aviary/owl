@@ -57,8 +57,12 @@ export type {
   NoteWithTags,
   CreateNoteInput,
   UpdateNoteInput,
+  UpdateNoteOptions,
+  DeleteNoteOptions,
+  RestoreNoteOptions,
   ListNotesOptions,
 } from './notes/index.js';
+export { VersionMismatchError, AlreadyTrashedError } from './notes/errors.js';
 
 // Folders
 export {
@@ -85,6 +89,8 @@ export {
   TAG_TYPES,
 } from './tags/parser.js';
 export type { ParsedTag, TagType } from './tags/parser.js';
+export { listHashtagTags } from './tags/list.js';
+export type { ListHashtagTagsOptions, HashtagTagRow } from './tags/list.js';
 
 // Search
 export { searchNotes, searchNotesWithDetails } from './search/index.js';
