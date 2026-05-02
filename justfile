@@ -54,6 +54,15 @@ build-gui:
 build-cli:
     pnpm --filter @owl/cli run build
 
+# Build the CLI bundle and smoke-test `--help` and `doctor` from dist.
+# `doctor` exits non-zero under `--all` / `--llm` or when env checks fail,
+# so we only require `--help` to succeed.
+[group('build')]
+cli-smoke: build-cli ensure-node-abi
+    node apps/cli/dist/index.js --help
+    @echo "--- doctor ---"
+    node apps/cli/dist/index.js doctor || true
+
 # Produce the macOS arm64 dmg via electron-builder.
 # `pnpm package` internally runs build:deps + build:icons + electron-vite build
 # + install-app-deps (Electron-ABI rebuild). After packaging, better-sqlite3

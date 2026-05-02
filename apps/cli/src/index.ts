@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 import { Command } from 'commander';
 import { runAppend } from './commands/append.js';
 import { runCreate } from './commands/create.js';
