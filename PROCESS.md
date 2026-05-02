@@ -1,6 +1,8 @@
 # 开发进度
 
-## 当前状态：**P3.2-c CLI 核心已 ship（2026-05-02）**，404/404 测试通过。设计文档 `docs/plans/2026-05-02-p3-2-c-cli-core-design.md`，分 9 phase 落地（P1 core → P9 verify），单 commit per phase。下一步：P3.2-d SSE reverse channel + `owl open`（未开始）。
+## 当前状态：**P3.2-d SSE 反向通道 + `owl open` 已 ship（2026-05-03）**，426/426 测试通过。设计文档 `docs/plans/2026-05-02-p3-2-d-events-channel-design.md`（v4，含 shutdown 阻塞 bug 修复 + 4 轮 review）。5 commits `5168b60`..`c565955`，单 commit per phase。下一步：P3.3 统一发 0.3.0（GUI + CLI 独立发布管线）。
+
+P3.2-c CLI 核心已 ship（2026-05-02，9 commits `10b8bd5`..`63a0d0b`，404/404）。
 
 P3.2-b MigrationDialog 已 ship（2026-04-30，commit `e302838`，271/271 测试 + 真库 smoke S1-S8 通过）。
 
@@ -161,7 +163,7 @@ P3 完整规划见 `docs/plans/2026-04-20-p3-plan.md`。
 | **P3.2-a** migration runner | `user_version` 分派 + `0001_initial.sql` + `migrateLegacyDb` rebuild + `just migrate` + daemon 拒启动 + 5 种 error + 15 测试场景 | **已 ship**（commit `38e9243`，245/245 测试 + 真库 smoke 通过） |
 | P3.2-b GUI modal | `whenReady` precheck + MigrationDialog（4 屏 confirm/running/success/error），复用 `migrateLegacyDb`；把 P3.2-a 的 sealed `onProgress` 升级为实时 emit；9 条 review issue 全部修复 | **已 ship**（2026-04-30，271/271 测试 + 真库 smoke 通过） |
 | **P3.2-c** CLI 核心 | apps/cli + commander + daemon-detect + HTTP/direct 双模式 + `owl migrate` + tsup bundle + publishable manifest | **已 ship**（2026-05-02，9 commits `10b8bd5`..`63a0d0b`，404/404 测试 + 真库 smoke 通过） |
-| P3.2-d SSE reverse channel | `/events` + `open_note` 事件 + GUI 订阅 + `owl open` | 未开始 |
+| **P3.2-d** SSE reverse channel | daemon `/events` SSE + `/events/emit` + GUI EventsSubscriber + CLI `owl open` | **已 ship**（2026-05-03，5 commits `5168b60`..`c565955`，426/426 测试 + 真库端到端 smoke 通过） |
 
 ### P3.2-a 实施详情（2026-04-29）
 
@@ -317,6 +319,57 @@ P3 完整规划见 `docs/plans/2026-04-20-p3-plan.md`。
 - `owl permanent-delete` + `owl trash list --level all` + `owl folders` CRUD → post-P3.2-c（破坏性 + 低频）
 - `owl doctor --llm` 只标 skipped（daemon /llm/test 的 LLM 探活路径留给后续）
 - `ensure-node-abi` justfile 只 rebuild `.pnpm/better-sqlite3` 不 rebuild hoisted `node_modules/better-sqlite3`（`.npmrc: node-linker=hoisted` 导致两份） → 不是 P3.2-c 范围，遇到再处理
+
+---
+
+### P3.2-d 实施详情（2026-05-03，5 commits `5168b60`..`c565955`）
+
+设计文档：`docs/plans/2026-05-02-p3-2-d-events-channel-design.md`（v4，含 shutdown bug 修复 + 4 轮 review）。
+
+| Phase | Commit | 内容 |
+|---|---|---|
+| docs | `5168b60` | 设计文档 v4（含 shutdown 阻塞 bug 修复） |
+| P1 | `bc0ff01` | daemon events bus 模块（`events/bus.ts` + `types.ts` + 5 单测） |
+| P2 | `e634d89` | daemon `/events` SSE + `/events/emit` 路由（含 `liveReplies` + `preClose` hook 防无限流 shutdown 卡死）+ `AppContext.eventsBus` 必填 + `server.test.ts` / `routes/ai.test.ts` 同步 + 7 routes 测试 |
+| P3 | `f635bd4` | GUI EventsSubscriber（EventSource 订阅 + `handleDaemonEvent` 纯函数 + 5 vitest 单测） |
+| P4 | `c565955` | CLI `owl open <id>`（http-only，忽略 `--direct`/`--db`；daemon 不活 → DAEMON_UNAVAILABLE；subscribers=0 → stderr warning 但 exit 0）+ 5 单测 |
+
+**关键架构决定**：
+
+- 协议：GET + 原生 `EventSource`（浏览器自动重连）；广播入口 POST `/events/emit`
+- 事件类型：`OwlEvent` 联合（当前仅 `hello` + `open_note`，future `config_changed` 等可扩展）
+- `EventsBus` 职责单一：纯 pub/sub + 错误隔离 + close，不管 SSE 生命周期
+- SSE 生命周期归路由：`routes/events.ts` 维护 `liveReplies` Set + `preClose` hook 主动 `endSse`，防止 Fastify `onClose` 因无限流 handler 永不返回而卡死 `server.close()`（**不**启用全局 `forceCloseConnections`：会改动 CRUD 路由在途请求语义）
+- 15s SSE keepalive comment `:\n\n`
+- trashLevel > 0 的 note 拒 404：避免打开回收站 tab 造成用户困惑
+- GUI 根订阅：`<EventsSubscriber />` 挂 `<HashRouter>` 内部，`handleDaemonEvent` 抽为纯函数方便单测；`openNoteById` reject 仅 console.warn 不 navigate，防 unhandled rejection
+
+**测试增量**（404 → 426 全绿）：
+
+- core 128 不变
+- daemon 110 → 122（+5 bus + 7 routes）
+- gui 68 → 73（+5 events-subscriber-core）
+- cli 98 → 103（+5 runOpen）
+
+**端到端 smoke（2026-05-03 本机实测）**：
+
+- 真实 note id `85b846d4-...` → GUI 自动切到 `/` 并打开对应 tab，stdout `subscribers:1`、stderr 空、exit 0
+- 切到第二条 note id → tab 正确切换
+- 不存在的 id → `NOTE_NOT_FOUND`（exit 1）
+- 软删除的 note id → `NOTE_NOT_FOUND` 且 message 含 "in trash"（exit 1）
+- daemon down → `DAEMON_UNAVAILABLE`（exit 4）
+- daemon up + GUI 未起 → `subscribers:0`、stderr warning、exit 0
+
+**踩坑笔记**：
+
+- 设计稿 v1 把 bus cleanup 挂在 `onClose`，第 4 轮 review 才发现 Fastify `onClose` 在 in-flight drain 之后跑，`/events` 无限流会卡住 `server.close()`；修正为路由本地 `preClose`（v4）
+- `owl search '#<tag>'` 触发 FTS5 语法错（`#` 是保留字符）；smoke 改用 `owl search 真实`；设计文档的手动测试步骤 2 按实况走
+- CLI `node apps/cli/dist/index.js` 走 tsup 产物，不是 tsc；每次改 `open.ts` 需 `pnpm --filter @owl/cli run build`
+
+**遗留（post-P3.2-d / P3.3+）**：
+
+- 其它事件类型（`config_changed` / `note_applied_external` / `reminder_fired`）按需补
+- SSE 重连期间 renderer console 会闪 red —— `EventSource` 浏览器层行为，接受
 
 ---
 
