@@ -26,8 +26,20 @@ function withContext<TArgs extends any[]>(
   run: (ctx: Awaited<ReturnType<typeof buildContext>>, ...args: TArgs) => Promise<void>,
 ): (...args: TArgs) => Promise<void> {
   return async (...args: TArgs) => {
-    const program = args[args.length - 1] as Command;
-    const opts = program.optsWithGlobals() as GlobalOptions;
+    const cmd = args[args.length - 1] as Command;
+    const opts = cmd.optsWithGlobals() as GlobalOptions;
+    // Merge global flags into the subcommand flags object so handlers see
+    // both in one place (pretty, idOnly, ndjson, overwrite, etc. live on
+    // the root program but are consumed by individual handlers).
+    const flagsArg = args[args.length - 2];
+    if (flagsArg && typeof flagsArg === 'object') {
+      Object.assign(flagsArg, {
+        pretty: opts.pretty,
+        ndjson: opts.ndjson,
+        idOnly: opts.idOnly,
+        overwrite: opts.overwrite,
+      });
+    }
     const ctx = await buildContext({ opts, isWrite });
     try {
       await run(ctx, ...args);
