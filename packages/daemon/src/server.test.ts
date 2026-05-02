@@ -121,7 +121,7 @@ describe('daemon API', () => {
     const res = await app.inject({
       method: 'PUT',
       url: `/notes/${noteId}`,
-      payload: { content: 'Updated content' },
+      payload: { content: 'Updated content', tags: [], folder_id: null },
     });
     assert.equal(res.statusCode, 200);
     assert.equal(res.json().data.content, 'Updated content');
@@ -180,6 +180,271 @@ describe('daemon API', () => {
 
     const getRes = await app.inject({ method: 'GET', url: `/notes/${noteId}` });
     assert.equal(getRes.statusCode, 404);
+  });
+
+  // ── P3.2-c: strict PUT + CAS + reject_if_trashed ──
+
+  it('PUT /notes/:id rejects missing content with USAGE_ERROR', async () => {
+    const seed = await app.inject({
+      method: 'POST',
+      url: '/notes',
+      payload: { content: 'seed-put-miss-content' },
+    });
+    const id = seed.json().data.id;
+    const res = await app.inject({
+      method: 'PUT',
+      url: `/notes/${id}`,
+      payload: { tags: [], folder_id: null },
+    });
+    assert.equal(res.statusCode, 400);
+    assert.equal(res.json().error_code, 'USAGE_ERROR');
+  });
+
+  it('PUT /notes/:id rejects missing tags with USAGE_ERROR', async () => {
+    const seed = await app.inject({
+      method: 'POST',
+      url: '/notes',
+      payload: { content: 'seed-put-miss-tags' },
+    });
+    const id = seed.json().data.id;
+    const res = await app.inject({
+      method: 'PUT',
+      url: `/notes/${id}`,
+      payload: { content: 'x', folder_id: null },
+    });
+    assert.equal(res.statusCode, 400);
+    assert.equal(res.json().error_code, 'USAGE_ERROR');
+  });
+
+  it('PUT /notes/:id rejects missing folder_id with USAGE_ERROR', async () => {
+    const seed = await app.inject({
+      method: 'POST',
+      url: '/notes',
+      payload: { content: 'seed-put-miss-folder' },
+    });
+    const id = seed.json().data.id;
+    const res = await app.inject({
+      method: 'PUT',
+      url: `/notes/${id}`,
+      payload: { content: 'x', tags: [] },
+    });
+    assert.equal(res.statusCode, 400);
+    assert.equal(res.json().error_code, 'USAGE_ERROR');
+  });
+
+  it('PUT /notes/:id honors matching expected_updated_at', async () => {
+    const seed = await app.inject({
+      method: 'POST',
+      url: '/notes',
+      payload: { content: 'put-cas-match' },
+    });
+    const id = seed.json().data.id;
+    const baseline = new Date(seed.json().data.updatedAt).getTime();
+    const res = await app.inject({
+      method: 'PUT',
+      url: `/notes/${id}`,
+      payload: {
+        content: 'put-cas-match-ok',
+        tags: [],
+        folder_id: null,
+        expected_updated_at: baseline,
+      },
+    });
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.json().data.content, 'put-cas-match-ok');
+  });
+
+  it('PUT /notes/:id rejects mismatched expected_updated_at with 409 VERSION_MISMATCH', async () => {
+    const seed = await app.inject({
+      method: 'POST',
+      url: '/notes',
+      payload: { content: 'put-cas-miss' },
+    });
+    const id = seed.json().data.id;
+    const baseline = new Date(seed.json().data.updatedAt).getTime();
+    const res = await app.inject({
+      method: 'PUT',
+      url: `/notes/${id}`,
+      payload: {
+        content: 'should-not-apply',
+        tags: [],
+        folder_id: null,
+        expected_updated_at: baseline - 1,
+      },
+    });
+    assert.equal(res.statusCode, 409);
+    const body = res.json();
+    assert.equal(body.error_code, 'VERSION_MISMATCH');
+    assert.equal(body.details?.expected, baseline - 1);
+    assert.equal(typeof body.details?.current, 'number');
+  });
+
+  it('PATCH /notes/:id honors matching expected_updated_at', async () => {
+    const seed = await app.inject({
+      method: 'POST',
+      url: '/notes',
+      payload: { content: 'patch-cas-match' },
+    });
+    const id = seed.json().data.id;
+    const baseline = new Date(seed.json().data.updatedAt).getTime();
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/notes/${id}`,
+      payload: { content: 'patch-cas-ok', expected_updated_at: baseline },
+    });
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.json().data.content, 'patch-cas-ok');
+  });
+
+  it('PATCH /notes/:id rejects mismatched expected_updated_at with 409 VERSION_MISMATCH', async () => {
+    const seed = await app.inject({
+      method: 'POST',
+      url: '/notes',
+      payload: { content: 'patch-cas-miss' },
+    });
+    const id = seed.json().data.id;
+    const baseline = new Date(seed.json().data.updatedAt).getTime();
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/notes/${id}`,
+      payload: { content: 'should-not-apply', expected_updated_at: baseline - 1 },
+    });
+    assert.equal(res.statusCode, 409);
+    assert.equal(res.json().error_code, 'VERSION_MISMATCH');
+  });
+
+  it('DELETE /notes/:id returns the updated note in data', async () => {
+    const seed = await app.inject({
+      method: 'POST',
+      url: '/notes',
+      payload: { content: 'del-return' },
+    });
+    const id = seed.json().data.id;
+    const res = await app.inject({ method: 'DELETE', url: `/notes/${id}` });
+    assert.equal(res.statusCode, 200);
+    const body = res.json();
+    assert.equal(body.data.id, id);
+    assert.equal(body.data.trashLevel, 1);
+  });
+
+  it('DELETE /notes/:id honors matching expected_updated_at', async () => {
+    const seed = await app.inject({
+      method: 'POST',
+      url: '/notes',
+      payload: { content: 'del-cas-match' },
+    });
+    const id = seed.json().data.id;
+    const baseline = new Date(seed.json().data.updatedAt).getTime();
+    const res = await app.inject({
+      method: 'DELETE',
+      url: `/notes/${id}`,
+      payload: { expected_updated_at: baseline },
+    });
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.json().data.trashLevel, 1);
+  });
+
+  it('DELETE /notes/:id rejects mismatched expected_updated_at with 409 VERSION_MISMATCH', async () => {
+    const seed = await app.inject({
+      method: 'POST',
+      url: '/notes',
+      payload: { content: 'del-cas-miss' },
+    });
+    const id = seed.json().data.id;
+    const baseline = new Date(seed.json().data.updatedAt).getTime();
+    const res = await app.inject({
+      method: 'DELETE',
+      url: `/notes/${id}`,
+      payload: { expected_updated_at: baseline - 1 },
+    });
+    assert.equal(res.statusCode, 409);
+    assert.equal(res.json().error_code, 'VERSION_MISMATCH');
+  });
+
+  it('DELETE /notes/:id with reject_if_trashed=true returns 409 ALREADY_TRASHED on trashed note', async () => {
+    const seed = await app.inject({
+      method: 'POST',
+      url: '/notes',
+      payload: { content: 'del-reject-trashed' },
+    });
+    const id = seed.json().data.id;
+    await app.inject({ method: 'DELETE', url: `/notes/${id}` }); // → level 1
+    const res = await app.inject({
+      method: 'DELETE',
+      url: `/notes/${id}`,
+      payload: { reject_if_trashed: true },
+    });
+    assert.equal(res.statusCode, 409);
+    const body = res.json();
+    assert.equal(body.error_code, 'ALREADY_TRASHED');
+    assert.equal(body.details?.current_trash_level, 1);
+    // Still level 1
+    const check = await app.inject({ method: 'GET', url: `/notes/${id}` });
+    assert.equal(check.json().data.trashLevel, 1);
+  });
+
+  it('DELETE /notes/:id default (no reject_if_trashed) still upgrades level 1 → 2', async () => {
+    const seed = await app.inject({
+      method: 'POST',
+      url: '/notes',
+      payload: { content: 'del-upgrade-regression' },
+    });
+    const id = seed.json().data.id;
+    await app.inject({ method: 'DELETE', url: `/notes/${id}` }); // level 1
+    const res = await app.inject({ method: 'DELETE', url: `/notes/${id}` }); // level 2
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.json().data.trashLevel, 2);
+  });
+
+  it('POST /notes/:id/restore returns the updated note in data', async () => {
+    const seed = await app.inject({
+      method: 'POST',
+      url: '/notes',
+      payload: { content: 'restore-return' },
+    });
+    const id = seed.json().data.id;
+    await app.inject({ method: 'DELETE', url: `/notes/${id}` });
+    const res = await app.inject({ method: 'POST', url: `/notes/${id}/restore` });
+    assert.equal(res.statusCode, 200);
+    const body = res.json();
+    assert.equal(body.data.id, id);
+    assert.equal(body.data.trashLevel, 0);
+  });
+
+  it('POST /notes/:id/restore honors matching expected_updated_at', async () => {
+    const seed = await app.inject({
+      method: 'POST',
+      url: '/notes',
+      payload: { content: 'restore-cas-match' },
+    });
+    const id = seed.json().data.id;
+    const delRes = await app.inject({ method: 'DELETE', url: `/notes/${id}` });
+    const baseline = new Date(delRes.json().data.updatedAt).getTime();
+    const res = await app.inject({
+      method: 'POST',
+      url: `/notes/${id}/restore`,
+      payload: { expected_updated_at: baseline },
+    });
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.json().data.trashLevel, 0);
+  });
+
+  it('POST /notes/:id/restore rejects mismatched expected_updated_at with 409 VERSION_MISMATCH', async () => {
+    const seed = await app.inject({
+      method: 'POST',
+      url: '/notes',
+      payload: { content: 'restore-cas-miss' },
+    });
+    const id = seed.json().data.id;
+    const delRes = await app.inject({ method: 'DELETE', url: `/notes/${id}` });
+    const baseline = new Date(delRes.json().data.updatedAt).getTime();
+    const res = await app.inject({
+      method: 'POST',
+      url: `/notes/${id}/restore`,
+      payload: { expected_updated_at: baseline - 1 },
+    });
+    assert.equal(res.statusCode, 409);
+    assert.equal(res.json().error_code, 'VERSION_MISMATCH');
   });
 
   // ── Batch ──
@@ -320,7 +585,7 @@ describe('daemon API', () => {
       await app.inject({
         method: 'PUT',
         url: `/notes/${id}`,
-        payload: { content: 'Alarm update test', tags: [alarmTag2] },
+        payload: { content: 'Alarm update test', tags: [alarmTag2], folder_id: null },
       });
 
       const after = sqlite
@@ -347,7 +612,7 @@ describe('daemon API', () => {
       await app.inject({
         method: 'PUT',
         url: `/notes/${id}`,
-        payload: { content: 'Alarm remove test', tags: [] },
+        payload: { content: 'Alarm remove test', tags: [], folder_id: null },
       });
 
       const after = sqlite.prepare('SELECT * FROM reminder_status WHERE note_id = ?').all(id);

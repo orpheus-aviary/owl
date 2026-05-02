@@ -5,6 +5,7 @@ export interface ApiResponse<T = unknown> {
   data?: T;
   message?: string;
   error_code?: string;
+  details?: Record<string, unknown>;
   total?: number;
 }
 
@@ -23,10 +24,13 @@ export function fail(
   status: number,
   message: string,
   errorCode?: string,
+  details?: Record<string, unknown>,
 ): void {
-  reply.status(status).send({
+  const body: ApiResponse = {
     success: false,
     message,
     error_code: errorCode,
-  } satisfies ApiResponse);
+  };
+  if (details !== undefined) body.details = details;
+  reply.status(status).send(body);
 }

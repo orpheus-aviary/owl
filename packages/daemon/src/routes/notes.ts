@@ -1,5 +1,7 @@
 import {
+  AlreadyTrashedError,
   SPECIAL_NOTES,
+  VersionMismatchError,
   batchDeleteNotes,
   batchPermanentDeleteNotes,
   batchRestoreNotes,
@@ -74,59 +76,159 @@ export function registerNoteRoutes(app: FastifyInstance, ctx: AppContext): void 
     created(reply, note, 'Note created');
   });
 
-  // PUT /notes/:id — full update
+  // PUT /notes/:id — strict full replace. Body must include content, tags,
+  // and folder_id; missing any → USAGE_ERROR. Supports expected_updated_at
+  // for optimistic concurrency (409 VERSION_MISMATCH on mismatch).
   app.put('/notes/:id', async (req, reply) => {
     const { id } = req.params as { id: string };
-    const body = req.body as { content: string; tags?: string[] };
+    const body = req.body as {
+      content?: string;
+      tags?: string[];
+      folder_id?: string | null;
+      expected_updated_at?: number;
+    };
 
-    const rawTags = body.tags ?? [];
-    const note = updateNote(ctx.db, ctx.sqlite, id, {
-      content: body.content,
-      tags: parseTags(rawTags),
-      deviceId: ctx.deviceId,
-    });
+    if (body.content === undefined) {
+      return fail(reply, 400, 'content is required for PUT', 'USAGE_ERROR');
+    }
+    if (body.tags === undefined) {
+      return fail(reply, 400, 'tags is required for PUT', 'USAGE_ERROR');
+    }
+    if (body.folder_id === undefined) {
+      return fail(reply, 400, 'folder_id is required for PUT', 'USAGE_ERROR');
+    }
 
-    if (!note) return fail(reply, 404, 'Note not found', 'NOTE_NOT_FOUND');
-    ctx.scheduler.onNoteChanged(note.id);
-    ok(reply, note, 'Note updated');
+    try {
+      const note = updateNote(
+        ctx.db,
+        ctx.sqlite,
+        id,
+        {
+          content: body.content,
+          tags: parseTags(body.tags),
+          folderId: body.folder_id,
+          deviceId: ctx.deviceId,
+        },
+        body.expected_updated_at !== undefined
+          ? { expectedUpdatedAt: body.expected_updated_at }
+          : undefined,
+      );
+      if (!note) return fail(reply, 404, 'Note not found', 'NOTE_NOT_FOUND');
+      ctx.scheduler.onNoteChanged(note.id);
+      ok(reply, note, 'Note updated');
+    } catch (err) {
+      if (err instanceof VersionMismatchError) {
+        return fail(reply, 409, err.message, 'VERSION_MISMATCH', {
+          expected: err.expected,
+          current: err.current,
+        });
+      }
+      throw err;
+    }
   });
 
-  // PATCH /notes/:id — partial update
+  // PATCH /notes/:id — partial update. Supports expected_updated_at.
   app.patch('/notes/:id', async (req, reply) => {
     const { id } = req.params as { id: string };
-    const body = req.body as { content?: string; folder_id?: string | null; tags?: string[] };
+    const body = req.body as {
+      content?: string;
+      folder_id?: string | null;
+      tags?: string[];
+      expected_updated_at?: number;
+    };
 
     const updates: Parameters<typeof updateNote>[3] = { deviceId: ctx.deviceId };
     if (body.content !== undefined) updates.content = body.content;
     if (body.folder_id !== undefined) updates.folderId = body.folder_id;
     if (body.tags !== undefined) updates.tags = parseTags(body.tags);
 
-    const note = updateNote(ctx.db, ctx.sqlite, id, updates);
-    if (!note) return fail(reply, 404, 'Note not found', 'NOTE_NOT_FOUND');
-    ctx.scheduler.onNoteChanged(note.id);
-    ok(reply, note, 'Note updated');
+    try {
+      const note = updateNote(
+        ctx.db,
+        ctx.sqlite,
+        id,
+        updates,
+        body.expected_updated_at !== undefined
+          ? { expectedUpdatedAt: body.expected_updated_at }
+          : undefined,
+      );
+      if (!note) return fail(reply, 404, 'Note not found', 'NOTE_NOT_FOUND');
+      ctx.scheduler.onNoteChanged(note.id);
+      ok(reply, note, 'Note updated');
+    } catch (err) {
+      if (err instanceof VersionMismatchError) {
+        return fail(reply, 409, err.message, 'VERSION_MISMATCH', {
+          expected: err.expected,
+          current: err.current,
+        });
+      }
+      throw err;
+    }
   });
 
-  // DELETE /notes/:id — soft delete
+  // DELETE /notes/:id — soft delete. Supports expected_updated_at and
+  // reject_if_trashed (CLI opt-in). Returns the updated note.
   app.delete('/notes/:id', async (req, reply) => {
     const { id } = req.params as { id: string };
     if (SPECIAL_NOTE_IDS.has(id))
       return fail(reply, 403, SPECIAL_PROTECTED_MSG, 'SPECIAL_NOTE_PROTECTED');
-    const note = deleteNote(ctx.db, ctx.sqlite, id, {
-      autoDeleteDays: ctx.config.trash.auto_delete_days,
-    });
-    if (!note) return fail(reply, 404, 'Note not found', 'NOTE_NOT_FOUND');
-    ctx.scheduler.onNoteChanged(id);
-    ok(reply, null, 'Note moved to trash');
+
+    const body = (req.body ?? {}) as {
+      expected_updated_at?: number;
+      reject_if_trashed?: boolean;
+    };
+
+    try {
+      const note = deleteNote(ctx.db, ctx.sqlite, id, {
+        autoDeleteDays: ctx.config.trash.auto_delete_days,
+        expectedUpdatedAt: body.expected_updated_at,
+        rejectIfTrashed: body.reject_if_trashed,
+      });
+      if (!note) return fail(reply, 404, 'Note not found', 'NOTE_NOT_FOUND');
+      ctx.scheduler.onNoteChanged(id);
+      ok(reply, note, 'Note moved to trash');
+    } catch (err) {
+      if (err instanceof VersionMismatchError) {
+        return fail(reply, 409, err.message, 'VERSION_MISMATCH', {
+          expected: err.expected,
+          current: err.current,
+        });
+      }
+      if (err instanceof AlreadyTrashedError) {
+        return fail(reply, 409, err.message, 'ALREADY_TRASHED', {
+          current_trash_level: err.currentTrashLevel,
+        });
+      }
+      throw err;
+    }
   });
 
-  // POST /notes/:id/restore
+  // POST /notes/:id/restore — supports expected_updated_at. Returns the
+  // updated note.
   app.post('/notes/:id/restore', async (req, reply) => {
     const { id } = req.params as { id: string };
-    const note = restoreNote(ctx.db, ctx.sqlite, id);
-    if (!note) return fail(reply, 404, 'Note not found or not in trash', 'RESTORE_FAILED');
-    ctx.scheduler.onNoteChanged(id);
-    ok(reply, null, 'Note restored');
+    const body = (req.body ?? {}) as { expected_updated_at?: number };
+    try {
+      const note = restoreNote(
+        ctx.db,
+        ctx.sqlite,
+        id,
+        body.expected_updated_at !== undefined
+          ? { expectedUpdatedAt: body.expected_updated_at }
+          : undefined,
+      );
+      if (!note) return fail(reply, 404, 'Note not found or not in trash', 'RESTORE_FAILED');
+      ctx.scheduler.onNoteChanged(id);
+      ok(reply, note, 'Note restored');
+    } catch (err) {
+      if (err instanceof VersionMismatchError) {
+        return fail(reply, 409, err.message, 'VERSION_MISMATCH', {
+          expected: err.expected,
+          current: err.current,
+        });
+      }
+      throw err;
+    }
   });
 
   // POST /notes/:id/permanent-delete
