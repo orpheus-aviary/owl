@@ -1,4 +1,5 @@
 import { DeleteConfirmDialog } from '@/components/DeleteConfirmDialog';
+import { EventsSubscriber } from '@/components/EventsSubscriber';
 import { FolderPanel } from '@/components/FolderPanel';
 import { extractTitle } from '@/components/NoteListItem';
 import { ConflictDialog } from '@/components/ai/ConflictDialog';
@@ -228,6 +229,7 @@ export function MainApp() {
 
   return (
     <HashRouter>
+      <EventsSubscriber />
       <NavShortcuts />
       <DndContext
         sensors={sensors}
