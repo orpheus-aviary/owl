@@ -1,6 +1,8 @@
 # 开发进度
 
-## 当前状态：**P3.2-d SSE 反向通道 + `owl open` 已 ship（2026-05-03）**，426/426 测试通过。设计文档 `docs/plans/2026-05-02-p3-2-d-events-channel-design.md`（v4，含 shutdown 阻塞 bug 修复 + 4 轮 review）。5 commits `5168b60`..`c565955`，单 commit per phase。下一步：P3.3 统一发 0.3.0（GUI + CLI 独立发布管线）。
+## 当前状态：**P3.2.5 release polish 已 ship（2026-05-04）**，459/459 测试通过。3 个 feature + docs/plan ship 记 = 4 commits `e6ff4eb`..`7c560bc`。设计文档 `docs/plans/2026-05-03-p3-2-5-design.md`（本轮 6 轮 review 逐条对齐）。下一步：P3.3 统一发 0.3.0。
+
+P3.2-d SSE 反向通道 + `owl open` 已 ship（2026-05-03，5 commits `5168b60`..`c565955`，426/426）。
 
 P3.2-c CLI 核心已 ship（2026-05-02，9 commits `10b8bd5`..`63a0d0b`，404/404）。
 
@@ -370,6 +372,45 @@ P3 完整规划见 `docs/plans/2026-04-20-p3-plan.md`。
 
 - 其它事件类型（`config_changed` / `note_applied_external` / `reminder_fired`）按需补
 - SSE 重连期间 renderer console 会闪 red —— `EventSource` 浏览器层行为，接受
+
+---
+
+### P3.2.5 实施详情（2026-05-03..04，3 feature commits + 1 docs）
+
+设计文档：`docs/plans/2026-05-03-p3-2-5-design.md`（6 轮 review 逐条对齐：从"AI 冲突 handoff 方向"到"nvm semver 数值比较"到"test 层级拆分"都固化到了文档）。
+
+基线：426/426（P3.2-d 后）。
+现在：**459/459 测试**（core 128 + daemon 122 + gui 92 + cli 117）— gui +19 / cli +14。
+
+| Commit | 内容 |
+|---|---|
+| `e389920` | 设计文档 |
+| `e6ff4eb` | ① `feat(cli): add owl skill export command` — `renderOwlSkillTemplate({version})` 模板函数 + `runSkillExport(flags, deps)` handler + `apps/cli/src/commands/skill-template.ts`（内嵌 markdown，含 frontmatter / 15 命令 / exit codes）+ 14 单测（模板层 7 + 命令层 7，含反向断言 "不应含 `{success, data}` envelope"）+ commander 注册 `owl skill export --output`。默认写 `~/orpheus-aviary-nest/owl/owl-skill.md`；父目录不存在自动 `mkdir -p`。**刻意例外**：本命令 stdout 默认 human（`✓ + 路径 + 提示词`）；`--json` 切回扁平 `{path, prompt}`；`--json --human` 并存抛 `USAGE_ERROR` |
+| `8dc4f40` | ② `feat(gui): detect owl CLI in Settings → 高级` — 主进程 `cli-detect.ts` 用 Node 内置子进程 `execFile`（不走 shell，argv 数组，无注入面）两次 `which owl`：第一次走 `process.env.PATH`，未命中再用 `expandPath()` 拼 Homebrew / nvm / volta / asdf / cargo / npm-global。`findLatestNvmBin` 按 `[major, minor, patch]` 数值比（规避 v9 串序到 v22 后面）。`ipcMain.handle('cli:detect', ...)` + preload `owlAPI.cli.detect()` + 新建 `CliToolsSection` 挂到 `AdvancedSection` 底部（🟢 已安装 + 路径+版本 / 🔴 未找到 + `npm install -g @orpheus-aviary/owl-cli` 复制按钮）+ 14 单测（nvm 数值排序 / PATH dedup / Windows 分隔符 / detectCli 两轮 fallback / 版本探测失败兜底） |
+| `b49f6da` | ③ `feat(gui): prompt to save unsaved tabs on quit` — Cmd+Q / Quit menu / 非 macOS 红叉拦 `before-quit`，依次处理 dirty tab（Word/VSCode 风格）。**AI 冲突 handoff**：保存走 `requestSaveOrConflict`，返回 `false` + `conflictPrompt !== null` → `quit.respond(false)` 关闭 UnsavedTabsDialog，顶层 ConflictDialog 接管（不嵌套）。**"不保存"仅记意图不 mutate**：中途取消后之前选不保存的 tab 内容仍在。主进程 guard：`pendingQuitCheck` 挡重入 Cmd+Q / 10s timeout → proceed + `console.warn`（renderer 卡死时不死锁）/ `!win.isVisible()` 先 `show+focus`（dock 隐藏场景可见）/ `currentStartupMode !== 'normal'` 跳过 IPC（MigrationDialog 没挂 listener，避免白等 10s）。Store 新增 `hasUnsavedTabs` / `getUnsavedTabs`，过滤 `dirty \|\| isDraft \|\| pendingAiUpdate !== null` —— 与 `saveNote:340` guard 一致。5 store 单测（dirty / draft / pending-AI 含 dirty=false / 顺序保持 / 过滤 clean） |
+| `7c560bc` | `docs(p3-plan)`: P3-plan §5 状态 header 加 P3.2.5 ship 记；§10 延后表加 "CLI 自动下载 GUI installer"（与 "GUI installer 内置 CLI" 同属签名 / Gatekeeper / 跨平台 installer 复杂度象限） |
+
+**关键决策 / 坑**：
+
+- `skill.ts` 模板用 TS 字符串而非 `.md` 资源 —— 避开 tsup static assets 配置；测试反向断言防回归到假的 `{success, data, message}` envelope
+- `skill export` 和其他 CLI 命令的输出默认方向相反（human vs JSON）。这是**刻意**的单点例外，skill 模板里明写："note commands default to JSON; the only human-default command is `owl skill export`"
+- PATH fallback 是 Electron 从 Finder / dock / Spotlight 启动的必要项 —— 不加的话，用户装了 CLI 却会被 GUI 报"未找到"
+- 10s timeout 选 proceed（而非 cancel）：renderer 无响应说明编辑器状态已经保不住，继续卡不如放人出去；`console.warn` 兜底
+- MigrationDialog 模式跳过 IPC：`currentStartupMode` 在 `whenReady` 里捕获，`before-quit` 早分支判断，省得 10s timeout 每次退出时阻塞
+- store 契约保持：`saveNote` / `requestSaveOrConflict` 只返 `boolean`，UnsavedTabsDialog 的保存失败显示通用文案而非 `err.message`（避免拉扯 store 改造）
+
+**验证**：
+
+- `just check`：全 workspace 零 error，16 warnings（pre-existing，与 P3.2-d 后基线一致）
+- `just test`：459/459 pass
+- 手动测试：feature ① 三种输出模式 smoke 通过；feature ② `🟢 已安装 /opt/homebrew/bin/owl` + 重新检测工作；feature ③ 两 tab 选保存 / 一保存一取消 / 全干净直接退 / Cmd+W 不弹 / 红叉不弹 等场景都过
+- ④ `owl skill export` 端到端（装完包敲命令）等 P3.3 发包后真实场景验证
+
+**遗留**（post-P3.2.5）：
+
+- CLI 自动下载 GUI installer → 已记到 P3 plan §10，post-P3 统一做
+- 多 host skill 格式适配层（`.mdc` / AGENTS.md / Cline rules）→ 依目前设计，由用户把 prompt 粘给自己的 agent 由 agent 处理；future 若有需求可加 `--format` 参数
+- skill export 端到端真实验证（装完 npm 包后敲 `owl skill export` 看 UX）→ 等 P3.3 npm publish 完成后做
 
 ---
 
