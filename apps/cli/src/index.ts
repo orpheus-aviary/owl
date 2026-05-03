@@ -9,6 +9,7 @@ import { runGet } from './commands/get.js';
 import { runMigrate } from './commands/migrate.js';
 import { runOpen } from './commands/open.js';
 import { runSearch } from './commands/search.js';
+import { runSkillExport } from './commands/skill.js';
 import { runTag } from './commands/tag.js';
 import { runTrashList } from './commands/trash.js';
 import { resolveConfig } from './lib/config.js';
@@ -303,6 +304,29 @@ export function buildProgram(): Command {
           pidPath: config.pidPath,
           streams,
         },
+      );
+    });
+
+  // ── skill export ──
+  // Intentional exception to CLI's JSON-first default: this command
+  // defaults to human output because its value is the install prompt
+  // the user copies to their agent. Pass --json for { path, prompt }.
+  // See docs/plans/2026-05-03-p3-2-5-design.md §3.2.
+  const skill = program.command('skill').description('skill file operations for AI agents');
+  skill
+    .command('export')
+    .description('export owl CLI skill markdown (default: ~/orpheus-aviary-nest/owl/owl-skill.md)')
+    .option('--output <path>', 'output path (file or directory)')
+    .action(async (flags: Record<string, unknown>, cmd: Command) => {
+      const opts = cmd.optsWithGlobals() as GlobalOptions;
+      await runSkillExport(
+        {
+          ...flags,
+          pretty: opts.pretty === true,
+          json: opts.json === true,
+          human: opts.human === true,
+        },
+        { streams, version: program.version() ?? '0.0.0' },
       );
     });
 
