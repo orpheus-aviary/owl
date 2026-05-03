@@ -38,6 +38,10 @@ export interface OwlAPI {
   cli: {
     detect: () => Promise<CliDetectResult>;
   };
+  quit: {
+    onCheckUnsaved: (cb: () => void) => () => void;
+    respond: (proceed: boolean) => void;
+  };
 }
 
 declare global {

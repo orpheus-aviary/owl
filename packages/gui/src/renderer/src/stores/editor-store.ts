@@ -116,6 +116,13 @@ interface EditorState {
   requestSaveOrConflict: (noteId: string) => Promise<boolean>;
   /** Apply a conflict-prompt decision, clear the prompt, then save. */
   resolveConflict: (decision: ConflictDecision) => Promise<boolean>;
+  /**
+   * Mirror of `saveNote`'s guard clause at L340: a tab is "unsaved" when
+   * any of dirty / isDraft / pendingAiUpdate is truthy. The quit-time
+   * UnsavedTabsDialog uses these to decide whether to prompt.
+   */
+  hasUnsavedTabs: () => boolean;
+  getUnsavedTabs: () => TabState[];
   cycleMode: () => void;
   setMode: (mode: EditorMode) => void;
   toggleLineWrap: () => void;
@@ -192,6 +199,15 @@ function extractTitle(content: string): string {
   if (match) return match[1].trim();
   const firstLine = content.split('\n').find((l) => l.trim());
   return firstLine?.trim().slice(0, 30) || '无标题';
+}
+
+/**
+ * A tab counts as unsaved when any of dirty / isDraft / pendingAiUpdate
+ * is truthy — same condition as the `saveNote` guard clause further down
+ * this file. Keep in sync; `UnsavedTabsDialog` reads it at quit time.
+ */
+function isUnsaved(tab: TabState): boolean {
+  return tab.dirty || tab.isDraft || tab.pendingAiUpdate !== null;
 }
 
 export const useEditorStore = create<EditorState>((set, get) => ({
@@ -390,6 +406,9 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     if (!activeTabId) return true;
     return get().saveNote(activeTabId);
   },
+
+  hasUnsavedTabs: () => get().tabs.some(isUnsaved),
+  getUnsavedTabs: () => get().tabs.filter(isUnsaved),
 
   requestSaveOrConflict: async (noteId) => {
     const tab = get().tabs.find((t) => t.noteId === noteId);

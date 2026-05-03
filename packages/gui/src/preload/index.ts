@@ -78,4 +78,27 @@ contextBridge.exposeInMainWorld('owlAPI', {
      */
     detect: (): Promise<CliDetectResult> => ipcRenderer.invoke('cli:detect'),
   },
+
+  quit: {
+    /**
+     * Subscribe to the main process's "Cmd+Q fired, got any unsaved
+     * work?" signal. MainApp mounts exactly one listener; the
+     * UnsavedTabsDialog drives the per-tab prompt from there and calls
+     * `respond` when the user has finished walking the queue (or
+     * cancelled). Returns an unsubscribe function.
+     */
+    onCheckUnsaved: (cb: () => void): (() => void) => {
+      const listener = () => cb();
+      ipcRenderer.on('quit:check-unsaved', listener);
+      return () => ipcRenderer.off('quit:check-unsaved', listener);
+    },
+    /**
+     * Reply to the most recent `quit:check-unsaved`. Pass true to let the
+     * main process continue its stopDaemon + app.quit sequence; false to
+     * cancel the quit entirely.
+     */
+    respond: (proceed: boolean): void => {
+      ipcRenderer.send('quit:response', proceed);
+    },
+  },
 });

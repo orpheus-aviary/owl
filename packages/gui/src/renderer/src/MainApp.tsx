@@ -2,6 +2,7 @@ import { DeleteConfirmDialog } from '@/components/DeleteConfirmDialog';
 import { EventsSubscriber } from '@/components/EventsSubscriber';
 import { FolderPanel } from '@/components/FolderPanel';
 import { extractTitle } from '@/components/NoteListItem';
+import { UnsavedTabsDialog } from '@/components/UnsavedTabsDialog';
 import { ConflictDialog } from '@/components/ai/ConflictDialog';
 import { NoteAppliedToast } from '@/components/ai/NoteAppliedToast';
 import { ResizeHandle } from '@/components/ui/resize-handle';
@@ -324,6 +325,7 @@ export function MainApp() {
       <DeleteConfirmDialog />
       <NoteAppliedToast />
       <ConflictDialog />
+      <UnsavedTabsDialog />
     </HashRouter>
   );
 }

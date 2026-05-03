@@ -25,6 +25,13 @@ function defaultOwlAPI(): OwlAPI {
       done: vi.fn(),
       quit: vi.fn(),
     },
+    cli: {
+      detect: vi.fn(() => Promise.resolve({ installed: false })),
+    },
+    quit: {
+      onCheckUnsaved: vi.fn(() => () => {}),
+      respond: vi.fn(),
+    },
   };
 }
 

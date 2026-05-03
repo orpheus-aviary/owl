@@ -47,6 +47,13 @@ function installMigrationStub(): MigrationStub {
     daemonUrl: 'http://127.0.0.1:47010',
     startupMode: { mode: 'normal' },
     migration: stub as unknown as typeof window.owlAPI.migration,
+    cli: {
+      detect: vi.fn(() => Promise.resolve({ installed: false })),
+    },
+    quit: {
+      onCheckUnsaved: vi.fn(() => () => {}),
+      respond: vi.fn(),
+    },
   };
 
   return stub;

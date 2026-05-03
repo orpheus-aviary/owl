@@ -311,3 +311,73 @@ describe('requestSaveOrConflict / resolveConflict', () => {
     expect(getTab('n1')?.pendingAiUpdate).toBeNull();
   });
 });
+
+/**
+ * The quit-time UnsavedTabsDialog reads these helpers to decide whether
+ * to prompt. Keep them aligned with the `saveNote` guard clause — a tab
+ * with any of dirty / isDraft / pendingAiUpdate counts as unsaved.
+ */
+describe('hasUnsavedTabs / getUnsavedTabs', () => {
+  beforeEach(() => {
+    useEditorStore.setState({ tabs: [], activeTabId: null });
+  });
+
+  it('returns false / empty when all tabs are clean', () => {
+    useEditorStore.getState().openNote(makeNote('n1', 'hello'));
+    expect(useEditorStore.getState().hasUnsavedTabs()).toBe(false);
+    expect(useEditorStore.getState().getUnsavedTabs()).toEqual([]);
+  });
+
+  it('returns true when a tab is dirty (user edit)', () => {
+    useEditorStore.getState().openNote(makeNote('n1', 'hello'));
+    useEditorStore.getState().updateContent('n1', 'hello edited');
+    expect(useEditorStore.getState().hasUnsavedTabs()).toBe(true);
+    const unsaved = useEditorStore.getState().getUnsavedTabs();
+    expect(unsaved).toHaveLength(1);
+    expect(unsaved[0]?.noteId).toBe('n1');
+  });
+
+  it('returns true for an AI draft tab even before any edit', () => {
+    useEditorStore.getState().openAiDraft({
+      note_id: 'draft_abc',
+      content: 'AI made this',
+      tags: [],
+      folder_id: null,
+      action: 'create',
+    });
+    // openAiDraft marks the tab dirty (so Cmd+S lands), but the core
+    // signal is isDraft — the helper should pick that up either way.
+    expect(useEditorStore.getState().hasUnsavedTabs()).toBe(true);
+  });
+
+  it('returns true for a tab with pendingAiUpdate even when dirty flag is false', () => {
+    useEditorStore.getState().openNote(makeNote('n1', 'hello'));
+    useEditorStore.getState().stageAiUpdate('n1', {
+      action: 'update',
+      content: 'ai version',
+      tags: [],
+      folder_id: null,
+      original_content: 'hello',
+      original_tags: [],
+      original_folder_id: null,
+    });
+    // stageAiUpdate sets dirty:true via overwrite; simulate the (rare)
+    // post-save state where dirty has been cleared but the pending
+    // payload is still hanging around — helper must still flag it.
+    useEditorStore.setState((s) => ({
+      tabs: s.tabs.map((t) => (t.noteId === 'n1' ? { ...t, dirty: false } : t)),
+    }));
+    expect(useEditorStore.getState().hasUnsavedTabs()).toBe(true);
+  });
+
+  it('preserves tab order in getUnsavedTabs and filters clean tabs out', () => {
+    useEditorStore.getState().openNote(makeNote('n1', 'first'));
+    useEditorStore.getState().openNote(makeNote('n2', 'second'));
+    useEditorStore.getState().openNote(makeNote('n3', 'third'));
+    useEditorStore.getState().updateContent('n1', 'first edited');
+    // n2 stays clean
+    useEditorStore.getState().updateContent('n3', 'third edited');
+    const unsaved = useEditorStore.getState().getUnsavedTabs();
+    expect(unsaved.map((t) => t.noteId)).toEqual(['n1', 'n3']);
+  });
+});
