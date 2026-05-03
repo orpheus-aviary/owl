@@ -17,6 +17,12 @@ type MigrationStartResult =
     }
   | { ok: false; reason: string; message: string };
 
+interface CliDetectResult {
+  installed: boolean;
+  path?: string;
+  version?: string;
+}
+
 /**
  * Parse --startup-mode=<json> from process.argv. additionalArguments are
  * appended by main/window.ts when the window is constructed in migration
@@ -62,5 +68,14 @@ contextBridge.exposeInMainWorld('owlAPI', {
     quit: (): void => {
       ipcRenderer.send('migration:quit');
     },
+  },
+
+  cli: {
+    /**
+     * Probe the user's shell PATH (with Homebrew / nvm / npm-global
+     * fallbacks) for the owl CLI binary. Called by Settings → 高级 on
+     * mount and on "重新检测"; latency ~100–300 ms.
+     */
+    detect: (): Promise<CliDetectResult> => ipcRenderer.invoke('cli:detect'),
   },
 });

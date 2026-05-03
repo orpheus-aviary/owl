@@ -3,6 +3,7 @@ import { Input } from '@/components/ui/input';
 import type { OwlConfig } from '@/lib/api';
 import { useConfigStore } from '@/stores/config-store';
 import { useEffect, useState } from 'react';
+import { CliToolsSection } from './CliToolsSection';
 
 type LogLevel = OwlConfig['log']['level'];
 
@@ -169,6 +170,8 @@ export function AdvancedSection() {
           </SettingRow>
         </div>
       </div>
+
+      <CliToolsSection />
     </div>
   );
 }

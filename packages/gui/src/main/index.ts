@@ -1,5 +1,6 @@
 import { paths } from '@owl/core';
-import { BrowserWindow, app } from 'electron';
+import { BrowserWindow, app, ipcMain } from 'electron';
+import { detectCli } from './cli-detect.js';
 import { ensureDaemonRunning, stopDaemonGracefully } from './daemon.js';
 import { registerMigrationIpc } from './migration-ipc.js';
 import { runMigrationPrecheck } from './migration-precheck.js';
@@ -18,6 +19,10 @@ function onWindowClose(event: Electron.Event, win: BrowserWindow): void {
 app.whenReady().then(async () => {
   const dbPath = paths.dbPath();
   const precheck = runMigrationPrecheck(dbPath);
+
+  // CLI detection: Settings → 高级 → CLI 工具 card asks for this on mount
+  // and on manual refresh. Handler is cheap (~100-300ms) and idempotent.
+  ipcMain.handle('cli:detect', () => detectCli());
 
   if (precheck.mode === 'normal') {
     await ensureDaemonRunning();

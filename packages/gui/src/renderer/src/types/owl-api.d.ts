@@ -19,6 +19,12 @@ export type MigrationStartResult =
     }
   | { ok: false; reason: string; message: string };
 
+export interface CliDetectResult {
+  installed: boolean;
+  path?: string;
+  version?: string;
+}
+
 export interface OwlAPI {
   daemonUrl: string;
   startupMode: StartupMode;
@@ -28,6 +34,9 @@ export interface OwlAPI {
     onDaemonFailed: (cb: () => void) => () => void;
     done: () => void;
     quit: () => void;
+  };
+  cli: {
+    detect: () => Promise<CliDetectResult>;
   };
 }
 
