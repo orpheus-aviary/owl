@@ -1,6 +1,34 @@
 # 开发进度
 
-## 当前状态：**P3.3 0.3.0 已 ship（2026-05-04）**，461/461 测试通过。GUI `v0.3.0` (GitHub Release + `Owl-0.3.0-arm64.dmg`) 与 CLI `cli-v0.3.0` (`@orpheus-aviary/owl-cli@0.3.0` on npm) 独立渠道同日发布。发布前在 npm 本地装包 smoke 中发现 `npm i -g` symlink 安装下 CLI 入口 guard 失效（`owl --version` 静默 exit 0）+ `program.version()` 硬编码 `0.3.0-dev` 脱节，两问题修复落在 commit `08e9965`，新增 spawn-via-symlink smoke test 作回归保护（CLI 测试 117 → 119）。后续 simplify round `63ddf1a`：入口 guard 加字符串相等快路径避开常见 case 的 `realpathSync` syscall + 统一 `skill export` 版本来源到 `VERSION` 常量 + 清 test 冗余 rmSync pre-block 加 `afterAll` symlink 清理。共 4 个 commit 交付：`08e9965` (fix+smoke) · `fabf142` (bump) · `24be3da` (docs) · `63ddf1a` (simplify)。
+## 当前状态：**P3.4 开工前规划（2026-05-04）**，461/461 测试通过。上阶段 P3.3 0.3.0 已 ship（GUI `v0.3.0` + CLI `cli-v0.3.0` 独立渠道同日发布）。
+
+**P3.4 scope 敲定（2026-05-04 讨论落定，详见 `docs/plans/2026-04-20-p3-plan.md` §7）**：6 子项按 a → f 顺序做，完成后与 P4 migration 一起发 `0.4.0`，不穿插发版。
+
+| # | 子项 | 规模 | 状态 |
+|---|---|---|---|
+| **P3.4-a** | 笔记排序模型（置顶 `pinned_at` + 同层级 DnD `position`，0002_sorting.sql 首验 forward migration runner） | 中 | pending |
+| **P3.4-b** | 特殊笔记视觉区分（`#随记` 蓝边框 / `#待办` 粉边框，NoteList + 浏览页） | 小 | pending |
+| **P3.4-c** | AI chat 笔记 id → 可跳转标题（方案 A regex + LRU 缓存 + 左键跳/右键复制 id） | 小 | pending |
+| **P3.4-d** | TagBar 输入框 Tab/Enter 区分补全（Tab 纯字面量 / Enter 触发 picker） | 小 | pending |
+| **P3.4-e** | 笔记 tab VSCode 风格（斜体预览 / 双击编辑 / 单击切换） | 中 | pending |
+| **P3.4-f** | 聊天持久化 + 侧栏布局（按 `docs/plans/2026-04-18-chat-persistence.md`） | 中 | pending |
+
+**整体路线（2026-05-04 重排）**：
+
+```
+P3.4 UX 完善 → P4 migration 同步（发 0.4.0）→ P5 打包/发布自动化 → P6 次要功能集
+                                                                     └→ P3.5 可选 MCP server
+```
+
+**P6 明确非核心**，具体 scope 届时再定：tray 图标 / 图片粘贴 / FIM 补全 / `append_memo` 语义 / AI banner option C / `[[` note-link / 编辑器正文 slash command / `owl doctor --recover` / CLI 别名 / `@owl/core` 公开发布 / 0.3.0 rebuild 代码移除。
+
+**子项执行约定**：每项动工前单独开 design doc（沿用 P3.2-a/b/c/d 命名：`docs/plans/YYYY-MM-DD-p3-4-<letter>-<name>-design.md`），不再开总 plan 文件。
+
+---
+
+## 上阶段：P3.3 0.3.0 已 ship（2026-05-04）
+
+GUI `v0.3.0` (GitHub Release + `Owl-0.3.0-arm64.dmg`) 与 CLI `cli-v0.3.0` (`@orpheus-aviary/owl-cli@0.3.0` on npm) 独立渠道同日发布。发布前在 npm 本地装包 smoke 中发现 `npm i -g` symlink 安装下 CLI 入口 guard 失效（`owl --version` 静默 exit 0）+ `program.version()` 硬编码 `0.3.0-dev` 脱节，两问题修复落在 commit `08e9965`，新增 spawn-via-symlink smoke test 作回归保护（CLI 测试 117 → 119）。后续 simplify round `63ddf1a`：入口 guard 加字符串相等快路径避开常见 case 的 `realpathSync` syscall + 统一 `skill export` 版本来源到 `VERSION` 常量 + 清 test 冗余 rmSync pre-block 加 `afterAll` symlink 清理。共 4 个 commit 交付：`08e9965` (fix+smoke) · `fabf142` (bump) · `24be3da` (docs) · `63ddf1a` (simplify)。
 
 P3.2.5 release polish 已 ship（2026-05-04，3 commits `e6ff4eb`..`b49f6da`，459/459）。
 
