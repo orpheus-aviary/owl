@@ -688,3 +688,50 @@ daemon + GUI 常规 dev 下：
 - `docs/plans/2026-04-20-p3-plan.md` §5.4 指定 SSE `/events` 为反向通道推荐方案 ✅
 - P3.2-d 完成后，P3.2 全部 4 个子阶段（a/b/c/d）齐活，进入 **P3.3 统一发 0.3.0** 的打包与 publish 流水线
 - 本设计只交付 `open_note`；`config_changed` / `note_applied_external` 等事件在 P3.4 UX 完善时按需补
+
+---
+
+## Implementation record（2026-05-03 shipped，5 commits `5168b60`..`c565955`）
+
+基线：404/404（P3.2-c 后）。
+完成时：**426/426 测试**（core 128 + daemon 122 + gui 73 + cli 103）。
+
+### 5 phase commit 表
+
+| Phase | Commit | 内容 |
+|---|---|---|
+| docs | `5168b60` | 设计文档 v4（含 shutdown 阻塞 bug 修复） |
+| P1 | `bc0ff01` | daemon events bus 模块（`events/bus.ts` + `types.ts` + 5 单测） |
+| P2 | `e634d89` | daemon `/events` SSE + `/events/emit` 路由（含 `liveReplies` + `preClose` hook 防无限流 shutdown 卡死）+ `AppContext.eventsBus` 必填 + 7 routes 测试 |
+| P3 | `f635bd4` | GUI EventsSubscriber（EventSource 订阅 + `handleDaemonEvent` 纯函数 + 5 vitest 单测） |
+| P4 | `c565955` | CLI `owl open <id>`（http-only，忽略 `--direct`/`--db`；daemon 不活 → DAEMON_UNAVAILABLE；subscribers=0 → stderr warning 但 exit 0）+ 5 单测 |
+
+### 关键架构决定
+
+- 协议：GET + 原生 `EventSource`（浏览器自动重连）；广播入口 POST `/events/emit`
+- 事件类型：`OwlEvent` 联合（当前仅 `hello` + `open_note`，future `config_changed` 等可扩展）
+- `EventsBus` 职责单一：纯 pub/sub + 错误隔离 + close，不管 SSE 生命周期
+- SSE 生命周期归路由：`routes/events.ts` 维护 `liveReplies` Set + `preClose` hook 主动 `endSse`，防止 Fastify `onClose` 因无限流 handler 永不返回而卡死 `server.close()`（**不**启用全局 `forceCloseConnections`：会改动 CRUD 路由在途请求语义）
+- 15s SSE keepalive comment `:\n\n`
+- trashLevel > 0 的 note 拒 404：避免打开回收站 tab 造成用户困惑
+- GUI 根订阅：`<EventsSubscriber />` 挂 `<HashRouter>` 内部，`handleDaemonEvent` 抽为纯函数方便单测；`openNoteById` reject 仅 console.warn 不 navigate，防 unhandled rejection
+
+### 端到端 smoke（2026-05-03 本机实测）
+
+- 真实 note id `85b846d4-...` → GUI 自动切到 `/` 并打开对应 tab，stdout `subscribers:1`、stderr 空、exit 0
+- 切到第二条 note id → tab 正确切换
+- 不存在的 id → `NOTE_NOT_FOUND`（exit 1）
+- 软删除的 note id → `NOTE_NOT_FOUND` 且 message 含 "in trash"（exit 1）
+- daemon down → `DAEMON_UNAVAILABLE`（exit 4）
+- daemon up + GUI 未起 → `subscribers:0`、stderr warning、exit 0
+
+### 踩坑笔记
+
+- 设计稿 v1 把 bus cleanup 挂在 `onClose`，第 4 轮 review 才发现 Fastify `onClose` 在 in-flight drain 之后跑，`/events` 无限流会卡住 `server.close()`；修正为路由本地 `preClose`（v4）
+- `owl search '#<tag>'` 触发 FTS5 语法错（`#` 是保留字符）；smoke 改用 `owl search 真实`
+- CLI `node apps/cli/dist/index.js` 走 tsup 产物，不是 tsc；每次改 `open.ts` 需 `pnpm --filter @owl/cli run build`
+
+### 遗留
+
+- 其它事件类型（`config_changed` / `note_applied_external` / `reminder_fired`）按需补
+- SSE 重连期间 renderer console 会闪 red —— `EventSource` 浏览器层行为，接受

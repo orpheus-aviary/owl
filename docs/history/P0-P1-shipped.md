@@ -1,0 +1,51 @@
+# P0-P1 Shipped
+
+基础搭建与功能骨架。P0 (monorepo + 数据层 + daemon + GUI 空壳) + P1 (前端 7 页面 + 编辑器 + 标签 + 提醒调度) 。
+
+## P0 — Monorepo / core / daemon / GUI 空壳
+
+| Commit | 内容 | Hash |
+|--------|------|------|
+| P0-1 | monorepo 初始化 (pnpm workspace + biome + tsconfig) | `42ad912` |
+| P0-2 | @owl/core 数据库层 (drizzle + FTS5 + 专项笔记) | `9fdd9f1` |
+| P0-3 | @owl/core 配置 + 日志 (TOML + pino) | `cc4b76b` |
+| P0-4 | @owl/core 笔记 CRUD + 标签解析 + 搜索 | `b950e8e` |
+| P0-5 | @owl/daemon Fastify REST API (15 endpoints) | `e6fbe69` |
+| P0-6 | @owl/gui Electron 空壳 (7 页面占位) | `840c164` |
+| - | justfile | `8bbcf0d` |
+| bugfix | 自动提取标签 + FTS5 trigram 中文搜索 + /time: 冒号格式 | `ead7014` `0ae1f83` `3dfc4b1` |
+
+## P1 — 前端功能骨架
+
+| Commit | 内容 | Hash |
+|--------|------|------|
+| P1-0 | 回滚 extractTagsFromContent，标签栏为唯一标签源 | `25bec4b` |
+| P1-1 | shadcn/ui + API 调用层 + lucide-react 侧边栏 | `b9f4bb8` |
+| P1-2 | zustand stores + 笔记列表 + CORS | `9b9a946` |
+| P1-3 | CodeMirror 6 编辑器 + 语法高亮 + 列表续行 | `fadc527` |
+| P1-4 | Markdown 渲染组件 + 外部链接 + 脚注 + 数学公式 | `eaebf96` |
+| P1-5a | 编辑页面 — 三栏布局 + 多标签 + 模式切换 | `4aaaf9c` |
+| P1-5b | 快捷键 + 手动保存 + 脏标记 + 未保存弹窗 | `577b2fe` |
+| P1-6 | 标签栏 Tag Bar（输入+自动补全+日期选择器+排序+唯一性） | `401e671` `7b6bdef` `90aa594` `3141eba` |
+| P1-7 | 浏览页面（搜索+标签筛选+排序+单击选中+双击打开） | `37d8193` |
+| P1-8 | 回收站页面（两 Tab + 批量操作 + 倒计时 + 删除功能） | `7dbf409` |
+| 补充 | Cmd+1-7 导航快捷键 + AI 排序调整 + 拖动修复 | `f4119d4` |
+| 补充 | 删除关闭 Tab + 列表自动滚动到活跃笔记 | `defb0ac` |
+| 补充 | 编辑器 Backspace 误触修复 + 语法高亮增强 | `2d7b1f9` |
+| 补充 | 行号 3 位宽度 + 滚动到底 (scrollPastEnd) | `7231b81` |
+| P1-9 | 提醒页面（alarm 筛选 + 周期计算 + 时间范围 + 编辑） | `997173d`..`03eb7c8` |
+| 补充 | 全页面标签显示增强：所有标签类型 + 可编辑 time/alarm | `3928a05` |
+| 补充 | 统一标签排序（#拼音 → /alarm → /time → 频率） | `47ccf9d` |
+| 补充 | 多频率同时生效 + 频率排序修复 | `f04979b` |
+| 补充 | 代码简化：提取 TagDisplay / date-format / useMemo 优化 | `03eb7c8` |
+| P1-10 | reminder_status 表 + daemon 提醒调度器 + 系统通知 | `e28c27b`..`948b24b` |
+| fix | daemon 测试挂死修复（scheduler.stop() 到 after hook） | `72f05e6` |
+
+## 关键设计文档（P1）
+
+- `docs/plans/2026-04-06-p1-design.md` — P1 总设计
+- `docs/plans/2026-04-08-p1-6-tag-bar.md` — 标签栏
+- `docs/plans/2026-04-09-p1-7-browser-page.md` — 浏览页
+- `docs/plans/2026-04-10-p1-8-trash-page-design.md` — 回收站
+- `docs/plans/2026-04-11-p1-9-reminders-page.md` + `-design.md` — 提醒页
+- `docs/plans/2026-04-11-p1-10-reminder-scheduler.md` — 提醒调度器

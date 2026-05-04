@@ -825,3 +825,59 @@ workspace `bin` 只保留 `owl-cli`，避免开发期污染全局 `owl`；发布
 - `docs/plans/2026-04-29-p3-2-a-migration-runner-design.md`
 - `docs/plans/2026-04-30-p3-2-b-migration-dialog-design.md`
 - `PROCESS.md` P3.2-a / P3.2-b 实施详情
+
+---
+
+## Implementation record（2026-05-02 shipped，9 commits `10b8bd5`..`7732efc`）
+
+基线：271/271（P3.2-b 后）。
+完成时：**404/404 测试**（core 128 + daemon 110 + gui 68 + cli 98）。
+
+### 9 phase commit 表
+
+| Phase | Commit | 范围 | 测试增量 |
+|---|---|---|---|
+| P1 | `10b8bd5` | core CAS + AlreadyTrashedError + listHashtagTags + sqlite param for delete/restore | core +20 |
+| P2 | `e57cc13` | daemon PUT 严格 + PATCH/DELETE/restore expected_updated_at + DELETE reject_if_trashed + return-note + fail(details) | daemon +15 |
+| P3 | `e603cb4` | GUI: editor-store branch 3 + editTagOnNote 从 PUT 迁 PATCH；api.updateNote 删除；api.delete/restore 返回类型 Note | gui ±0 |
+| P4 | `8881b94` | `apps/cli` scaffold: deps + vitest + LICENSE（tsup / manifest / justfile 延后 P8） | — |
+| P5 | `e899cf8` | CLI lib: exit-codes / errors / output / tag-strict / input / daemon-detect / db-lock / config | cli +57 |
+| P6 | `4d5f142` | backend 抽象: types / http (fetch mock) / direct (@owl/core) / resolve (§4.1 决策矩阵) | cli +35 |
+| P7 | `591c8b4` | 13 commands + commander root + context + serializer | cli +6 |
+| P8 | `63a0d0b` | tsup bundle + scripts/gen-publishable-manifest.mjs + justfile cli-smoke + README | — |
+| P9 | `7732efc` | verification + global flag merge fix（`--id-only` / `--pretty` / `--ndjson` 通过 `cmd.optsWithGlobals()` + Object.assign 送到子命令 handler） | — |
+
+### 关键设计决策兑现
+
+- **CAS via `sqlite.transaction().immediate()`**（§4.3）：core updateNote/deleteNote/restoreNote 包裹 IMMEDIATE 事务做 SELECT + 比对 + UPDATE；并发写不会在 SELECT 和 UPDATE 之间插入
+- **reject_if_trashed 默认 false**（§5.7）：GUI TrashPage / batchDeleteNotes / AI tools 的 level 1→2 升级路径不受影响；CLI opt-in 抛 AlreadyTrashedError
+- **PUT 严格化 = 全替换三元组**（§5.4）：content + tags + folder_id 缺一即 400 USAGE_ERROR；GUI editor-store 从 PUT 迁 PATCH 避免炸
+- **fail(details) 纯增量**（§3.3）：GUI ApiError 只读 error_code + message；daemon wire 多出的 details 字段对旧消费者透明
+- **listHashtagTags 下沉 core 但 daemon /tags 路由 wire 不变**（§8 偏差）：GUI Tag / FrequentTag shape（id + tagType + tagValue + usage_count）保持；CLI HttpBackend 在反序列化时 re-shape 成 `{value, count?}`；CLI DirectBackend 直接调 `listHashtagTags`
+- **backend 抽象的 9 方法接口**（§2）：commands/ 只依赖 `OwlBackend` + lib/*，不直接 import better-sqlite3 / fetch
+- **stdout 紧凑 JSON 默认 + stderr 进度/错误**（§3.1、§4.6）：serialize.ts 统一 snake_case + ms timestamps + 派生 title + sigil-prefix tag 字符串
+- **模式决策分 read/write**（§4.1）：decideMode 纯函数 11 测试全覆盖；daemon alive + --direct 写入需 --force 否则 DAEMON_RUNNING_BLOCKED
+- **publishable 独立于 workspace**（§7.2）：workspace `@owl/cli` private；`dist/package.json` 写 `@orpheus-aviary/owl-cli` + bin `owl` / `owl-cli`；copy LICENSE + 0001_initial.sql
+
+### 手动 smoke（HTTP + direct 双路径）
+
+- `owl doctor` → status=ok（env.node v24.13.0 + env.sqlite 3.49.2 + config + db user_version=1 + daemon alive）
+- `owl create --stdin --tag x` + `owl get --field title` + `owl append --body` + `owl tag --add --remove` + `owl delete` + `owl restore` 全流程
+- `owl delete` 已 trash 的 note → 409 ALREADY_TRASHED + details.current_trash_level
+- `owl edit --if-updated-at 1` → 409 VERSION_MISMATCH + details.expected/current
+- `owl search --limit 3 --id-only` → 纯 ID 流
+- `owl tags list --frequent --limit 3 --pretty` → 按 count desc 的 `{value: "#x", type: "hashtag", count: n}` 列表
+
+### 产物验证
+
+- `pnpm run lint`：零错误，16 warnings（+3 新：cli edit / migrate / http cognitive complexity，P1 基线 13）
+- `pnpm --filter @owl/cli run build` → `dist/index.js` (87KB) + `dist/package.json` + `dist/migrations/0001_initial.sql` + `dist/LICENSE`
+- `just cli-smoke` 通过
+
+### 偏差 / 延后
+
+- `--human` 输出格式器 → 未实现（设计 §3.7 明确"不保证稳定解析"，为 post-P3.2-c 的可选增强）
+- `owl open` → P3.2-d（需要 SSE reverse channel）
+- `owl permanent-delete` + `owl trash list --level all` + `owl folders` CRUD → P6（破坏性 + 低频）
+- `owl doctor --llm` 只标 skipped（daemon /llm/test 的 LLM 探活路径留给后续）
+- `ensure-node-abi` justfile 只 rebuild `.pnpm/better-sqlite3` 不 rebuild hoisted `node_modules/better-sqlite3`（`.npmrc: node-linker=hoisted` 导致两份） → 不是 P3.2-c 范围，遇到再处理

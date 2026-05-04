@@ -798,3 +798,45 @@ feat(db): P3.2-a schema migration runner
 Refs: docs/plans/2026-04-20-p3-plan.md §5.5
       docs/plans/2026-04-29-p3-2-a-migration-runner-design.md
 ```
+
+---
+
+## Implementation record（2026-04-29 shipped，commit `38e9243`）
+
+基线：228/228 测试（core 84 + daemon 95 + gui 49）。
+完成时：**245/245 测试**（core 101 + daemon 95 + gui 49）— core 新增 17 测试（migrate 15 + backup 2）。
+
+### 文件改动
+
+| 文件 | 变动 |
+|---|---|
+| `packages/core/src/db/migrations/0001_initial.sql` | [新] 完整 DDL + FTS 虚表 + 3 触发器；文件头"永不修改"约定 |
+| `packages/core/src/db/migrate.ts` | [新] 5 错误类 + `LATEST_KNOWN_VERSION` + `applyInitialSchema` / `applyForwardMigrations`（骨架 + TODO 清单）+ `probeDaemonPid` + `isSchemaEmpty` + `verifyExpectedColumns` + `migrateLegacyDb`（幂等 + 3 层锁 + Phase A/B/C + 嵌套 try/finally） |
+| `packages/core/src/db/backup.ts` | [新] `backupDatabase(sqlite, targetPath)` — 通用 backup 原语，为 `owl export` / `owl doctor --backup` 预留复用 |
+| `packages/core/src/db/migrate.test.ts` | [新] 15 测试：T1-T4 dispatch + T5/T10/T15 happy + T7/T8/T9/T11/T13/T14 lock/error + T6/T12 FTS+rollback |
+| `packages/core/src/db/backup.test.ts` | [新] 2 测试 |
+| `packages/core/src/db/index.ts` | [改] `createDatabase` 按 `user_version` 5 分支分派；删 `createTables IF NOT EXISTS` + `migrateSchema()` |
+| `packages/core/scripts/copy-sql.mjs` | [新] post-build 复制 SQL 进 dist |
+| `packages/core/scripts/migrate.mjs` | [新] TTY y/N 交互入口 |
+| `packages/daemon/src/cli.ts` | [改] `writePid()` 提前到 `createDatabase` 之前；catch `MigrationRequiredError`/`IncompatibleDbError` → 中文提示 exit 1 |
+| `justfile` | [改] + `migrate` target |
+
+### 关键设计决策兑现
+
+- **幂等保护**（增量 #1）：`migrateLegacyDb` 入口 peek `user_version`，v=LATEST 返回 `{ alreadyMigrated: true }`（T15）
+- **Forward migration 骨架**（增量 #2）：`applyForwardMigrations` 空实现 + 文件头列 5 项未来 TODO（事务 / JS migration / destructive flag / user_version bookkeeping / 锁复用）。**P3.4-a 首用**
+- **onProgress 签名占位**（增量 #3）：`MigrateOptions.onProgress` 签名已定，0.3.0 sealed hook（P3.2-b 已接入 4 phase 实时 emit，并去掉原 `pct?` 占位）
+- **`backupDatabase` 抽出**（增量 #4）：独立工具模块，迁移逻辑调它 — 为未来 `owl export` / 定期备份零成本复用
+- `0001_initial.sql` **不**内嵌 `PRAGMA user_version`（runner 统一 stamp）
+- `probeDaemonPid` 自有实现，避开 `core↔daemon` 循环
+- `$AUTO` 占位换列投影 — `auto_delete_at` 缺列兜底 NULL（T10）
+- FTS `delete-all` + set-based rebuild，严格复现 `hashTags.join(' ')` 格式 — 无双 posting（T12 硬断言 per-rowid count=1）
+- Phase B 嵌套 try/finally 管连接生命周期 + 事务状态 + attach 状态；Phase C 原子替换带完整回滚
+- 三层锁：Layer 1 daemon.pid probe / Layer 2 `openSync('wx')` / Layer 3 `locking_mode=EXCLUSIVE` + 触发读
+- 源库 `main.foreign_key_check` 预检是权威点（T11）；dest 侧复查纵深（schema-qualified pragma）
+- Backup 文件名毫秒 ts，同秒重试不覆盖（T13 retry 断言）
+
+### Real-db smoke（2026-04-29）
+
+- Before: user_version=0, 52 notes
+- After: user_version=1, 52 notes, backup `owl.db.v0.2-backup-1777454226634` retained, no intermediate artefacts, FK clean, 52 FTS docsize rows (no duplicates), content/tag MATCH 返回期望行（`LLM` → 1, `claude` → 2, `#真实` 内容保存 3 条）
