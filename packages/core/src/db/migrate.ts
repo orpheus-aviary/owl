@@ -7,7 +7,7 @@
 //   - Provide migrateLegacyDb() for the one-shot v0.2 -> v0.3 rebuild. This
 //     function is transitional: 0.4.0 will delete it and assume all surviving
 //     databases are at user_version >= 1.
-//   - Export five structured error types so CLI / daemon / GUI can each render
+//   - Export structured error types so CLI / daemon / GUI can each render
 //     appropriate UX without parsing message strings.
 //
 // ----- Relationship to @owl/daemon -----
@@ -17,31 +17,24 @@
 // pid location rather than importing daemon/pid.ts. The pid layout is by
 // convention identical (dirname(dbPath)/daemon.pid === paths.pidPath()).
 //
-// ----- Forward migration skeleton status (0.4.0+) -----
-// applyForwardMigrations() is a stub at 0.3.0 because there are no 0002+
-// files yet. Before turning it on, the following decisions must be made
-// (noted here so future-me / reviewers don't forget):
-//   1. Per-file transaction wrapping: each *.sql should run inside its own
-//      BEGIN/COMMIT so a mid-file failure rolls back cleanly and
-//      user_version stays at the pre-file value.
-//   2. user_version bookkeeping: the runner sets user_version = N after each
-//      file succeeds. The .sql files themselves must NOT set user_version
-//      (same convention as 0001_initial.sql).
-//   3. Code migrations: if a future migration requires JS (content reparse /
-//      backfill), extend the loader to also pick up NNNN_*.ts migration
-//      modules with a default-exported function. Not implemented yet.
-//   4. Destructive migrations: if any future migration is destructive (needs
-//      user confirmation, like this one), the file header should carry a
-//      `-- requires_confirmation: true` marker. Runner reads header, throws
-//      MigrationRequiredError instead of silently applying.
-//   5. Reuse the three-layer lock of migrateLegacyDb for destructive forward
-//      migrations too — they have the same concurrency concerns.
+// ----- Forward migration runner (P3.4-a: first real use) -----
+// applyForwardMigrations() walks migrations/NNNN_*.sql files strictly greater
+// than fromV up to toV, wrapping each in its own transaction and stamping
+// user_version = N on success. The five decisions flagged in v0.3.0:
+//   1. ✅ Per-file transaction (BEGIN / COMMIT / ROLLBACK per file)
+//   2. ✅ user_version bookkeeping is the runner's job, not the .sql file's
+//   3. ⏭  Code migrations (NNNN_*.ts modules) — not implemented; add when needed
+//   4. ✅ Destructive marker (`-- requires_confirmation: true` in file header)
+//        raises DestructiveForwardMigrationError so callers can branch
+//   5. ⏭  Three-layer lock reuse — only needed for destructive migrations;
+//        0002_sorting.sql is pure ALTER TABLE ADD COLUMN, no lock reuse
 
 import {
   closeSync,
   existsSync,
   openSync,
   readFileSync,
+  readdirSync,
   renameSync,
   unlinkSync,
   writeSync,
@@ -51,7 +44,7 @@ import { fileURLToPath } from 'node:url';
 import BetterSqlite3 from 'better-sqlite3';
 import { backupDatabase } from './backup.js';
 
-export const LATEST_KNOWN_VERSION = 1;
+export const LATEST_KNOWN_VERSION = 2;
 
 // ----- Errors ---------------------------------------------------------------
 
@@ -132,6 +125,45 @@ export class SchemaMismatchError extends Error {
   }
 }
 
+/**
+ * A forward migration SQL file failed mid-apply. The enclosing transaction has
+ * already been rolled back; user_version stays at the pre-file value.
+ */
+export class ForwardMigrationError extends Error {
+  readonly version: number;
+  constructor(version: number, cause: unknown) {
+    super(
+      `Forward migration to v${version} failed: ${cause instanceof Error ? cause.message : String(cause)}`,
+    );
+    this.name = 'ForwardMigrationError';
+    this.version = version;
+    // Chain the original cause for test + diagnostics
+    (this as Error & { cause?: unknown }).cause = cause;
+  }
+}
+
+/**
+ * A forward migration file carries the `-- requires_confirmation: true`
+ * marker, meaning it must not be applied silently. Callers decide UX
+ * (GUI modal, CLI prompt, etc.).
+ *
+ * Distinct from MigrationRequiredError — that one is specifically for legacy
+ * v0.2 rebuild (constructor takes dbPath). This one carries the migration
+ * version + file so UX can say exactly which migration needs confirmation.
+ */
+export class DestructiveForwardMigrationError extends Error {
+  readonly version: number;
+  readonly filePath: string;
+  constructor(version: number, filePath: string) {
+    super(
+      `Forward migration to v${version} (${filePath}) is marked destructive and requires explicit confirmation.`,
+    );
+    this.name = 'DestructiveForwardMigrationError';
+    this.version = version;
+    this.filePath = filePath;
+  }
+}
+
 // ----- Public API ------------------------------------------------------------
 
 export type MigratePhase = 'backup' | 'copy' | 'fts-rebuild' | 'swap';
@@ -169,26 +201,91 @@ export function readInitialSql(): string {
 
 // ----- Runner primitives ---------------------------------------------------
 
-/** Apply 0001_initial.sql and stamp user_version = LATEST_KNOWN_VERSION. */
+/**
+ * Fresh-install path: apply 0001_initial.sql, stamp user_version = 1, then
+ * walk every subsequent migration up to LATEST_KNOWN_VERSION. This keeps new
+ * installs and upgraded installs on a single code path — both end up running
+ * the exact same forward migrations, so a bug in 0002+ is impossible to hide
+ * behind "works for new users, breaks for upgraders".
+ */
 export function applyInitialSchema(sqlite: BetterSqlite3.Database): void {
   sqlite.exec(readInitialSql());
-  sqlite.pragma(`user_version = ${LATEST_KNOWN_VERSION}`);
+  sqlite.pragma('user_version = 1');
+  if (LATEST_KNOWN_VERSION > 1) {
+    applyForwardMigrations(sqlite, 1, LATEST_KNOWN_VERSION);
+  }
 }
 
 /**
- * Forward migration skeleton — walks 0002_*.sql, 0003_*.sql, ... in order and
- * applies files strictly greater than fromV up to and including toV.
+ * Locate the SQL file for user_version = N. Matches `NNNN_*.sql` with N
+ * zero-padded to 4 digits. Throws if missing or ambiguous (>1 match).
+ */
+export function resolveMigrationFile(version: number): string {
+  const prefix = String(version).padStart(4, '0');
+  const matches = readdirSync(MIGRATIONS_DIR).filter(
+    (name) => name.startsWith(`${prefix}_`) && name.endsWith('.sql'),
+  );
+  if (matches.length === 0) {
+    throw new Error(`No migration file found for v${version} (looked for ${prefix}_*.sql)`);
+  }
+  if (matches.length > 1) {
+    throw new Error(`Ambiguous migration files for v${version}: ${matches.join(', ')}`);
+  }
+  return join(MIGRATIONS_DIR, matches[0]);
+}
+
+/**
+ * Inspect the first ~40 lines of a migration SQL file for a destructive
+ * marker. Non-destructive migrations are applied silently by the runner;
+ * destructive ones need explicit caller confirmation.
  *
- * At 0.3.0 there are no files past 0001, so this function is effectively a
- * no-op. See file header for the TODO list that must be addressed before
- * enabling real forward migrations.
+ * Marker syntax (comment-only, anchored):
+ *   -- requires_confirmation: true
+ *
+ * Only lines beginning with `--` are scanned — the marker must live in the
+ * file header, not inside DDL.
+ */
+export function assertNotDestructive(sql: string, version: number, filePath: string): void {
+  const header = sql.split('\n', 40).join('\n');
+  if (/^\s*--\s*requires_confirmation:\s*true\s*$/im.test(header)) {
+    throw new DestructiveForwardMigrationError(version, filePath);
+  }
+}
+
+/**
+ * Walk NNNN_*.sql files strictly greater than fromV up to and including toV,
+ * applying each inside its own transaction. On success, stamps user_version
+ * after each file so a mid-chain failure leaves the db at the last successful
+ * version (not fromV, not toV).
+ *
+ * Caller contract: fromV must equal the current PRAGMA user_version. The
+ * runner does not re-check — createDatabase() / applyInitialSchema() are
+ * responsible for establishing that invariant.
  */
 export function applyForwardMigrations(
-  _sqlite: BetterSqlite3.Database,
-  _fromV: number,
-  _toV: number,
+  sqlite: BetterSqlite3.Database,
+  fromV: number,
+  toV: number,
 ): void {
-  // Intentionally empty at 0.3.0. See header TODO list before implementing.
+  for (let v = fromV + 1; v <= toV; v++) {
+    const filePath = resolveMigrationFile(v);
+    const sql = readFileSync(filePath, 'utf8');
+    assertNotDestructive(sql, v, filePath);
+
+    sqlite.exec('BEGIN');
+    try {
+      sqlite.exec(sql);
+      sqlite.pragma(`user_version = ${v}`);
+      sqlite.exec('COMMIT');
+    } catch (err) {
+      try {
+        sqlite.exec('ROLLBACK');
+      } catch {
+        /* rollback best-effort — primary error is more informative */
+      }
+      throw new ForwardMigrationError(v, err);
+    }
+  }
 }
 
 /** A database with no user tables (sqlite_* shadow tables are ignored). */

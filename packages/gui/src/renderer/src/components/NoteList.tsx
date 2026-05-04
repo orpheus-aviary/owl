@@ -8,8 +8,10 @@ import {
 } from '@/components/ui/context-menu';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import * as api from '@/lib/api';
+import { useDataBus } from '@/stores/data-bus';
 import { useNoteStore } from '@/stores/note-store';
-import { Plus, Search, Trash2 } from 'lucide-react';
+import { Pin, PinOff, Plus, Search, Trash2 } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { NoteListItem } from './NoteListItem';
 
@@ -48,6 +50,15 @@ export function NoteList({ activeNoteId, onSelectNote }: NoteListProps) {
     },
     [selectedId, requestDelete],
   );
+
+  const handleTogglePin = useCallback(async (noteId: string, pinned: boolean) => {
+    try {
+      await api.pinNote(noteId, pinned);
+      useDataBus.getState().bumpNotes();
+    } catch (err) {
+      console.error('pin toggle failed', err);
+    }
+  }, []);
 
   // Keyboard delete for selected note
   useEffect(() => {
@@ -119,6 +130,19 @@ export function NoteList({ activeNoteId, onSelectNote }: NoteListProps) {
                   </div>
                 </ContextMenuTrigger>
                 <ContextMenuContent>
+                  <ContextMenuItem onClick={() => handleTogglePin(note.id, note.pinnedAt == null)}>
+                    {note.pinnedAt == null ? (
+                      <>
+                        <Pin className="size-3.5" />
+                        置顶
+                      </>
+                    ) : (
+                      <>
+                        <PinOff className="size-3.5" />
+                        取消置顶
+                      </>
+                    )}
+                  </ContextMenuItem>
                   <ContextMenuItem variant="destructive" onClick={() => handleDelete(note.id)}>
                     <Trash2 className="size-3.5" />
                     删除

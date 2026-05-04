@@ -62,6 +62,8 @@ function ToastCard({ notice }: { notice: NoteAppliedNotice }) {
         autoDeleteAt: null,
         deviceId: null,
         contentHash: null,
+        pinnedAt: null,
+        position: null,
       });
     }
     navigate('/');

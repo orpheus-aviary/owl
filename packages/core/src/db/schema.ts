@@ -1,4 +1,4 @@
-import { integer, primaryKey, sqliteTable, text, unique } from 'drizzle-orm/sqlite-core';
+import { integer, primaryKey, real, sqliteTable, text, unique } from 'drizzle-orm/sqlite-core';
 import type { AnySQLiteColumn } from 'drizzle-orm/sqlite-core';
 
 // ─── Folders (adjacency list model) ────────────────────
@@ -33,6 +33,12 @@ export const notes = sqliteTable('notes', {
   deviceId: text('device_id'),
   contentHash: text('content_hash'),
   content: text('content').notNull(),
+  // NULL = not pinned. Timestamp recorded when the user pins the note.
+  // setNotePinned() must NOT touch updated_at — pin is metadata, not content.
+  pinnedAt: integer('pinned_at', { mode: 'timestamp_ms' }),
+  // Per-folder manual sort key. NULL until the user reorders notes in that
+  // folder; first reorder materialises positions as 1000, 2000, 3000, ...
+  position: real('position'),
 });
 
 // ─── Tags ──────────────────────────────────────────────

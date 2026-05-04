@@ -7,6 +7,7 @@ import { ConflictDialog } from '@/components/ai/ConflictDialog';
 import { NoteAppliedToast } from '@/components/ai/NoteAppliedToast';
 import { ResizeHandle } from '@/components/ui/resize-handle';
 import { useOwlLayout } from '@/hooks/useOwlLayout';
+import * as api from '@/lib/api';
 import { type ShortcutsConfig, moveNoteToFolder } from '@/lib/api';
 import { type DragData, isDragData, isDropTarget } from '@/lib/dnd-types';
 import { LAYOUT_KEYS } from '@/lib/layout-keys';
@@ -159,21 +160,76 @@ async function handleFolderGap(
   await folderStore.reorder(items);
 }
 
+/**
+ * Build the ordered id list for a target folder (or unfiled when folderId=null)
+ * from the current panelNotes snapshot. Respects current position-based order.
+ *
+ * @param folderId   Target scope; null = unfiled
+ * @param draggedId  Note being dropped into the scope
+ * @param insertIndex If defined, position where to insert draggedId (0 = top,
+ *                    list.length = bottom). If undefined, draggedId is appended.
+ */
+function buildReorderList(
+  folderId: string | null,
+  draggedId: string,
+  insertIndex?: number,
+): string[] {
+  // Panel notes arrive already sorted by position ASC NULLS LAST, updated_at DESC
+  // (see folder-store.fetchPanelNotes with sort_by=position).
+  const allPanelNotes = useFolderStore.getState().panelNotes;
+  const scopeIds = allPanelNotes
+    .filter((n) => (folderId == null ? n.folderId == null : n.folderId === folderId))
+    .map((n) => n.id)
+    .filter((id) => id !== draggedId);
+  const idx = insertIndex ?? scopeIds.length;
+  const clamped = Math.max(0, Math.min(idx, scopeIds.length));
+  return [...scopeIds.slice(0, clamped), draggedId, ...scopeIds.slice(clamped)];
+}
+
 async function handleNoteDrop(
   drag: Extract<DragData, { kind: 'note' }>,
   drop: import('@/lib/dnd-types').DropTarget,
 ): Promise<void> {
-  let targetFolderId: string | null;
-  if (drop.kind === 'folder-node') targetFolderId = drop.folderId;
-  else if (drop.kind === 'root-blank') targetFolderId = null;
-  else return; // gaps not a valid target for notes
-
   try {
-    await moveNoteToFolder(drag.noteId, targetFolderId);
-    useEditorStore.getState().syncTabFolderId(drag.noteId, targetFolderId);
-    useDataBus.getState().bumpNotes();
+    if (drop.kind === 'folder-node') {
+      // Move to folder + land at tail of that folder. NULL position would
+      // combine with a freshly-bumped updated_at to put the note at the TOP
+      // of the NULL group, not the bottom — so we reorder explicitly.
+      await moveNoteToFolder(drag.noteId, drop.folderId);
+      useEditorStore.getState().syncTabFolderId(drag.noteId, drop.folderId);
+      await useFolderStore.getState().fetchPanelNotes();
+      const ordered = buildReorderList(drop.folderId, drag.noteId);
+      await api.reorderNotes(drop.folderId, ordered);
+      useDataBus.getState().bumpNotes();
+      return;
+    }
+    if (drop.kind === 'root-blank') {
+      await moveNoteToFolder(drag.noteId, null);
+      useEditorStore.getState().syncTabFolderId(drag.noteId, null);
+      await useFolderStore.getState().fetchPanelNotes();
+      const ordered = buildReorderList(null, drag.noteId);
+      await api.reorderNotes(null, ordered);
+      useDataBus.getState().bumpNotes();
+      return;
+    }
+    if (drop.kind === 'note-gap') {
+      // Source folder of the dragged note — derived from panelNotes.
+      const src = useFolderStore.getState().panelNotes.find((n) => n.id === drag.noteId);
+      const srcFolderId = src?.folderId ?? null;
+      if (srcFolderId !== drop.folderId) {
+        await moveNoteToFolder(drag.noteId, drop.folderId);
+        useEditorStore.getState().syncTabFolderId(drag.noteId, drop.folderId);
+        // Refresh panelNotes so buildReorderList sees the note in its new scope.
+        await useFolderStore.getState().fetchPanelNotes();
+      }
+      const ordered = buildReorderList(drop.folderId, drag.noteId, drop.index);
+      await api.reorderNotes(drop.folderId, ordered);
+      useDataBus.getState().bumpNotes();
+      return;
+    }
+    // folder-gap — notes can't drop here
   } catch (err) {
-    console.error('note move failed', err);
+    console.error('note drop failed', err);
   }
 }
 

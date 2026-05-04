@@ -82,6 +82,8 @@ export const useBrowserStore = create<BrowserState>((set, get) => ({
         include_descendants: folderId ? true : undefined,
         tags: activeTags.length > 0 ? activeTags.join(',') : undefined,
         ...parseSortKey(sortKey),
+        // P3.4-a: pin group at top; each group applies user-chosen sort.
+        pinned_first: true,
         limit: 100,
       });
       set({ notes: res.data ?? [], total: res.total ?? 0 });

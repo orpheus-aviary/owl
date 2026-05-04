@@ -11,7 +11,9 @@ import {
   listNotes,
   parseTags,
   permanentDeleteNote,
+  reorderNotesInFolder,
   restoreNote,
+  setNotePinned,
   updateNote,
 } from '@owl/core';
 import type { FastifyInstance } from 'fastify';
@@ -32,9 +34,16 @@ export function registerNoteRoutes(app: FastifyInstance, ctx: AppContext): void 
       tags?: string;
       sort_by?: string;
       sort_order?: string;
+      pinned_first?: string;
       page?: string;
       limit?: string;
     };
+
+    // sort_by accepts 'updated' | 'created' | 'position'; anything else falls
+    // back to 'updated' (same tolerance as before, but now includes 'position'
+    // for P3.4-a FolderPanel consumers).
+    const sortBy: 'updated' | 'created' | 'position' =
+      query.sort_by === 'created' || query.sort_by === 'position' ? query.sort_by : 'updated';
 
     const result = listNotes(ctx.db, ctx.sqlite, {
       q: query.q,
@@ -42,8 +51,9 @@ export function registerNoteRoutes(app: FastifyInstance, ctx: AppContext): void 
       includeDescendants: query.include_descendants !== 'false',
       trashLevel: query.trash_level ? Number(query.trash_level) : 0,
       tagValues: query.tags ? query.tags.split(',') : undefined,
-      sortBy: query.sort_by === 'created' ? 'created' : 'updated',
+      sortBy,
       sortOrder: query.sort_order === 'asc' ? 'asc' : 'desc',
+      pinnedFirst: query.pinned_first === 'true',
       page: query.page ? Number(query.page) : 1,
       limit: query.limit ? Number(query.limit) : 20,
     });
@@ -265,5 +275,48 @@ export function registerNoteRoutes(app: FastifyInstance, ctx: AppContext): void 
     if (!body.ids?.length) return fail(reply, 400, 'IDs required', 'MISSING_IDS');
     const count = batchPermanentDeleteNotes(ctx.db, body.ids);
     ok(reply, { count }, `${count} notes permanently deleted`);
+  });
+
+  // PATCH /notes/:id/pin — toggle pinned_at (P3.4-a).
+  // Returns the full note so the client can replace its local copy without
+  // refetching. Does NOT bump updated_at (pin is UI metadata).
+  app.patch('/notes/:id/pin', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const body = req.body as { pinned?: boolean };
+    if (typeof body.pinned !== 'boolean') {
+      return fail(reply, 400, 'pinned (boolean) is required', 'USAGE_ERROR');
+    }
+    try {
+      setNotePinned(ctx.db, id, body.pinned);
+    } catch (err) {
+      if (err instanceof Error && /not found/.test(err.message)) {
+        return fail(reply, 404, 'Note not found', 'NOTE_NOT_FOUND');
+      }
+      throw err;
+    }
+    const note = getNote(ctx.db, id);
+    if (!note) return fail(reply, 404, 'Note not found', 'NOTE_NOT_FOUND');
+    ok(reply, note, body.pinned ? 'Note pinned' : 'Note unpinned');
+  });
+
+  // POST /notes/reorder — rewrite position for every note in a folder (P3.4-a).
+  // body.folder_id may be null to address the "unfiled" scope.
+  // body.ordered_ids must be the complete set of trash_level=0 notes in that
+  // scope, no duplicates, no outsiders — core validation throws, we map to 400.
+  app.post('/notes/reorder', async (req, reply) => {
+    const body = req.body as { folder_id?: string | null; ordered_ids?: string[] };
+    if (body.folder_id === undefined) {
+      return fail(reply, 400, 'folder_id is required (use null for unfiled)', 'USAGE_ERROR');
+    }
+    if (!Array.isArray(body.ordered_ids)) {
+      return fail(reply, 400, 'ordered_ids must be an array', 'USAGE_ERROR');
+    }
+    try {
+      reorderNotesInFolder(ctx.db, ctx.sqlite, body.folder_id, body.ordered_ids);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return fail(reply, 400, message, 'REORDER_INVALID');
+    }
+    ok(reply, { count: body.ordered_ids.length }, 'Notes reordered');
   });
 }

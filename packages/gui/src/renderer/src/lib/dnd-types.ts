@@ -1,6 +1,7 @@
 /**
  * Drag-and-drop data contracts for the folder panel.
- * See docs/plans/2026-04-15-p2-5c-dnd-design.md §3.
+ * See docs/plans/2026-04-15-p2-5c-dnd-design.md §3
+ * and docs/plans/2026-05-05-p3-4-a-sorting-model-design.md §6.5 for note-gap.
  */
 
 export type DragData =
@@ -10,7 +11,8 @@ export type DragData =
 export type DropTarget =
   | { kind: 'folder-node'; folderId: string }
   | { kind: 'folder-gap'; parentId: string | null; index: number }
-  | { kind: 'root-blank' };
+  | { kind: 'root-blank' }
+  | { kind: 'note-gap'; folderId: string | null; index: number };
 
 /** Type guards for narrowing dnd-kit's `active.data.current` / `over.data.current`. */
 export function isDragData(x: unknown): x is DragData {
@@ -22,5 +24,5 @@ export function isDragData(x: unknown): x is DragData {
 export function isDropTarget(x: unknown): x is DropTarget {
   if (typeof x !== 'object' || x === null || !('kind' in x)) return false;
   const k = (x as { kind: unknown }).kind;
-  return k === 'folder-node' || k === 'folder-gap' || k === 'root-blank';
+  return k === 'folder-node' || k === 'folder-gap' || k === 'root-blank' || k === 'note-gap';
 }

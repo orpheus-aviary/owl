@@ -115,7 +115,11 @@ export const useFolderStore = create<FolderState>((set, get) => ({
 
   fetchPanelNotes: async () => {
     try {
-      const res = await api.listNotes({ limit: 10000 });
+      // P3.4-a: FolderPanel displays per-folder order. Use the position sort
+      // so DnD reordering shows up immediately; pin group does NOT apply here
+      // (pin status is property-only in the panel — sorting by pinned_at
+      // would move notes out of their folder-scoped position).
+      const res = await api.listNotes({ limit: 10000, sort_by: 'position' });
       set({ panelNotes: res.data ?? [] });
     } catch {
       // ignore — panel notes are non-critical

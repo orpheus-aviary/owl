@@ -26,6 +26,10 @@ export interface Note {
   autoDeleteAt: string | null;
   deviceId: string | null;
   contentHash: string | null;
+  /** ISO string when pinned (P3.4-a). null = not pinned. */
+  pinnedAt: string | null;
+  /** Per-folder manual sort key (P3.4-a). null until the user reorders. */
+  position: number | null;
   tags: NoteTag[];
 }
 
@@ -125,8 +129,9 @@ export function listNotes(params?: {
   include_descendants?: boolean;
   trash_level?: number;
   tags?: string;
-  sort_by?: 'updated' | 'created';
+  sort_by?: 'updated' | 'created' | 'position';
   sort_order?: 'asc' | 'desc';
+  pinned_first?: boolean;
   page?: number;
   limit?: number;
 }) {
@@ -140,6 +145,7 @@ export function listNotes(params?: {
   if (params?.tags) qs.set('tags', params.tags);
   if (params?.sort_by) qs.set('sort_by', params.sort_by);
   if (params?.sort_order) qs.set('sort_order', params.sort_order);
+  if (params?.pinned_first) qs.set('pinned_first', 'true');
   if (params?.page) qs.set('page', String(params.page));
   if (params?.limit) qs.set('limit', String(params.limit));
   const query = qs.toString();
@@ -171,6 +177,13 @@ export const batchRestoreNotes = (ids: string[]) =>
 
 export const batchPermanentDeleteNotes = (ids: string[]) =>
   request<{ count: number }>('POST', '/notes/batch-permanent-delete', { ids });
+
+// P3.4-a: pin + reorder
+export const pinNote = (id: string, pinned: boolean) =>
+  request<Note>('PATCH', `/notes/${id}/pin`, { pinned });
+
+export const reorderNotes = (folder_id: string | null, ordered_ids: string[]) =>
+  request<{ count: number }>('POST', '/notes/reorder', { folder_id, ordered_ids });
 
 // Folders
 export const listFolders = () => request<Folder[]>('GET', '/folders');

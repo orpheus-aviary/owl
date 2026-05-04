@@ -15,9 +15,10 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import * as api from '@/lib/api';
 import type { NoteTag } from '@/lib/api';
 import { type SortKey, useBrowserStore } from '@/stores/browser-store';
+import { useDataBus } from '@/stores/data-bus';
 import { openNoteById } from '@/stores/editor-store';
 import { useFolderStore } from '@/stores/folder-store';
-import { ArrowDownAZ, FolderOpen, Search, Trash2, X } from 'lucide-react';
+import { ArrowDownAZ, FolderOpen, Pin, PinOff, Search, Trash2, X } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
@@ -119,6 +120,15 @@ export function BrowserPage() {
     },
     [requestDelete],
   );
+
+  const handleTogglePin = useCallback(async (noteId: string, pinned: boolean) => {
+    try {
+      await api.pinNote(noteId, pinned);
+      useDataBus.getState().bumpNotes();
+    } catch (err) {
+      console.error('pin toggle failed', err);
+    }
+  }, []);
 
   const handleEditTag = useCallback(
     (noteId: string, tag: NoteTag, newValue: string) => {
@@ -289,26 +299,43 @@ export function BrowserPage() {
       </ScrollArea>
 
       {/* Context menu */}
-      {contextMenu && (
-        <div
-          data-context-menu
-          className="fixed z-50 min-w-32 rounded-md border border-border bg-popover py-1 shadow-md"
-          style={{ left: contextMenu.x, top: contextMenu.y }}
-        >
-          <button
-            type="button"
-            className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-destructive hover:bg-accent transition-colors"
-            onClick={() => {
-              const noteId = contextMenu.noteId;
-              setContextMenu(null);
-              handleDeleteNote(noteId);
-            }}
-          >
-            <Trash2 className="size-3.5" />
-            删除
-          </button>
-        </div>
-      )}
+      {contextMenu &&
+        (() => {
+          const menuNote = notes.find((n) => n.id === contextMenu.noteId);
+          const isPinned = menuNote?.pinnedAt != null;
+          return (
+            <div
+              data-context-menu
+              className="fixed z-50 min-w-32 rounded-md border border-border bg-popover py-1 shadow-md"
+              style={{ left: contextMenu.x, top: contextMenu.y }}
+            >
+              <button
+                type="button"
+                className="flex w-full items-center gap-2 px-3 py-1.5 text-xs hover:bg-accent transition-colors"
+                onClick={() => {
+                  const noteId = contextMenu.noteId;
+                  setContextMenu(null);
+                  handleTogglePin(noteId, !isPinned);
+                }}
+              >
+                {isPinned ? <PinOff className="size-3.5" /> : <Pin className="size-3.5" />}
+                {isPinned ? '取消置顶' : '置顶'}
+              </button>
+              <button
+                type="button"
+                className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-destructive hover:bg-accent transition-colors"
+                onClick={() => {
+                  const noteId = contextMenu.noteId;
+                  setContextMenu(null);
+                  handleDeleteNote(noteId);
+                }}
+              >
+                <Trash2 className="size-3.5" />
+                删除
+              </button>
+            </div>
+          );
+        })()}
     </div>
   );
 }

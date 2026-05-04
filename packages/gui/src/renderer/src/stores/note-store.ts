@@ -38,6 +38,8 @@ export const useNoteStore = create<NoteState>((set, get) => ({
         tags,
         page,
         limit: 50,
+        // P3.4-a: pin group at top; each group sorts by updated_at DESC (daemon default).
+        pinned_first: true,
       });
       set({ notes: res.data ?? [], total: res.total ?? 0 });
     } finally {

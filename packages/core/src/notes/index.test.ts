@@ -15,7 +15,9 @@ import {
   listAlarmNotes,
   listNotes,
   permanentDeleteNote,
+  reorderNotesInFolder,
   restoreNote,
+  setNotePinned,
   updateNote,
 } from './index.js';
 
@@ -427,5 +429,322 @@ describe('search', () => {
   it('returns empty for no match', () => {
     const results = searchNotes(sqlite, 'nonexistent_keyword_xyz');
     assert.equal(results.length, 0);
+  });
+});
+
+// P3.4-a: pinnedFirst + sortBy='position' sort rules.
+describe('listNotes — pin + position (P3.4-a)', () => {
+  let db: OwlDatabase;
+  let sqlite: Database.Database;
+
+  before(() => {
+    const result = createDatabase({ dbPath: ':memory:' });
+    db = result.db;
+    sqlite = result.sqlite;
+    ensureSpecialNotes(db);
+    // Drop special notes to keep assertions focused on our fixtures.
+    sqlite.prepare('DELETE FROM notes').run();
+    sqlite.prepare('DELETE FROM folders').run();
+  });
+
+  after(() => {
+    sqlite.close();
+  });
+
+  /**
+   * Raw INSERT so we control every field precisely — the public createNote()
+   * stamps createdAt/updatedAt = now, which makes deterministic sort tests
+   * painful to write.
+   */
+  function seed(opts: {
+    id: string;
+    folderId?: string | null;
+    updatedAt: number;
+    pinnedAt?: number | null;
+    position?: number | null;
+  }): void {
+    sqlite
+      .prepare(
+        'INSERT INTO notes (id, folder_id, trash_level, created_at, updated_at, content, pinned_at, position) VALUES (?, ?, 0, ?, ?, ?, ?, ?)',
+      )
+      .run(
+        opts.id,
+        opts.folderId ?? null,
+        opts.updatedAt,
+        opts.updatedAt,
+        `# ${opts.id}`,
+        opts.pinnedAt ?? null,
+        opts.position ?? null,
+      );
+  }
+
+  function resetFixture(): void {
+    sqlite.prepare('DELETE FROM notes').run();
+  }
+
+  it('default (pinnedFirst=false) ignores pin status', () => {
+    resetFixture();
+    seed({ id: 'a', updatedAt: 100 });
+    seed({ id: 'b', updatedAt: 200, pinnedAt: 9999 });
+    seed({ id: 'c', updatedAt: 300 });
+
+    const { items } = listNotes(db, sqlite, {});
+    assert.deepEqual(
+      items.map((n) => n.id),
+      ['c', 'b', 'a'],
+      'without pinnedFirst, order is plain updated_at DESC',
+    );
+  });
+
+  it('pinnedFirst=true groups pinned notes above non-pinned; each group uses sort within', () => {
+    resetFixture();
+    seed({ id: 'a', updatedAt: 100 });
+    seed({ id: 'b', updatedAt: 200, pinnedAt: 9999 });
+    seed({ id: 'c', updatedAt: 300 });
+    seed({ id: 'd', updatedAt: 400, pinnedAt: 8888 });
+
+    const { items } = listNotes(db, sqlite, { pinnedFirst: true });
+    // Pinned group (b, d) first by updated_at DESC → d, b;
+    // Non-pinned group (a, c) next by updated_at DESC → c, a.
+    assert.deepEqual(
+      items.map((n) => n.id),
+      ['d', 'b', 'c', 'a'],
+    );
+  });
+
+  it('pinnedFirst respects sortOrder inside each group', () => {
+    resetFixture();
+    seed({ id: 'a', updatedAt: 100 });
+    seed({ id: 'b', updatedAt: 200, pinnedAt: 9999 });
+    seed({ id: 'c', updatedAt: 300 });
+    seed({ id: 'd', updatedAt: 400, pinnedAt: 8888 });
+
+    const { items } = listNotes(db, sqlite, { pinnedFirst: true, sortOrder: 'asc' });
+    // Pinned ASC → b, d; non-pinned ASC → a, c.
+    assert.deepEqual(
+      items.map((n) => n.id),
+      ['b', 'd', 'a', 'c'],
+    );
+  });
+
+  it("sortBy='position' orders by position ASC NULLS LAST, updated_at DESC", () => {
+    resetFixture();
+    seed({ id: 'p1', updatedAt: 100, position: 1000 });
+    seed({ id: 'p2', updatedAt: 200, position: 2000 });
+    seed({ id: 'n1', updatedAt: 300 }); // null position
+    seed({ id: 'n2', updatedAt: 400 }); // null position
+
+    const { items } = listNotes(db, sqlite, { sortBy: 'position' });
+    // Positioned rows first ascending; NULLs after, ordered by updated_at DESC.
+    assert.deepEqual(
+      items.map((n) => n.id),
+      ['p1', 'p2', 'n2', 'n1'],
+    );
+  });
+
+  it("sortBy='position' ignores sortOrder (semantics are fixed)", () => {
+    resetFixture();
+    seed({ id: 'p1', updatedAt: 100, position: 1000 });
+    seed({ id: 'p2', updatedAt: 200, position: 2000 });
+
+    const asc = listNotes(db, sqlite, { sortBy: 'position', sortOrder: 'asc' });
+    const desc = listNotes(db, sqlite, { sortBy: 'position', sortOrder: 'desc' });
+    assert.deepEqual(
+      asc.items.map((n) => n.id),
+      desc.items.map((n) => n.id),
+      'position sort should not honour sortOrder',
+    );
+    assert.deepEqual(
+      asc.items.map((n) => n.id),
+      ['p1', 'p2'],
+    );
+  });
+
+  it("pinnedFirst + sortBy='position' layers pin group over position order", () => {
+    resetFixture();
+    seed({ id: 'a', updatedAt: 100, position: 1000 });
+    seed({ id: 'b', updatedAt: 200, position: 2000, pinnedAt: 9999 });
+    seed({ id: 'c', updatedAt: 300, position: null });
+    seed({ id: 'd', updatedAt: 400, position: null, pinnedAt: 8888 });
+
+    const { items } = listNotes(db, sqlite, { pinnedFirst: true, sortBy: 'position' });
+    // Pinned group (b, d): b has pos=2000, d has null → b then d (NULLS LAST + updated_at tie-break).
+    // Non-pinned (a, c): a has pos=1000, c has null → a then c.
+    assert.deepEqual(
+      items.map((n) => n.id),
+      ['b', 'd', 'a', 'c'],
+    );
+  });
+});
+
+describe('setNotePinned (P3.4-a)', () => {
+  let db: OwlDatabase;
+  let sqlite: Database.Database;
+
+  before(() => {
+    const result = createDatabase({ dbPath: ':memory:' });
+    db = result.db;
+    sqlite = result.sqlite;
+  });
+
+  after(() => {
+    sqlite.close();
+  });
+
+  it('pin sets pinnedAt; unpin clears to null; does not touch updatedAt', async () => {
+    const note = createNote(db, sqlite, { content: '# pin me' });
+    const originalUpdatedAt = note.updatedAt.getTime();
+
+    // Sleep a bit so that if updatedAt were wrongly bumped, the timestamp
+    // difference would be observable.
+    await new Promise((r) => setTimeout(r, 5));
+
+    const pinnedAt = setNotePinned(db, note.id, true);
+    assert.ok(pinnedAt instanceof Date);
+
+    const after = getNote(db, note.id);
+    assert.ok(after?.pinnedAt);
+    assert.equal(
+      after.updatedAt.getTime(),
+      originalUpdatedAt,
+      'setNotePinned must NOT touch updated_at',
+    );
+
+    const cleared = setNotePinned(db, note.id, false);
+    assert.equal(cleared, null);
+    const afterUnpin = getNote(db, note.id);
+    assert.equal(afterUnpin?.pinnedAt, null);
+    assert.equal(afterUnpin.updatedAt.getTime(), originalUpdatedAt);
+  });
+
+  it('throws on missing note', () => {
+    assert.throws(() => setNotePinned(db, 'nonexistent-id', true), /not found/);
+  });
+});
+
+describe('reorderNotesInFolder (P3.4-a)', () => {
+  let db: OwlDatabase;
+  let sqlite: Database.Database;
+
+  before(() => {
+    const result = createDatabase({ dbPath: ':memory:' });
+    db = result.db;
+    sqlite = result.sqlite;
+  });
+
+  after(() => {
+    sqlite.close();
+  });
+
+  function seedAt(id: string, folderId: string | null, updatedAt: number): void {
+    sqlite
+      .prepare(
+        'INSERT INTO notes (id, folder_id, trash_level, created_at, updated_at, content) VALUES (?, ?, 0, ?, ?, ?)',
+      )
+      .run(id, folderId, updatedAt, updatedAt, `# ${id}`);
+  }
+
+  function reset(): void {
+    sqlite.prepare('DELETE FROM notes').run();
+    sqlite.prepare('DELETE FROM folders').run();
+  }
+
+  it('writes positions 1000, 2000, 3000... and leaves updated_at untouched', () => {
+    reset();
+    seedAt('a', null, 100);
+    seedAt('b', null, 200);
+    seedAt('c', null, 300);
+
+    reorderNotesInFolder(db, sqlite, null, ['c', 'a', 'b']);
+
+    const rows = sqlite
+      .prepare(
+        'SELECT id, position, updated_at FROM notes WHERE folder_id IS NULL ORDER BY position',
+      )
+      .all() as { id: string; position: number; updated_at: number }[];
+    assert.deepEqual(
+      rows.map((r) => r.id),
+      ['c', 'a', 'b'],
+    );
+    assert.deepEqual(
+      rows.map((r) => r.position),
+      [1000, 2000, 3000],
+    );
+    // Original updated_at values preserved
+    const expected: Record<string, number> = { a: 100, b: 200, c: 300 };
+    for (const r of rows) {
+      assert.equal(r.updated_at, expected[r.id]);
+    }
+  });
+
+  it('works for a concrete folder_id scope', () => {
+    reset();
+    sqlite
+      .prepare(
+        "INSERT INTO folders (id, name, parent_id, position, created_at, updated_at) VALUES ('f1', 'F1', NULL, 0, 0, 0)",
+      )
+      .run();
+    seedAt('x', 'f1', 100);
+    seedAt('y', 'f1', 200);
+    seedAt('z', null, 300); // different scope — must be ignored
+
+    reorderNotesInFolder(db, sqlite, 'f1', ['y', 'x']);
+
+    const inF1 = sqlite
+      .prepare('SELECT id, position FROM notes WHERE folder_id = ? ORDER BY position')
+      .all('f1') as { id: string; position: number }[];
+    assert.deepEqual(
+      inF1.map((r) => r.id),
+      ['y', 'x'],
+    );
+    // z (unfiled) should still have position = NULL
+    const zRow = sqlite.prepare('SELECT position FROM notes WHERE id = ?').get('z') as {
+      position: number | null;
+    };
+    assert.equal(zRow.position, null);
+  });
+
+  it('rejects duplicate ids', () => {
+    reset();
+    seedAt('a', null, 100);
+    seedAt('b', null, 200);
+    assert.throws(() => reorderNotesInFolder(db, sqlite, null, ['a', 'a']), /Duplicate id/);
+  });
+
+  it('rejects incomplete orderedIds (count mismatch)', () => {
+    reset();
+    seedAt('a', null, 100);
+    seedAt('b', null, 200);
+    seedAt('c', null, 300);
+    assert.throws(
+      () => reorderNotesInFolder(db, sqlite, null, ['a', 'b']),
+      /length 2 does not match/,
+    );
+  });
+
+  it('rejects ids outside the folder scope', () => {
+    reset();
+    sqlite
+      .prepare(
+        "INSERT INTO folders (id, name, parent_id, position, created_at, updated_at) VALUES ('f1', 'F1', NULL, 0, 0, 0)",
+      )
+      .run();
+    seedAt('x', 'f1', 100);
+    seedAt('y', 'f1', 150); // second note in f1 so length check passes
+    seedAt('z', null, 200); // outside f1
+    // Length matches (2 == 2), but z doesn't belong to f1.
+    assert.throws(() => reorderNotesInFolder(db, sqlite, 'f1', ['x', 'z']), /not in folder f1/);
+  });
+
+  it('rejects trashed notes (ordered ids must match trash_level=0 set)', () => {
+    reset();
+    seedAt('a', null, 100);
+    seedAt('b', null, 200);
+    sqlite.prepare('UPDATE notes SET trash_level = 1 WHERE id = ?').run('b');
+    // The folder now has only `a` at trash_level=0; reorder with [a, b] includes a trashed note.
+    assert.throws(
+      () => reorderNotesInFolder(db, sqlite, null, ['a', 'b']),
+      /length 2 does not match/,
+    );
   });
 });

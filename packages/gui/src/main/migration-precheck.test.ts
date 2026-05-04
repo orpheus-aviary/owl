@@ -7,6 +7,7 @@ vi.mock('@owl/core', async () => {
 
 // Import AFTER vi.mock so the mocked probeStartupState is what precheck sees.
 import { probeStartupState } from '@owl/core';
+import { LATEST_KNOWN_VERSION } from '@owl/core';
 import { runMigrationPrecheck } from './migration-precheck.js';
 
 const mocked = vi.mocked(probeStartupState);
@@ -50,7 +51,7 @@ describe('runMigrationPrecheck — three-state mapping', () => {
       mode: 'incompatible',
       dbPath: '/tmp/a.db',
       dbVersion: 99,
-      maxSupported: 1,
+      maxSupported: LATEST_KNOWN_VERSION,
     });
   });
 });

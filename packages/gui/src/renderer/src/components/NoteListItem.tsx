@@ -5,6 +5,7 @@ import type { DragData } from '@/lib/dnd-types';
 import { sortTags } from '@/lib/tag-sort';
 import { cn } from '@/lib/utils';
 import { useDraggable } from '@dnd-kit/core';
+import { Pin } from 'lucide-react';
 import { useMemo } from 'react';
 import { TagDisplay } from './TagDisplay';
 
@@ -45,6 +46,12 @@ interface NoteListItemProps {
   activeSort?: 'updated' | 'created';
   onEditTag?: (tag: NoteTag, newValue: string) => void;
   draggable?: boolean;
+  /**
+   * When `true` (default), renders a subtle background for pinned notes.
+   * FolderPanel passes `false` — there pin is a property indicator only and
+   * must not affect sorting or background, per P3.4-a design §1.1.
+   */
+  showPinBackground?: boolean;
 }
 
 export function NoteListItem({
@@ -55,12 +62,14 @@ export function NoteListItem({
   activeSort,
   onEditTag,
   draggable = false,
+  showPinBackground = true,
 }: NoteListItemProps) {
   const title = extractTitle(note.content);
   const preview = extractPreview(note.content);
   const sorted = useMemo(() => sortTags(note.tags), [note.tags]);
   const visible = sorted.slice(0, MAX_VISIBLE_TAGS);
   const overflow = sorted.length - MAX_VISIBLE_TAGS;
+  const pinned = note.pinnedAt != null;
 
   const dragData: DragData = { kind: 'note', noteId: note.id };
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
@@ -92,13 +101,19 @@ export function NoteListItem({
       className={cn(
         'w-full text-left px-3 py-2 border-b border-border transition-colors outline-none cursor-pointer select-none',
         'hover:bg-accent/50',
+        pinned && showPinBackground && 'bg-primary/5',
         isActive && 'bg-accent border-l-2 border-l-primary',
         isDragging && 'opacity-40',
       )}
     >
       <div className="flex items-start gap-2">
         <div className="flex-1 min-w-0">
-          <div className="text-sm font-medium truncate">{title}</div>
+          <div className="flex items-center gap-1.5">
+            {pinned && (
+              <Pin className="size-3 shrink-0 text-primary rotate-45" aria-label="已置顶" />
+            )}
+            <div className="text-sm font-medium truncate">{title}</div>
+          </div>
           <div className="text-xs text-muted-foreground truncate mt-0.5 min-h-[16px]">
             {preview || '\u00A0'}
           </div>

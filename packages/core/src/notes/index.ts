@@ -30,6 +30,8 @@ export interface NoteWithTags {
   autoDeleteAt: Date | null;
   deviceId: string | null;
   contentHash: string | null;
+  pinnedAt: Date | null;
+  position: number | null;
   tags: { id: string; tagType: string; tagValue: string | null }[];
 }
 
@@ -90,8 +92,20 @@ export interface ListNotesOptions {
   includeDescendants?: boolean;
   trashLevel?: number;
   tagValues?: string[];
-  sortBy?: 'updated' | 'created';
+  /**
+   * `'updated'` / `'created'` — order by the matching timestamp column.
+   * `'position'` — order by the per-folder manual sort key: `position ASC NULLS LAST, updated_at DESC`.
+   *                `sortOrder` is ignored for `'position'` (semantics are fixed).
+   */
+  sortBy?: 'updated' | 'created' | 'position';
   sortOrder?: 'asc' | 'desc';
+  /**
+   * When `true`, pinned notes (`pinned_at IS NOT NULL`) come first as a
+   * distinct group, with the chosen `sortBy`/`sortOrder` applied independently
+   * inside each group (pinned and non-pinned). Default `false` — pin status
+   * does not influence ordering (used by AI tools / legacy callers).
+   */
+  pinnedFirst?: boolean;
   page?: number;
   limit?: number;
 }
@@ -163,6 +177,7 @@ export function listNotes(
     limit = 20,
     sortBy = 'updated',
     sortOrder = 'desc',
+    pinnedFirst = false,
   } = options;
   const offset = (page - 1) * limit;
 
@@ -242,14 +257,28 @@ export function listNotes(
   const total = countResult?.count ?? 0;
 
   // Fetch
-  const orderCol = sortBy === 'created' ? notes.createdAt : notes.updatedAt;
-  const orderDir = sortOrder === 'asc' ? sql`ASC` : sql`DESC`;
+  //
+  // Ordering semantics:
+  //   pinnedFirst=true  → `(pinned_at IS NULL) ASC` groups pinned rows (0)
+  //                       before non-pinned rows (1); in-group ordering falls
+  //                       through to the sortBy/sortOrder clauses below
+  //   sortBy='position' → `position ASC NULLS LAST, updated_at DESC`
+  //                       (sortOrder is ignored — semantics fixed per design)
+  //   sortBy='updated' | 'created' + sortOrder → conventional column sort
+  const dir = sortOrder === 'asc' ? sql`ASC` : sql`DESC`;
+  const groupClause = pinnedFirst ? sql`(${notes.pinnedAt} IS NULL) ASC, ` : sql``;
+  const mainClause =
+    sortBy === 'position'
+      ? sql`${notes.position} ASC NULLS LAST, ${notes.updatedAt} DESC`
+      : sortBy === 'created'
+        ? sql`${notes.createdAt} ${dir}`
+        : sql`${notes.updatedAt} ${dir}`;
 
   const rows = db
     .select()
     .from(notes)
     .where(where)
-    .orderBy(sql`${orderCol} ${orderDir}`)
+    .orderBy(sql`${groupClause}${mainClause}`)
     .limit(limit)
     .offset(offset)
     .all();
@@ -526,3 +555,90 @@ function syncNoteTags(
 }
 
 export { contentHash } from './hash.js';
+
+// ─── P3.4-a: pin / reorder helpers ─────────────────────
+
+/**
+ * Toggle a note's pinned state. `pinned=true` stamps `pinned_at = Date.now()`;
+ * `pinned=false` clears it to NULL. **Must not touch `updated_at`** — pin is
+ * UI metadata, not content state. Callers who relied on `updateNote()` would
+ * accidentally bump updated_at and reshuffle the list under the user.
+ *
+ * Returns the note's updated `pinnedAt` value (or null) so the API layer can
+ * echo back without a second read.
+ *
+ * Throws if the note does not exist. Silently accepts special notes — their
+ * pin state is user preference like any other.
+ */
+export function setNotePinned(db: OwlDatabase, id: string, pinned: boolean): Date | null {
+  const existing = db.select().from(notes).where(eq(notes.id, id)).get();
+  if (!existing) throw new Error(`Note ${id} not found`);
+
+  const next = pinned ? new Date() : null;
+  db.update(notes).set({ pinnedAt: next }).where(eq(notes.id, id)).run();
+  return next;
+}
+
+/**
+ * Rewrite `position` for every note in a folder, in the order given.
+ * `folderId=null` means the "unfiled" scope (folder_id IS NULL).
+ *
+ * Called by `POST /notes/reorder` after the frontend computes the target
+ * order. Writes `position = 1000, 2000, 3000, ...` in a single transaction so
+ * partial updates never surface. **Does not touch `updated_at`** — reorder is
+ * sort metadata, not a content edit.
+ *
+ * Validation (throws if violated):
+ *   - Every id exists and belongs to the specified folder
+ *   - Every trash_level=0 note in the folder is present in orderedIds
+ *     (no adds, no drops — the frontend must send the complete order)
+ *   - No duplicates in orderedIds
+ *
+ * The caller is the API layer, which surfaces these as HTTP 400.
+ */
+export function reorderNotesInFolder(
+  _db: OwlDatabase,
+  sqlite: Database.Database,
+  folderId: string | null,
+  orderedIds: string[],
+): void {
+  // Validate: no duplicates
+  const seen = new Set<string>();
+  for (const id of orderedIds) {
+    if (seen.has(id)) {
+      throw new Error(`Duplicate id in orderedIds: ${id}`);
+    }
+    seen.add(id);
+  }
+
+  // Validate: the set of orderedIds must equal the set of trash_level=0 notes
+  // in the target folder. Reading via raw sqlite keeps the IS NULL comparison
+  // clean (drizzle's `eq(col, null)` compiles to `= NULL`, which is always
+  // false in SQL).
+  const currentIds = (
+    folderId === null
+      ? sqlite.prepare('SELECT id FROM notes WHERE folder_id IS NULL AND trash_level = 0').all()
+      : sqlite.prepare('SELECT id FROM notes WHERE folder_id = ? AND trash_level = 0').all(folderId)
+  ) as { id: string }[];
+
+  if (currentIds.length !== orderedIds.length) {
+    throw new Error(
+      `orderedIds length ${orderedIds.length} does not match folder ${folderId ?? '<unfiled>'} note count ${currentIds.length}`,
+    );
+  }
+  const currentSet = new Set(currentIds.map((r) => r.id));
+  for (const id of orderedIds) {
+    if (!currentSet.has(id)) {
+      throw new Error(`Note ${id} is not in folder ${folderId ?? '<unfiled>'} (or is trashed)`);
+    }
+  }
+
+  // Apply in a single transaction: position i*1000 (1-indexed) for each id.
+  const tx = sqlite.transaction((ids: string[]) => {
+    const stmt = sqlite.prepare('UPDATE notes SET position = ? WHERE id = ?');
+    for (let i = 0; i < ids.length; i++) {
+      stmt.run((i + 1) * 1000, ids[i]);
+    }
+  });
+  tx.immediate(orderedIds);
+}

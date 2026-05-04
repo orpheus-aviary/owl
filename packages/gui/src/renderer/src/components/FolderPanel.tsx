@@ -16,8 +16,10 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import type { Note } from '@/lib/api';
+import * as api from '@/lib/api';
 import type { DragData, DropTarget } from '@/lib/dnd-types';
 import { cn } from '@/lib/utils';
+import { useDataBus } from '@/stores/data-bus';
 import { openNoteById } from '@/stores/editor-store';
 import {
   type FolderNode,
@@ -36,6 +38,8 @@ import {
   FolderPlus,
   Inbox,
   MoreHorizontal,
+  Pin,
+  PinOff,
 } from 'lucide-react';
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -296,6 +300,36 @@ function DroppableGap({
   );
 }
 
+/** Thin drop zone between sibling notes within a folder (P3.4-a). Same
+ *  2px indicator style as DroppableGap. Only highlights when a note drag is
+ *  active — folder drags would not produce a meaningful outcome here (folders
+ *  drop on folder-gap / folder-node / root-blank).
+ */
+function DroppableNoteGap({
+  id,
+  folderId,
+  index,
+}: {
+  id: string;
+  folderId: string | null;
+  index: number;
+}) {
+  const data: DropTarget = { kind: 'note-gap', folderId, index };
+  const { setNodeRef, isOver } = useDroppable({ id, data });
+  const { active } = useDndContext();
+  const isNoteDrag = active?.data.current
+    ? (active.data.current as { kind?: string }).kind === 'note'
+    : false;
+  const show = isOver && isNoteDrag;
+  return (
+    <div ref={setNodeRef} className="relative h-1.5">
+      {show && (
+        <div className="absolute inset-x-2 top-1/2 h-0.5 -translate-y-1/2 rounded-full bg-sidebar-primary" />
+      )}
+    </div>
+  );
+}
+
 /** Dashed drop zone pinned to the panel footer (outside the scroll area).
  *  Only rendered while a drag is active, to avoid occupying space at rest.
  *  Dropping a folder here promotes it to top-level; dropping a note here
@@ -372,18 +406,30 @@ function UnfiledSection({
           <span className="ml-1 text-[10px]">({notes.length})</span>
         </span>
       </button>
-      {isOpen &&
-        notes.map((note) => (
-          <FolderNoteRow
-            key={note.id}
-            note={note}
-            depth={1}
-            isSelected={selectedNoteId === note.id}
-            onSelect={onSelectNote}
-            onOpen={onOpenNote}
-            onDelete={onDeleteNote}
-          />
-        ))}
+      {isOpen && (
+        <>
+          {notes.map((note, i) => (
+            <Fragment key={note.id}>
+              <DroppableNoteGap id={`note-gap:unfiled:${i}`} folderId={null} index={i} />
+              <FolderNoteRow
+                note={note}
+                depth={1}
+                isSelected={selectedNoteId === note.id}
+                onSelect={onSelectNote}
+                onOpen={onOpenNote}
+                onDelete={onDeleteNote}
+              />
+            </Fragment>
+          ))}
+          {notes.length > 0 && (
+            <DroppableNoteGap
+              id={`note-gap:unfiled:${notes.length}`}
+              folderId={null}
+              index={notes.length}
+            />
+          )}
+        </>
+      )}
     </div>
   );
 }
@@ -556,17 +602,26 @@ function ChildrenBlock({
           index={node.children.length}
         />
       )}
-      {folderNotes.map((note) => (
-        <FolderNoteRow
-          key={note.id}
-          note={note}
-          depth={depth + 1}
-          isSelected={h.selectedNoteId === note.id}
-          onSelect={h.onSelectNote}
-          onOpen={h.onOpenNote}
-          onDelete={h.onDeleteNote}
-        />
+      {folderNotes.map((note, i) => (
+        <Fragment key={note.id}>
+          <DroppableNoteGap id={`note-gap:${node.id}:${i}`} folderId={node.id} index={i} />
+          <FolderNoteRow
+            note={note}
+            depth={depth + 1}
+            isSelected={h.selectedNoteId === note.id}
+            onSelect={h.onSelectNote}
+            onOpen={h.onOpenNote}
+            onDelete={h.onDeleteNote}
+          />
+        </Fragment>
       ))}
+      {folderNotes.length > 0 && (
+        <DroppableNoteGap
+          id={`note-gap:${node.id}:${folderNotes.length}`}
+          folderId={node.id}
+          index={folderNotes.length}
+        />
+      )}
     </div>
   );
 }
@@ -590,11 +645,21 @@ function FolderNoteRow({
 }) {
   const title = extractTitle(note.content);
   const indent = depth * 12 + 4;
+  const pinned = note.pinnedAt != null;
   const dragData: DragData = { kind: 'note', noteId: note.id };
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: `panel-note:${note.id}`,
     data: dragData,
   });
+
+  const handleTogglePin = async () => {
+    try {
+      await api.pinNote(note.id, !pinned);
+      useDataBus.getState().bumpNotes();
+    } catch (err) {
+      console.error('pin toggle failed', err);
+    }
+  };
 
   return (
     <ContextMenu>
@@ -616,9 +681,24 @@ function FolderNoteRow({
           <div className="size-4 shrink-0" />
           <FileText className="size-3.5 shrink-0 text-muted-foreground" />
           <span className="flex-1 truncate text-xs">{title}</span>
+          {/* Pin indicator — property only, does NOT affect sort or bg in the panel (P3.4-a §1.1). */}
+          {pinned && <Pin className="size-3 shrink-0 text-primary rotate-45" aria-label="已置顶" />}
         </div>
       </ContextMenuTrigger>
       <ContextMenuContent>
+        <ContextMenuItem onClick={handleTogglePin}>
+          {pinned ? (
+            <>
+              <PinOff className="size-3.5" />
+              取消置顶
+            </>
+          ) : (
+            <>
+              <Pin className="size-3.5" />
+              置顶
+            </>
+          )}
+        </ContextMenuItem>
         <ContextMenuItem variant="destructive" onClick={() => onDelete(note.id)}>
           删除
         </ContextMenuItem>

@@ -10,6 +10,8 @@ export {
   MigrationBusyError,
   SourceDbCorruptionError,
   SchemaMismatchError,
+  ForwardMigrationError,
+  DestructiveForwardMigrationError,
 } from './db/migrate.js';
 export type {
   MigrateOptions,
@@ -52,6 +54,8 @@ export {
   batchRestoreNotes,
   batchPermanentDeleteNotes,
   contentHash,
+  setNotePinned,
+  reorderNotesInFolder,
 } from './notes/index.js';
 export type {
   NoteWithTags,

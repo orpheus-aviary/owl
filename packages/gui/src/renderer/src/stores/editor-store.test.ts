@@ -44,6 +44,8 @@ function makeNote(id: string, content: string): Note {
     autoDeleteAt: null,
     deviceId: null,
     contentHash: null,
+    pinnedAt: null,
+    position: null,
   };
 }
 

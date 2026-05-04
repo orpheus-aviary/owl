@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { after, before, describe, it } from 'node:test';
 import BetterSqlite3 from 'better-sqlite3';
 import {
+  DestructiveForwardMigrationError,
   IncompatibleDbError,
   LATEST_KNOWN_VERSION,
   MigrationBusyError,
@@ -14,6 +15,12 @@ import {
   createDatabase,
   migrateLegacyDb,
 } from '../index.js';
+import {
+  applyForwardMigrations,
+  assertNotDestructive,
+  readInitialSql,
+  resolveMigrationFile,
+} from './migrate.js';
 
 /**
  * Build a pre-v0.3 legacy database by hand: the DDL below matches what a
@@ -708,5 +715,167 @@ describe('migrate — FTS rebuild integrity and Phase C rollback', () => {
     const retry = await migrateLegacyDb(dbPath);
     assert.equal(retry.notesCount, 2);
     assert.ok(!retry.alreadyMigrated);
+  });
+});
+
+describe('migrate — applyForwardMigrations (P3.4-a)', () => {
+  let tmp: string;
+
+  before(() => {
+    tmp = mkdtempSync(join(tmpdir(), 'owl-fwdmigrate-test-'));
+  });
+
+  after(() => {
+    rmSync(tmp, { recursive: true, force: true });
+  });
+
+  /**
+   * Regression防线 for the "new DB forgets forward migrations" bug fixed in
+   * §3.1 of the P3.4-a design. Before the fix, applyInitialSchema stamped
+   * LATEST_KNOWN_VERSION directly, so bumping LATEST=2 would leave fresh
+   * installs with 0001-only schema but user_version=2.
+   */
+  it('F1: applyInitialSchema on fresh db → user_version=LATEST AND all forward columns present', () => {
+    const dbPath = join(tmp, 'f1.db');
+    const { sqlite } = createDatabase({ dbPath });
+    try {
+      const v = sqlite.pragma('user_version', { simple: true }) as number;
+      assert.equal(v, LATEST_KNOWN_VERSION);
+      const noteCols = (sqlite.pragma('table_info(notes)') as { name: string }[]).map(
+        (c) => c.name,
+      );
+      assert.ok(noteCols.includes('pinned_at'), 'pinned_at column must exist');
+      assert.ok(noteCols.includes('position'), 'position column must exist');
+      const idx = sqlite
+        .prepare(
+          "SELECT name FROM sqlite_master WHERE type='index' AND name='idx_notes_folder_position'",
+        )
+        .get();
+      assert.ok(idx, 'idx_notes_folder_position index must exist');
+    } finally {
+      sqlite.close();
+    }
+  });
+
+  it('F2: v=1 db opened by createDatabase → forward migrations applied, user_version=2', () => {
+    const dbPath = join(tmp, 'f2.db');
+    // Seed a clean v=1 db: apply 0001 only (via readInitialSql, not applyInitialSchema),
+    // stamp user_version=1. This is exactly how a 0.3.0 user's db looks on disk.
+    {
+      const sqlite = new BetterSqlite3(dbPath);
+      try {
+        sqlite.exec(readInitialSql());
+        sqlite.pragma('user_version = 1');
+      } finally {
+        sqlite.close();
+      }
+    }
+    const { sqlite } = createDatabase({ dbPath });
+    try {
+      assert.equal(sqlite.pragma('user_version', { simple: true }) as number, 2);
+      const noteCols = (sqlite.pragma('table_info(notes)') as { name: string }[]).map(
+        (c) => c.name,
+      );
+      assert.ok(noteCols.includes('pinned_at'));
+      assert.ok(noteCols.includes('position'));
+    } finally {
+      sqlite.close();
+    }
+  });
+
+  it('F3: applyForwardMigrations(N, N) is a no-op on current db', () => {
+    const dbPath = join(tmp, 'f3.db');
+    const { sqlite } = createDatabase({ dbPath });
+    try {
+      const beforeCols = (sqlite.pragma('table_info(notes)') as { name: string }[]).length;
+      applyForwardMigrations(sqlite, LATEST_KNOWN_VERSION, LATEST_KNOWN_VERSION);
+      const afterCols = (sqlite.pragma('table_info(notes)') as { name: string }[]).length;
+      assert.equal(beforeCols, afterCols);
+      assert.equal(sqlite.pragma('user_version', { simple: true }) as number, LATEST_KNOWN_VERSION);
+    } finally {
+      sqlite.close();
+    }
+  });
+
+  it('F4: partial forward migration persists earlier successes on later failure', () => {
+    const dbPath = join(tmp, 'f4.db');
+    // Seed a real v=1 db (0001 applied, stamped 1)
+    {
+      const sqlite = new BetterSqlite3(dbPath);
+      try {
+        sqlite.exec(readInitialSql());
+        sqlite.pragma('user_version = 1');
+      } finally {
+        sqlite.close();
+      }
+    }
+    // Walk 1→3: v=2 exists and applies cleanly; v=3 file missing → throws.
+    // Contract: partial progress is preserved, user_version stays at 2.
+    const sqlite = new BetterSqlite3(dbPath);
+    try {
+      assert.throws(() => applyForwardMigrations(sqlite, 1, 3), /No migration file found for v3/);
+      assert.equal(sqlite.pragma('user_version', { simple: true }) as number, 2);
+      const noteCols = (sqlite.pragma('table_info(notes)') as { name: string }[]).map(
+        (c) => c.name,
+      );
+      assert.ok(noteCols.includes('pinned_at'));
+    } finally {
+      sqlite.close();
+    }
+  });
+
+  it('F5: v > LATEST → createDatabase throws IncompatibleDbError', () => {
+    const dbPath = join(tmp, 'f5.db');
+    {
+      const { sqlite } = createDatabase({ dbPath });
+      sqlite.pragma('user_version = 99');
+      sqlite.close();
+    }
+    assert.throws(
+      () => createDatabase({ dbPath }),
+      (err: Error) => err instanceof IncompatibleDbError,
+    );
+  });
+
+  it('F6: resolveMigrationFile locates existing + rejects missing', () => {
+    assert.ok(resolveMigrationFile(1).endsWith('0001_initial.sql'));
+    assert.ok(resolveMigrationFile(2).endsWith('0002_sorting.sql'));
+    assert.throws(() => resolveMigrationFile(99), /No migration file/);
+  });
+
+  it('F7: assertNotDestructive passes on 0002 but throws on marked fixture', () => {
+    // Real 0002 has no marker
+    assertNotDestructive(
+      '-- 0002_sorting.sql\nALTER TABLE notes ADD COLUMN pinned_at INTEGER;',
+      2,
+      '/fake/0002_sorting.sql',
+    );
+    // Marked fixture raises
+    const marked =
+      '-- 0099_foo.sql\n-- requires_confirmation: true\nALTER TABLE x ADD COLUMN y INTEGER;';
+    assert.throws(
+      () => assertNotDestructive(marked, 99, '/fake/0099_foo.sql'),
+      (err: Error) => err instanceof DestructiveForwardMigrationError,
+    );
+  });
+
+  it('F8: rebuild path (migrateLegacyDb) ends at user_version=LATEST with forward columns', async () => {
+    const dbPath = join(tmp, 'f8.db');
+    seedLegacyV02Db(dbPath);
+
+    const result = await migrateLegacyDb(dbPath);
+    assert.ok(!result.alreadyMigrated);
+
+    const sqlite = new BetterSqlite3(dbPath);
+    try {
+      assert.equal(sqlite.pragma('user_version', { simple: true }) as number, LATEST_KNOWN_VERSION);
+      const noteCols = (sqlite.pragma('table_info(notes)') as { name: string }[]).map(
+        (c) => c.name,
+      );
+      assert.ok(noteCols.includes('pinned_at'));
+      assert.ok(noteCols.includes('position'));
+    } finally {
+      sqlite.close();
+    }
   });
 });

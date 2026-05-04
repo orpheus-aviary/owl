@@ -1,5 +1,6 @@
 import {
   IncompatibleDbError,
+  LATEST_KNOWN_VERSION,
   MigrationBusyError,
   SchemaMismatchError,
   SourceDbCorruptionError,
@@ -58,14 +59,15 @@ describe('mapMigrationError — pure error → { reason, message }', () => {
     expect(mapped.message).toContain("missing required column 'content'");
   });
 
-  // E5: IncompatibleDbError — version numbers rendered in Chinese copy
-  it('E5: IncompatibleDbError → incompatible + v99/v1 text', () => {
+  // E5: IncompatibleDbError — version numbers rendered in Chinese copy.
+  // Uses LATEST_KNOWN_VERSION so the assertion tracks schema bumps (P3.4-a: 1→2).
+  it('E5: IncompatibleDbError → incompatible + v99 + max-supported text', () => {
     const err = new IncompatibleDbError('/tmp/a.db', 99);
     const mapped = mapMigrationError(err);
     expect(mapped.ok).toBe(false);
     expect(mapped.reason).toBe('incompatible');
     expect(mapped.message).toContain('v99');
-    expect(mapped.message).toContain('v1');
+    expect(mapped.message).toContain(`v${LATEST_KNOWN_VERSION}`);
   });
 
   // E6: generic Error falls through to `unknown` with the message preserved

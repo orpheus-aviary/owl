@@ -1124,4 +1124,184 @@ describe('daemon API', () => {
       await app.inject({ method: 'DELETE', url: `/folders/${root.id}` });
     });
   });
+
+  describe('PATCH /notes/:id/pin + POST /notes/reorder (P3.4-a)', () => {
+    it('PATCH /notes/:id/pin sets pinned_at and leaves updated_at untouched', async () => {
+      const created = await app.inject({
+        method: 'POST',
+        url: '/notes',
+        payload: { content: '# pin me' },
+      });
+      const note = created.json().data as {
+        id: string;
+        updatedAt: string;
+        pinnedAt: string | null;
+      };
+      assert.equal(note.pinnedAt, null);
+      const originalUpdatedAt = note.updatedAt;
+
+      await new Promise((r) => setTimeout(r, 5));
+
+      const pinned = await app.inject({
+        method: 'PATCH',
+        url: `/notes/${note.id}/pin`,
+        payload: { pinned: true },
+      });
+      assert.equal(pinned.statusCode, 200);
+      const pinnedNote = pinned.json().data as { pinnedAt: string | null; updatedAt: string };
+      assert.ok(pinnedNote.pinnedAt, 'pinnedAt must be set after pin=true');
+      assert.equal(pinnedNote.updatedAt, originalUpdatedAt, 'pin must not bump updated_at');
+
+      const unpinned = await app.inject({
+        method: 'PATCH',
+        url: `/notes/${note.id}/pin`,
+        payload: { pinned: false },
+      });
+      assert.equal(unpinned.json().data.pinnedAt, null);
+
+      // Cleanup
+      await app.inject({ method: 'POST', url: `/notes/${note.id}/permanent-delete` });
+    });
+
+    it('PATCH /notes/:id/pin rejects missing boolean', async () => {
+      const res = await app.inject({
+        method: 'PATCH',
+        url: '/notes/any-id/pin',
+        payload: {},
+      });
+      assert.equal(res.statusCode, 400);
+      assert.equal(res.json().error_code, 'USAGE_ERROR');
+    });
+
+    it('PATCH /notes/:id/pin returns 404 for unknown id', async () => {
+      const res = await app.inject({
+        method: 'PATCH',
+        url: '/notes/00000000-0000-0000-0000-000000000999/pin',
+        payload: { pinned: true },
+      });
+      assert.equal(res.statusCode, 404);
+      assert.equal(res.json().error_code, 'NOTE_NOT_FOUND');
+    });
+
+    it('POST /notes/reorder writes positions and GET /notes?sort_by=position returns the new order', async () => {
+      // Seed three notes in the unfiled scope
+      const a = (
+        await app.inject({ method: 'POST', url: '/notes', payload: { content: '# a' } })
+      ).json().data as { id: string };
+      const b = (
+        await app.inject({ method: 'POST', url: '/notes', payload: { content: '# b' } })
+      ).json().data as { id: string };
+      const c = (
+        await app.inject({ method: 'POST', url: '/notes', payload: { content: '# c' } })
+      ).json().data as { id: string };
+
+      // ordered_ids must be the full set — include special notes + any
+      // leftovers from prior tests in this suite.
+      const allUnfiled = (
+        await app.inject({
+          method: 'GET',
+          url: '/notes?folder_id=null&include_descendants=false&limit=100',
+        })
+      ).json().data as { id: string }[];
+      // Put our three at the front in custom order, rest trailing.
+      const others = allUnfiled
+        .map((n) => n.id)
+        .filter((id) => id !== a.id && id !== b.id && id !== c.id);
+      const order = [c.id, a.id, b.id, ...others];
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/notes/reorder',
+        payload: { folder_id: null, ordered_ids: order },
+      });
+      assert.equal(res.statusCode, 200);
+
+      const listed = (
+        await app.inject({
+          method: 'GET',
+          url: '/notes?folder_id=null&include_descendants=false&sort_by=position&limit=100',
+        })
+      ).json().data as { id: string; position: number | null }[];
+      // First 3 should be exactly c, a, b (matching our requested prefix).
+      assert.deepEqual(
+        listed.slice(0, 3).map((n) => n.id),
+        [c.id, a.id, b.id],
+      );
+      assert.equal(listed[0].position, 1000);
+      assert.equal(listed[1].position, 2000);
+      assert.equal(listed[2].position, 3000);
+
+      // Cleanup
+      await app.inject({ method: 'POST', url: `/notes/${a.id}/permanent-delete` });
+      await app.inject({ method: 'POST', url: `/notes/${b.id}/permanent-delete` });
+      await app.inject({ method: 'POST', url: `/notes/${c.id}/permanent-delete` });
+    });
+
+    it('POST /notes/reorder rejects missing folder_id / non-array ordered_ids / invalid order', async () => {
+      // Missing folder_id (undefined, not null)
+      const noFolder = await app.inject({
+        method: 'POST',
+        url: '/notes/reorder',
+        payload: { ordered_ids: [] },
+      });
+      assert.equal(noFolder.statusCode, 400);
+      assert.equal(noFolder.json().error_code, 'USAGE_ERROR');
+
+      // Non-array ordered_ids
+      const badIds = await app.inject({
+        method: 'POST',
+        url: '/notes/reorder',
+        payload: { folder_id: null, ordered_ids: 'not-an-array' },
+      });
+      assert.equal(badIds.statusCode, 400);
+
+      // Duplicate id → core validation → 400 REORDER_INVALID
+      const a = (
+        await app.inject({ method: 'POST', url: '/notes', payload: { content: '# a' } })
+      ).json().data as { id: string };
+      const dup = await app.inject({
+        method: 'POST',
+        url: '/notes/reorder',
+        payload: { folder_id: null, ordered_ids: [a.id, a.id] },
+      });
+      assert.equal(dup.statusCode, 400);
+      assert.equal(dup.json().error_code, 'REORDER_INVALID');
+
+      await app.inject({ method: 'POST', url: `/notes/${a.id}/permanent-delete` });
+    });
+
+    it('GET /notes?pinned_first=true places pinned notes first', async () => {
+      const older = (
+        await app.inject({ method: 'POST', url: '/notes', payload: { content: '# older' } })
+      ).json().data as { id: string };
+      await new Promise((r) => setTimeout(r, 10));
+      const newer = (
+        await app.inject({ method: 'POST', url: '/notes', payload: { content: '# newer' } })
+      ).json().data as { id: string };
+
+      // Pin the older one — without pinnedFirst it would be below newer
+      await app.inject({
+        method: 'PATCH',
+        url: `/notes/${older.id}/pin`,
+        payload: { pinned: true },
+      });
+
+      const withPinFirst = (
+        await app.inject({ method: 'GET', url: '/notes?pinned_first=true&limit=100' })
+      ).json().data as { id: string }[];
+      const olderIdx = withPinFirst.findIndex((n) => n.id === older.id);
+      const newerIdx = withPinFirst.findIndex((n) => n.id === newer.id);
+      assert.ok(olderIdx >= 0 && newerIdx >= 0);
+      assert.ok(olderIdx < newerIdx, 'pinned older note must precede unpinned newer note');
+
+      const withoutPinFirst = (await app.inject({ method: 'GET', url: '/notes?limit=100' })).json()
+        .data as { id: string }[];
+      const olderIdx2 = withoutPinFirst.findIndex((n) => n.id === older.id);
+      const newerIdx2 = withoutPinFirst.findIndex((n) => n.id === newer.id);
+      assert.ok(newerIdx2 < olderIdx2, 'without pinned_first, newer note precedes older');
+
+      await app.inject({ method: 'POST', url: `/notes/${older.id}/permanent-delete` });
+      await app.inject({ method: 'POST', url: `/notes/${newer.id}/permanent-delete` });
+    });
+  });
 });
