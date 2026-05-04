@@ -33,9 +33,7 @@ function readVersion(): string {
     try {
       const v = (JSON.parse(readFileSync(p, 'utf8')) as { version?: string }).version;
       if (v) return v;
-    } catch {
-      // try next candidate
-    }
+    } catch {}
   }
   return '0.0.0-dev';
 }
@@ -346,7 +344,7 @@ export function buildProgram(): Command {
           json: opts.json === true,
           human: opts.human === true,
         },
-        { streams, version: program.version() ?? '0.0.0' },
+        { streams, version: VERSION },
       );
     });
 
@@ -370,14 +368,14 @@ async function main(): Promise<void> {
 // Only auto-run when invoked as a script (not imported).
 // `npm i -g` installs this file under node_modules/@orpheus-aviary/owl-cli/
 // and links bin/owl → that path via symlink. Node keeps argv[1] as the
-// symlink path, while import.meta.url is the realpath, so compare resolved
-// paths. Wrap in try/catch for environments where argv[1] isn't a file.
+// symlink path, while import.meta.url is the realpath, so a string-equal
+// shortcut + realpath fallback covers both direct and symlinked invocations.
+// Wrap in try/catch for environments where argv[1] isn't a file.
 const entryPath = process.argv[1];
 if (entryPath) {
   try {
-    const invoked = realpathSync(entryPath);
     const self = fileURLToPath(import.meta.url);
-    if (invoked === self) {
+    if (entryPath === self || realpathSync(entryPath) === self) {
       await main();
     }
   } catch {

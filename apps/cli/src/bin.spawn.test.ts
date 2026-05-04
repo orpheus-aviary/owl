@@ -3,7 +3,7 @@ import { existsSync, readFileSync, rmSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 /** Simulates `npm i -g`: invokes the bundled CLI via a symlink to dist/index.js.
  *  argv[1] = symlink path, import.meta.url = realpath → exercises the entry
@@ -28,12 +28,11 @@ describe('CLI bin smoke (spawned through a symlink)', () => {
       );
     }
     symlinkPath = join(tmpdir(), `owl-bin-smoke-${process.pid}-${Date.now()}.js`);
-    try {
-      rmSync(symlinkPath, { force: true });
-    } catch {
-      // best-effort cleanup
-    }
     symlinkSync(distEntry, symlinkPath);
+  });
+
+  afterAll(() => {
+    rmSync(symlinkPath, { force: true });
   });
 
   it('`owl --version` via symlink prints workspace version', () => {
