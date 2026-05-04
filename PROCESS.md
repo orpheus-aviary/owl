@@ -1,6 +1,8 @@
 # 开发进度
 
-## 当前状态：**P3.2.5 release polish 已 ship（2026-05-04）**，459/459 测试通过。3 个 feature + docs/plan ship 记 = 4 commits `e6ff4eb`..`7c560bc`。设计文档 `docs/plans/2026-05-03-p3-2-5-design.md`（本轮 6 轮 review 逐条对齐）。下一步：P3.3 统一发 0.3.0。
+## 当前状态：**P3.3 0.3.0 已 ship（2026-05-04）**，461/461 测试通过。GUI `v0.3.0` (GitHub Release + `Owl-0.3.0-arm64.dmg`) 与 CLI `cli-v0.3.0` (`@orpheus-aviary/owl-cli@0.3.0` on npm) 独立渠道同日发布。发布前在 npm 本地装包 smoke 中发现 `npm i -g` symlink 安装下 CLI 入口 guard 失效（`owl --version` 静默 exit 0）+ `program.version()` 硬编码 `0.3.0-dev` 脱节，两问题修复落在 commit `08e9965`，新增 spawn-via-symlink smoke test 作回归保护（CLI 测试 117 → 119）。2 个 commit 交付：`08e9965` (fix + smoke) + `fabf142` (chore release bump)。
+
+P3.2.5 release polish 已 ship（2026-05-04，3 commits `e6ff4eb`..`b49f6da`，459/459）。
 
 P3.2-d SSE 反向通道 + `owl open` 已 ship（2026-05-03，5 commits `5168b60`..`c565955`，426/426）。
 
