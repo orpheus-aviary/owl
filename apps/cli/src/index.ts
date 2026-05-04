@@ -1,3 +1,6 @@
+import { readFileSync, realpathSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { Command } from 'commander';
 import { runAppend } from './commands/append.js';
 import { runCreate } from './commands/create.js';
@@ -20,6 +23,23 @@ import { EXIT_CODES } from './lib/exit-codes.js';
 import { writeError } from './lib/output.js';
 
 const streams = { stdout: process.stdout, stderr: process.stderr };
+
+/** Read CLI version from the nearest package.json. Bundled `dist/` has a
+ *  sibling package.json; in dev (`tsx src/index.ts`) the workspace
+ *  package.json sits one level up. */
+function readVersion(): string {
+  const here = dirname(fileURLToPath(import.meta.url));
+  for (const p of [join(here, 'package.json'), join(here, '..', 'package.json')]) {
+    try {
+      const v = (JSON.parse(readFileSync(p, 'utf8')) as { version?: string }).version;
+      if (v) return v;
+    } catch {
+      // try next candidate
+    }
+  }
+  return '0.0.0-dev';
+}
+const VERSION = readVersion();
 
 /** Wrap an action that needs a backend + context — builds it, runs, and closes. */
 // biome-ignore lint/suspicious/noExplicitAny: commander's variadic action signature resists strict typing here
@@ -65,7 +85,7 @@ function collect(value: string, previous: string[] = []): string[] {
 
 export function buildProgram(): Command {
   const program = new Command('owl');
-  program.version('0.3.0-dev').description('Owl CLI — notes read/write for agents and humans');
+  program.version(VERSION).description('Owl CLI — notes read/write for agents and humans');
 
   // ── Global flags ──
   program
@@ -347,13 +367,22 @@ async function main(): Promise<void> {
   }
 }
 
-// Only auto-run when invoked as a script (import.meta.url check)
+// Only auto-run when invoked as a script (not imported).
+// `npm i -g` installs this file under node_modules/@orpheus-aviary/owl-cli/
+// and links bin/owl → that path via symlink. Node keeps argv[1] as the
+// symlink path, while import.meta.url is the realpath, so compare resolved
+// paths. Wrap in try/catch for environments where argv[1] isn't a file.
 const entryPath = process.argv[1];
-if (
-  entryPath &&
-  (import.meta.url === `file://${entryPath}` || import.meta.url.endsWith(entryPath))
-) {
-  await main();
+if (entryPath) {
+  try {
+    const invoked = realpathSync(entryPath);
+    const self = fileURLToPath(import.meta.url);
+    if (invoked === self) {
+      await main();
+    }
+  } catch {
+    // argv[1] doesn't resolve — not a script invocation, stay silent.
+  }
 }
 
 export { main };
