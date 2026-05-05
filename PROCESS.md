@@ -2,7 +2,7 @@
 
 ## 当前阶段：P3.4 UX 完善（进行中）
 
-475/475 测试通过（core 150 + daemon 128 + gui 92 + apps/cli 105）。P3.4-a **2026-05-05 shipped**（设计 + 实施 + 手动验证同日完成）。P3.4-b **2026-05-05 shipped**（5 files / +20 -7；color-bar 用 inset box-shadow，和 active/pin 共存）。
+514/514 测试通过（core 150 + daemon 128 + gui 117 + apps/cli 119）。P3.4-a / P3.4-b / P3.4-c 均 **2026-05-05 shipped**。
 
 ### P3.4 子项（a → f 顺序，完成后与 P4 一起发 0.4.0）
 
@@ -10,16 +10,19 @@
 |---|---|---|---|
 | **P3.4-a** | 笔记排序模型（置顶 `pinned_at` + 同层级 DnD `position`，0002_sorting.sql 首验 forward migration runner） | 中 | **✅ shipped 2026-05-05** |
 | **P3.4-b** | 特殊笔记视觉区分（`#随记` 蓝边框 / `#待办` 粉边框，NoteList + 浏览页） | 小 | **✅ shipped 2026-05-05** |
-| **P3.4-c** | AI chat 笔记 id → 可跳转标题（方案 A regex + LRU 缓存 + 左键跳/右键复制 id） | 小 | pending |
+| **P3.4-c** | AI chat 笔记 id → pill（覆盖裸 UUID / 单反引号 / `[label](uuid)` 三形态，prompt 约束 + FTS5 提示） | 小 | **✅ shipped 2026-05-05** |
 | **P3.4-d** | TagBar 输入框 Tab/Enter 区分补全（Tab 纯字面量 / Enter 触发 picker） | 小 | pending |
 | **P3.4-e** | 笔记 tab VSCode 风格（斜体预览 / 双击编辑 / 单击切换） | 中 | pending |
 | **P3.4-f** | 聊天持久化 + 侧栏布局（按 `docs/plans/2026-04-18-chat-persistence.md`） | 中 | pending |
 
-子项 scope 详情见 `docs/plans/2026-04-20-p3-plan.md` §7。P3.4-a 详细实施记录见 `docs/plans/2026-05-05-p3-4-a-sorting-model-design.md` § Implementation record；P3.4-b 见 `docs/plans/2026-05-05-p3-4-b-special-notes-visual-design.md` § Implementation record。
+子项 scope 详情见 `docs/plans/2026-04-20-p3-plan.md` §7。各子项 Implementation record：
+- P3.4-a：`docs/plans/2026-05-05-p3-4-a-sorting-model-design.md`
+- P3.4-b：`docs/plans/2026-05-05-p3-4-b-special-notes-visual-design.md`
+- P3.4-c：`docs/plans/2026-05-05-p3-4-c-note-id-pill-design.md`
 
 ### 下一步
 
-开 P3.4-c 的 design doc：`docs/plans/YYYY-MM-DD-p3-4-c-note-id-pill-design.md`。每个子项动工前单独开 design doc（沿用 P3.2-a/b/c/d 命名），不再开总 plan 文件。
+开 P3.4-d design doc：`docs/plans/YYYY-MM-DD-p3-4-d-tagbar-tab-enter-design.md`。每子项动工前单独开 design doc，不再开总 plan 文件。
 
 ## 整体路线
 
