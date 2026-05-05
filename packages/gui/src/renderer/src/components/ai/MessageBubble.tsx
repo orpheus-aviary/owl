@@ -142,7 +142,11 @@ function AssistantBubble({ message, chatId }: { message: ChatMessage; chatId: st
       )}
       {message.content && (
         <div className="relative">
-          <MarkdownPreview content={message.content} className="!p-2 !overflow-visible" />
+          <MarkdownPreview
+            content={message.content}
+            className="!p-2 !overflow-visible"
+            linkifyNoteIds
+          />
           {message.isStreaming && (
             <span
               aria-hidden="true"
@@ -159,32 +163,25 @@ function AssistantBubble({ message, chatId }: { message: ChatMessage; chatId: st
 }
 
 /**
- * Collapsible reasoning / chain-of-thought block. Default collapsed so the
- * bubble stays compact; users opt in if they want to peek at the model's
- * private reasoning. Streaming auto-expands so users see progress; they can
- * collapse it manually mid-stream and the choice is honored.
+ * Collapsible reasoning / chain-of-thought block. Always default collapsed
+ * (even while streaming) — users opt in if they want to peek at the model's
+ * private reasoning.
  */
 function ThinkingBlock({ content, streaming }: { content: string; streaming: boolean }) {
   const [open, setOpen] = useState(false);
-  const [userToggled, setUserToggled] = useState(false);
-  const isOpen = userToggled ? open : streaming;
-  const onClick = () => {
-    setUserToggled(true);
-    setOpen(!isOpen);
-  };
   return (
     <div className="px-1">
       <button
         type="button"
-        onClick={onClick}
+        onClick={() => setOpen(!open)}
         className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
       >
-        {isOpen ? <ChevronDown className="size-3" /> : <ChevronRight className="size-3" />}
+        {open ? <ChevronDown className="size-3" /> : <ChevronRight className="size-3" />}
         <Brain className="size-3" />
         <span>思考过程</span>
         {streaming && <span className="text-[10px] opacity-60">(进行中…)</span>}
       </button>
-      {isOpen && (
+      {open && (
         <div className="mt-1 ml-4 pl-2 border-l-2 border-muted-foreground/20 text-xs text-muted-foreground whitespace-pre-wrap leading-relaxed">
           {content}
         </div>
