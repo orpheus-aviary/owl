@@ -8,6 +8,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import * as api from '@/lib/api';
+import { SPECIAL_NOTE_ID_SET } from '@/lib/special-notes';
 import { useDataBus } from '@/stores/data-bus';
 import { useEditorStore } from '@/stores/editor-store';
 import { useCallback } from 'react';
@@ -24,12 +25,6 @@ import { create } from 'zustand';
  * just to immediately move it to trash is a confusing UX. Users who want to
  * preserve their edits can cancel, save manually, then delete again.
  */
-
-/** Kept in sync with `SPECIAL_NOTES` in `@owl/core/db/special-notes`. */
-const SPECIAL_NOTE_IDS: ReadonlySet<string> = new Set([
-  '00000000-0000-0000-0000-000000000001', // #随记
-  '00000000-0000-0000-0000-000000000002', // #待办
-]);
 
 interface PendingDeleteState {
   /** Non-null when a confirm / protected dialog is showing. */
@@ -78,7 +73,7 @@ export function useRequestDeleteNote(): (noteId: string) => Promise<void> {
       // Short-circuit for system-managed notes — daemon also guards with
       // 403, but surfacing a clear dialog up-front beats a silent failure
       // or a confusing HTTP error toast.
-      if (SPECIAL_NOTE_IDS.has(noteId)) {
+      if (SPECIAL_NOTE_ID_SET.has(noteId)) {
         const editor = useEditorStore.getState();
         const tab = editor.tabs.find((t) => t.noteId === noteId);
         openProtected(tab?.title ?? '系统笔记');

@@ -2,6 +2,7 @@ import { Badge } from '@/components/ui/badge';
 import type { Note, NoteTag } from '@/lib/api';
 import { formatDateCompact } from '@/lib/date-format';
 import type { DragData } from '@/lib/dnd-types';
+import { specialNoteColorVar } from '@/lib/special-notes';
 import { sortTags } from '@/lib/tag-sort';
 import { cn } from '@/lib/utils';
 import { useDraggable } from '@dnd-kit/core';
@@ -70,6 +71,7 @@ export function NoteListItem({
   const visible = sorted.slice(0, MAX_VISIBLE_TAGS);
   const overflow = sorted.length - MAX_VISIBLE_TAGS;
   const pinned = note.pinnedAt != null;
+  const specialColor = specialNoteColorVar(note.id);
 
   const dragData: DragData = { kind: 'note', noteId: note.id };
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
@@ -98,6 +100,9 @@ export function NoteListItem({
           onClick();
         }
       }}
+      // inset box-shadow (not border-l) — coexists with the 2px active border
+      // and the pinned background instead of fighting them. See P3.4-b design §3.
+      style={specialColor ? { boxShadow: `inset 4px 0 0 ${specialColor}` } : undefined}
       className={cn(
         'w-full text-left px-3 py-2 border-b border-border transition-colors outline-none cursor-pointer select-none',
         'hover:bg-accent/50',
