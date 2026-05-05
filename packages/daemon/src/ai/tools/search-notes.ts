@@ -19,7 +19,13 @@ export const searchNotesTool: ToolDef = {
     properties: {
       query: {
         type: 'string',
-        description: 'FTS5 query. Empty string falls back to recent notes by updated_at.',
+        description:
+          'SQLite FTS5 query. Supports: space = implicit AND (`react typescript` matches ' +
+          'notes containing both), explicit `AND` / `OR` / `NOT`, double-quoted phrases ' +
+          '(`"react hooks"`), and trailing `*` for prefix match (`type*` matches `typescript`, ' +
+          '`typed`). Prefer broad AND/OR queries over many single-word calls. ' +
+          'Empty string falls back to recent notes by updated_at. Queries under 3 chars ' +
+          'fall back to LIKE substring match.',
       },
       tags: {
         type: 'array',
