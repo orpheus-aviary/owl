@@ -103,10 +103,12 @@ export function registerAiRoutes(app: FastifyInstance, ctx: AppContext): void {
     }
   });
 
-  // ── GET /ai/conversations — list active conversations ───────────────
+  // ── GET /ai/conversations — list persisted conversations ────────────
+  // Returns sidebar-shaped rows ordered by updated_at DESC (P3.4-f §4.2).
   app.get('/ai/conversations', async (_req, reply) => {
     const list = ctx.conversationStore.list().map((c) => ({
       id: c.id,
+      title: c.title,
       created_at: c.createdAt.toISOString(),
       updated_at: c.updatedAt.toISOString(),
       message_count: c.messageCount,
@@ -114,7 +116,43 @@ export function registerAiRoutes(app: FastifyInstance, ctx: AppContext): void {
     ok(reply, { conversations: list });
   });
 
-  // ── DELETE /ai/conversations/:id — clear a conversation ─────────────
+  // ── GET /ai/conversations/:id — full history for GUI hydration ──────
+  // Filters: system role (prompt engineering, private) + reasoning_signature
+  // (Anthropic opaque blob, unused by GUI). Ships reasoning_content +
+  // is_error so GUI can recover ChatMessage.thinking + ChatToolCall.isError.
+  app.get<{ Params: { id: string } }>('/ai/conversations/:id', async (req, reply) => {
+    const { id } = req.params;
+    const { conversation, created } = ctx.conversationStore.getOrCreate(id);
+    if (created) {
+      // getOrCreate returned a fresh empty conversation → id not in DB.
+      ctx.conversationStore.delete(id); // clean up the ephemeral insert into the Map
+      fail(reply, 404, `conversation not found: ${id}`);
+      return;
+    }
+    // Re-query list() for title since Conversation itself doesn't carry it;
+    // small and updated_at-ordered already.
+    const meta = ctx.conversationStore.list().find((c) => c.id === id);
+    const messages = conversation.messages
+      .filter((m) => m.role !== 'system')
+      .map((m) => ({
+        role: m.role,
+        content: typeof m.content === 'string' ? m.content : JSON.stringify(m.content),
+        tool_calls: m.tool_calls ?? undefined,
+        tool_call_id: m.tool_call_id,
+        is_error: m.is_error,
+        reasoning_content: m.reasoning_content,
+        // reasoning_signature intentionally omitted — Anthropic-only blob.
+      }));
+    ok(reply, {
+      id,
+      title: meta?.title ?? '新对话',
+      created_at: meta?.createdAt.toISOString(),
+      updated_at: meta?.updatedAt.toISOString(),
+      messages,
+    });
+  });
+
+  // ── DELETE /ai/conversations/:id — CASCADE-clear a conversation ─────
   app.delete<{ Params: { id: string } }>('/ai/conversations/:id', async (req, reply) => {
     const { id } = req.params;
     const removed = ctx.conversationStore.delete(id);

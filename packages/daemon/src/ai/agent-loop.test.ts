@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
 import { after, before, describe, it } from 'node:test';
 import {
   DEFAULT_CONFIG,
@@ -82,7 +83,7 @@ describe('agent loop (P2-7c)', () => {
 
   function buildDeps(llm: LlmClient) {
     const registry = createBuiltinRegistry();
-    const conversations = new ConversationStore();
+    const conversations = new ConversationStore(sqlite);
     return {
       llmClient: llm,
       registry,
@@ -314,8 +315,19 @@ describe('agent loop (P2-7c)', () => {
 // ─── ConversationStore ─────────────────────────────────────────────────
 
 describe('ConversationStore', () => {
+  let sqlite: Database.Database;
+
+  before(() => {
+    const created = createDatabase({ dbPath: ':memory:' });
+    sqlite = created.sqlite;
+  });
+
+  after(() => {
+    sqlite.close();
+  });
+
   it('generates a new id when none provided', () => {
-    const store = new ConversationStore();
+    const store = new ConversationStore(sqlite);
     const a = store.getOrCreate();
     const b = store.getOrCreate();
     assert.notEqual(a.conversation.id, b.conversation.id);
@@ -323,7 +335,7 @@ describe('ConversationStore', () => {
   });
 
   it('returns existing conversation when id matches', () => {
-    const store = new ConversationStore();
+    const store = new ConversationStore(sqlite);
     const { conversation } = store.getOrCreate('fixed-id');
     const again = store.getOrCreate('fixed-id');
     assert.equal(again.created, false);
@@ -331,7 +343,7 @@ describe('ConversationStore', () => {
   });
 
   it('trimToRounds keeps system + last N user turns with their tool round-trips', () => {
-    const store = new ConversationStore();
+    const store = new ConversationStore(sqlite);
     const { conversation } = store.getOrCreate('c1');
     conversation.messages.push(
       { role: 'system', content: 'sys' },
@@ -367,7 +379,7 @@ describe('ConversationStore', () => {
   });
 
   it('trimToRounds is a no-op when under the round cap', () => {
-    const store = new ConversationStore();
+    const store = new ConversationStore(sqlite);
     const { conversation } = store.getOrCreate('c2');
     conversation.messages.push(
       { role: 'system', content: 'sys' },
@@ -377,5 +389,186 @@ describe('ConversationStore', () => {
     store.trimToRounds('c2', 5);
     const stored = store.get('c2');
     assert.equal(stored?.messages.length, 3);
+  });
+});
+
+// ─── P3.4-f persistence ────────────────────────────────────────────────
+
+describe('ConversationStore (P3.4-f persistence)', () => {
+  let sqlite: Database.Database;
+
+  before(() => {
+    const created = createDatabase({ dbPath: ':memory:' });
+    sqlite = created.sqlite;
+  });
+
+  after(() => {
+    sqlite.close();
+  });
+
+  it('first appendMessages inserts ai_conversations row with derived title', () => {
+    const store = new ConversationStore(sqlite);
+    const { conversation } = store.getOrCreate();
+    const id = conversation.id;
+    store.appendMessages(id, [{ role: 'user', content: 'Hello world, let us chat.' }]);
+
+    const ROW_SQL = 'SELECT id, title FROM ai_conversations WHERE id = ?';
+    const row = sqlite.prepare(ROW_SQL).get(id) as { id: string; title: string } | undefined;
+    assert.ok(row);
+    assert.equal(row.title, 'Hello world, let us chat.');
+
+    const msgsSql = 'SELECT role, content, seq FROM ai_messages WHERE conversation_id = ?';
+    const msgs = sqlite.prepare(msgsSql).all(id) as {
+      role: string;
+      content: string;
+      seq: number;
+    }[];
+    assert.equal(msgs.length, 1);
+    assert.equal(msgs[0].role, 'user');
+    assert.equal(msgs[0].seq, 1);
+  });
+
+  it('batched appendMessages is atomic and increments seq monotonically', () => {
+    const store = new ConversationStore(sqlite);
+    const { conversation } = store.getOrCreate();
+    const id = conversation.id;
+    store.appendMessages(id, [{ role: 'user', content: 'hi' }]);
+    store.appendMessages(id, [
+      {
+        role: 'assistant',
+        content: 'ok',
+        tool_calls: [{ id: 't-1', name: 'echo', arguments: '{}' }],
+        reasoning_content: 'think',
+        reasoning_signature: 'sig-1',
+      },
+      { role: 'tool', tool_call_id: 't-1', content: 'result', is_error: false },
+      { role: 'tool', tool_call_id: 't-2', content: 'oops', is_error: true },
+    ]);
+
+    const ROW_SQL = `
+      SELECT role, is_error, reasoning_content, reasoning_signature, seq
+      FROM ai_messages WHERE conversation_id = ? ORDER BY seq
+    `;
+    const rows = sqlite.prepare(ROW_SQL).all(id) as {
+      role: string;
+      is_error: number | null;
+      reasoning_content: string | null;
+      reasoning_signature: string | null;
+      seq: number;
+    }[];
+    assert.equal(rows.length, 4);
+    assert.deepEqual(
+      rows.map((r) => r.seq),
+      [1, 2, 3, 4],
+    );
+    assert.equal(rows[1].reasoning_content, 'think');
+    assert.equal(rows[1].reasoning_signature, 'sig-1');
+    assert.equal(rows[2].is_error, 0);
+    assert.equal(rows[3].is_error, 1);
+  });
+
+  it('setSystemMessage is memory-only (no SQL writes)', () => {
+    const store = new ConversationStore(sqlite);
+    const { conversation } = store.getOrCreate();
+    const id = conversation.id;
+    store.appendMessages(id, [{ role: 'user', content: 'hi' }]);
+    const before = sqlite
+      .prepare('SELECT COUNT(*) AS n FROM ai_messages WHERE conversation_id = ?')
+      .get(id) as { n: number };
+
+    store.setSystemMessage(id, 'fresh system prompt');
+    store.setSystemMessage(id, 'another system prompt'); // replace in place
+
+    const after = sqlite
+      .prepare('SELECT COUNT(*) AS n FROM ai_messages WHERE conversation_id = ?')
+      .get(id) as { n: number };
+    assert.equal(after.n, before.n, 'setSystemMessage must not produce SQL writes');
+    assert.equal(conversation.messages[0].role, 'system');
+    assert.equal(conversation.messages[0].content, 'another system prompt');
+  });
+
+  it("CHECK constraint rejects raw INSERT with role='system'", () => {
+    const store = new ConversationStore(sqlite);
+    const { conversation } = store.getOrCreate();
+    const id = conversation.id;
+    store.appendMessages(id, [{ role: 'user', content: 'bootstrap' }]);
+
+    const BAD_INSERT = `
+      INSERT INTO ai_messages
+        (id, conversation_id, role, content, tool_calls, tool_call_id,
+         is_error, reasoning_content, reasoning_signature, created_at, seq)
+      VALUES (?, ?, 'system', 'leak', NULL, NULL, NULL, NULL, NULL, ?, ?)
+    `;
+    assert.throws(
+      () => sqlite.prepare(BAD_INSERT).run(randomUUID(), id, Date.now(), 999),
+      /CHECK constraint failed/,
+    );
+  });
+
+  it('cold-start hydrate: new store instance reads past conversations from DB', () => {
+    // Write through one store, then spin up a fresh store pointing at the
+    // same sqlite — the second store must hydrate on getOrCreate.
+    const first = new ConversationStore(sqlite);
+    const { conversation } = first.getOrCreate();
+    const id = conversation.id;
+    first.appendMessages(id, [{ role: 'user', content: 'persist me' }]);
+    first.appendMessages(id, [
+      {
+        role: 'assistant',
+        content: 'ok',
+        tool_calls: [{ id: 'call_a', name: 'echo', arguments: '{}' }],
+        reasoning_content: 'thought process',
+        reasoning_signature: 'anthropic-sig',
+      },
+      { role: 'tool', tool_call_id: 'call_a', content: 'done', is_error: false },
+    ]);
+
+    const second = new ConversationStore(sqlite);
+    const { conversation: hydrated, created } = second.getOrCreate(id);
+    assert.equal(created, false);
+    assert.equal(hydrated.messages.length, 3);
+    assert.equal(hydrated.messages[0].role, 'user');
+    assert.equal(hydrated.messages[1].role, 'assistant');
+    assert.equal(hydrated.messages[1].reasoning_content, 'thought process');
+    assert.equal(hydrated.messages[1].reasoning_signature, 'anthropic-sig');
+    assert.equal(hydrated.messages[1].tool_calls?.[0].id, 'call_a');
+    assert.equal(hydrated.messages[2].role, 'tool');
+    assert.equal(hydrated.messages[2].is_error, false);
+  });
+
+  it('list returns conversations ordered by updated_at DESC', async () => {
+    const store = new ConversationStore(sqlite);
+    const a = store.getOrCreate().conversation.id;
+    store.appendMessages(a, [{ role: 'user', content: 'first' }]);
+    // Small delay to keep updated_at ordering deterministic.
+    await new Promise((r) => setTimeout(r, 5));
+    const b = store.getOrCreate().conversation.id;
+    store.appendMessages(b, [{ role: 'user', content: 'second' }]);
+
+    const list = store.list();
+    const aIdx = list.findIndex((c) => c.id === a);
+    const bIdx = list.findIndex((c) => c.id === b);
+    assert.ok(bIdx < aIdx, 'more recently updated conversation comes first');
+
+    // Now bump a by appending to it.
+    await new Promise((r) => setTimeout(r, 5));
+    store.appendMessages(a, [{ role: 'user', content: 'again' }]);
+    const list2 = store.list();
+    assert.equal(list2[0].id, a, 'a moves to top after latest append');
+  });
+
+  it('delete clears both memory and DB (CASCADE removes messages)', () => {
+    const store = new ConversationStore(sqlite);
+    const id = store.getOrCreate().conversation.id;
+    store.appendMessages(id, [{ role: 'user', content: 'soon gone' }]);
+
+    assert.equal(store.delete(id), true);
+    assert.equal(store.get(id), undefined);
+    const convoRow = sqlite.prepare('SELECT 1 FROM ai_conversations WHERE id = ?').get(id);
+    const msgCount = sqlite
+      .prepare('SELECT COUNT(*) AS n FROM ai_messages WHERE conversation_id = ?')
+      .get(id) as { n: number };
+    assert.equal(convoRow, undefined);
+    assert.equal(msgCount.n, 0, 'CASCADE should remove ai_messages rows');
   });
 });

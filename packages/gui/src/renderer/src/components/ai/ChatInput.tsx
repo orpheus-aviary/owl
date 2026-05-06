@@ -3,7 +3,7 @@ import { Send, Square } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 interface ChatInputProps {
-  chatId: string;
+  conversationId: string;
   isStreaming: boolean;
 }
 
@@ -16,7 +16,7 @@ const MAX_ROWS = 6;
  * a Send button while idle, and an Abort button while streaming. Plain
  * Enter sends; Shift+Enter inserts a newline.
  */
-export function ChatInput({ chatId, isStreaming }: ChatInputProps) {
+export function ChatInput({ conversationId, isStreaming }: ChatInputProps) {
   const sendMessage = useAiStore((s) => s.sendMessage);
   const abortStreaming = useAiStore((s) => s.abortStreaming);
 
@@ -27,16 +27,11 @@ export function ChatInput({ chatId, isStreaming }: ChatInputProps) {
     const trimmed = text.trim();
     if (!trimmed || isStreaming) return;
     setText('');
-    void sendMessage(chatId, trimmed);
-  }, [text, isStreaming, sendMessage, chatId]);
+    void sendMessage(conversationId, trimmed);
+  }, [text, isStreaming, sendMessage, conversationId]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-      // Chat-style: bare Enter sends, Shift+Enter falls through to the
-      // textarea's default newline behaviour for multi-line drafts. The
-      // meta-key combos (⌘↩ / Ctrl↩) also send so muscle memory holds.
-      // Suppress during IME composition so Chinese/Japanese input
-      // candidate confirmations don't trigger a premature send.
       if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
         e.preventDefault();
         send();
@@ -45,16 +40,11 @@ export function ChatInput({ chatId, isStreaming }: ChatInputProps) {
     [send],
   );
 
-  // Keep focus on the textarea at the points where the user is about
-  // to type: first mount, tab switch (chatId change), and right after
-  // a stream ends (`disabled={isStreaming}` blurs the textarea, so we
-  // have to explicitly put focus back when it re-enables).
-  // biome-ignore lint/correctness/useExhaustiveDependencies: chatId is the tab-switch trigger
+  // biome-ignore lint/correctness/useExhaustiveDependencies: conversationId is the switch trigger
   useEffect(() => {
     if (!isStreaming) textareaRef.current?.focus();
-  }, [chatId, isStreaming]);
+  }, [conversationId, isStreaming]);
 
-  // Auto-resize: clear inline height first so scrollHeight reflects content.
   const handleInput = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
     setText(e.target.value);
     const ta = e.target;
@@ -79,7 +69,7 @@ export function ChatInput({ chatId, isStreaming }: ChatInputProps) {
         {isStreaming ? (
           <button
             type="button"
-            onClick={() => abortStreaming(chatId)}
+            onClick={() => abortStreaming(conversationId)}
             className="inline-flex items-center justify-center size-9 rounded-md bg-destructive/10 text-destructive hover:bg-destructive/20"
             title="停止生成"
           >

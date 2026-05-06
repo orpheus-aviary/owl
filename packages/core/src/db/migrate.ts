@@ -44,7 +44,7 @@ import { fileURLToPath } from 'node:url';
 import BetterSqlite3 from 'better-sqlite3';
 import { backupDatabase } from './backup.js';
 
-export const LATEST_KNOWN_VERSION = 2;
+export const LATEST_KNOWN_VERSION = 3;
 
 // ----- Errors ---------------------------------------------------------------
 

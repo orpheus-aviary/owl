@@ -97,7 +97,7 @@ describe('events routes', () => {
       deviceId,
       scheduler,
       toolRegistry: createBuiltinRegistry(),
-      conversationStore: new ConversationStore(),
+      conversationStore: new ConversationStore(sqlite),
       previewStore: new PreviewStore(),
       eventsBus,
     });
@@ -195,7 +195,7 @@ describe('events routes', () => {
       deviceId: ensureDeviceId(db),
       scheduler,
       toolRegistry: createBuiltinRegistry(),
-      conversationStore: new ConversationStore(),
+      conversationStore: new ConversationStore(sqlite),
       previewStore: new PreviewStore(),
       eventsBus: localBus,
     });
@@ -269,7 +269,7 @@ describe('events routes', () => {
       deviceId: ensureDeviceId(db),
       scheduler,
       toolRegistry: createBuiltinRegistry(),
-      conversationStore: new ConversationStore(),
+      conversationStore: new ConversationStore(sqlite),
       previewStore: new PreviewStore(),
       eventsBus: localBus,
     });

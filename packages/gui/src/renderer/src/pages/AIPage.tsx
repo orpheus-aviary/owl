@@ -1,56 +1,90 @@
 import { ChatInput } from '@/components/ai/ChatInput';
-import { ChatTabBar } from '@/components/ai/ChatTabBar';
+import { ChatSidebar } from '@/components/ai/ChatSidebar';
 import { MessageList } from '@/components/ai/MessageList';
-import { useActiveChat, useAiStore } from '@/stores/ai-store';
+import { ResizeHandle } from '@/components/ui/resize-handle';
+import { useOwlLayout } from '@/hooks/useOwlLayout';
+import { LAYOUT_KEYS } from '@/lib/layout-keys';
+import {
+  useActiveConversationMessages,
+  useAiStore,
+  useIsActiveConversationStreaming,
+} from '@/stores/ai-store';
 import { Bot } from 'lucide-react';
 import { useEffect } from 'react';
+import { Group, Panel } from 'react-resizable-panels';
 
 /**
- * AI chat page. Layout: ChatTabBar (top) / MessageList (middle) /
- * ChatInput (bottom). Auto-creates an initial chat the first time the
- * page mounts so the user lands on a usable surface; subsequent visits
- * preserve whatever tabs are already open.
- *
- * Step 4 lays down the shell and streaming text path. ToolCallBlock /
- * DraftReadyCard / NoteAppliedToast / ConflictDialog hang off the
- * existing data shape in steps 5-9 without touching this file.
+ * AI chat page (P3.4-f): left ChatSidebar + right (MessageList + ChatInput)
+ * driven by react-resizable-panels. Sidebar hydrates from daemon on mount.
+ * Empty state prompts the user to create a new conversation — we do NOT
+ * auto-create on mount so the sidebar stays clean until the user actually
+ * wants to chat.
  */
 export function AIPage() {
-  const newChat = useAiStore((s) => s.newChat);
-  const activeChat = useActiveChat();
+  const activeConversationId = useAiStore((s) => s.activeConversationId);
+  const conversationsLoaded = useAiStore((s) => s.conversationsLoaded);
+  const loadConversations = useAiStore((s) => s.loadConversations);
+  const loadConversation = useAiStore((s) => s.loadConversation);
+  const newConversation = useAiStore((s) => s.newConversation);
+  const messages = useActiveConversationMessages();
+  const isStreaming = useIsActiveConversationStreaming();
+
+  const layout = useOwlLayout(LAYOUT_KEYS.aiLayout);
 
   useEffect(() => {
-    // Read the live store rather than closed-over `chats.length` — in React
-    // 19 StrictMode `useEffect` runs twice before the first re-render, both
-    // with the same closure snapshot, so the naive check would create two
-    // tabs in dev mode on the first visit.
-    if (useAiStore.getState().chats.length === 0) newChat();
-  }, [newChat]);
+    if (!conversationsLoaded) void loadConversations();
+  }, [conversationsLoaded, loadConversations]);
+
+  // Hydrate messages for whatever conversation becomes active. `loadConversation`
+  // is a no-op when messages are already cached (live send, previous fetch).
+  useEffect(() => {
+    if (activeConversationId) void loadConversation(activeConversationId);
+  }, [activeConversationId, loadConversation]);
 
   return (
-    <div className="flex flex-col h-full min-h-0">
-      <ChatTabBar />
-      {activeChat ? (
-        <>
-          <MessageList messages={activeChat.messages} chatId={activeChat.id} />
-          <ChatInput chatId={activeChat.id} isStreaming={activeChat.isStreaming} />
-        </>
-      ) : (
-        <EmptyState />
-      )}
-    </div>
+    <Group
+      orientation="horizontal"
+      id={LAYOUT_KEYS.aiLayout}
+      defaultLayout={layout.defaultLayout}
+      onLayoutChanged={layout.onLayoutChanged}
+      className="flex h-full min-h-0"
+    >
+      <Panel
+        id="chat-sidebar"
+        defaultSize="22%"
+        minSize="160px"
+        className="h-full w-full min-h-0 min-w-0"
+      >
+        <ChatSidebar />
+      </Panel>
+      <ResizeHandle />
+      <Panel
+        id="chat-main"
+        defaultSize="78%"
+        minSize="400px"
+        className="flex h-full w-full min-h-0 min-w-0 flex-col"
+      >
+        {activeConversationId ? (
+          <>
+            <MessageList messages={messages} conversationId={activeConversationId} />
+            <ChatInput conversationId={activeConversationId} isStreaming={isStreaming} />
+          </>
+        ) : (
+          <EmptyState onNew={() => newConversation()} />
+        )}
+      </Panel>
+    </Group>
   );
 }
 
-function EmptyState() {
-  const newChat = useAiStore((s) => s.newChat);
+function EmptyState({ onNew }: { onNew: () => void }) {
   return (
     <div className="flex-1 flex flex-col items-center justify-center gap-3 text-muted-foreground">
       <Bot className="size-10" />
-      <p className="text-sm">还没有对话。</p>
+      <p className="text-sm">还没有选中对话。</p>
       <button
         type="button"
-        onClick={() => newChat()}
+        onClick={onNew}
         className="text-xs px-3 py-1.5 rounded-md bg-primary text-primary-foreground hover:bg-primary/90"
       >
         新建对话

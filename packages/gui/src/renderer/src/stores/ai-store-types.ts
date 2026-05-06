@@ -63,6 +63,7 @@ export interface ChatMessage {
    * Reasoning / chain-of-thought text from `thinking` events. Rendered as a
    * collapsible block above the bubble's main content. Empty when the model
    * doesn't emit thinking (e.g. plain `gpt-4o-mini` chat completions).
+   * P3.4-f: also hydrated from daemon `reasoning_content` on history load.
    */
   thinking: string;
   toolCalls: ChatToolCall[];
@@ -76,15 +77,28 @@ export interface ChatMessage {
   aborted?: boolean;
 }
 
-export interface ChatTabState {
-  /** Local id used in React keys + active-tab tracking. Stable across renames. */
+/**
+ * Sidebar row — meta only, shipped by GET /ai/conversations. Messages are
+ * fetched lazily via GET /ai/conversations/:id (see ai-store's
+ * `messagesByConversation` cache).
+ */
+export interface ConversationMeta {
   id: string;
-  /** Server-issued conversation id; null until the first `conversation_id` SSE event. */
-  conversationId: string | null;
-  /** Display title — first user message truncated; '新对话' until then. */
   title: string;
-  messages: ChatMessage[];
-  /** AbortController for the in-flight request; null when idle. */
-  abortController: AbortController | null;
+  /** Unix ms (P3.4-a convention). */
+  createdAt: number;
+  updatedAt: number;
+  messageCount: number;
+}
+
+/**
+ * Per-conversation streaming bookkeeping. Kept alive across
+ * `setActiveConversation` so a user can switch away during a long
+ * response and return to find it still filling in — see P3.4-f §5.4.
+ */
+export interface StreamingState {
   isStreaming: boolean;
+  abortController: AbortController | null;
+  /** Id of the assistant ChatMessage being streamed (for dispatcher patches). */
+  assistantMessageId: string | null;
 }

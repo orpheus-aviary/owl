@@ -11,7 +11,7 @@ import { ToolCallBlock } from './ToolCallBlock';
 
 interface MessageBubbleProps {
   message: ChatMessage;
-  chatId: string;
+  conversationId: string;
 }
 
 /**
@@ -24,7 +24,7 @@ interface MessageBubbleProps {
  *     has something to interact with.
  *   Then mark the card's `opened` flag and navigate to the editor.
  */
-function useOpenDraft(chatId: string, messageId: string) {
+function useOpenDraft(conversationId: string, messageId: string) {
   const markDraftOpened = useAiStore((s) => s.markDraftOpened);
   const navigate = useNavigate();
   return useCallback(
@@ -55,10 +55,10 @@ function useOpenDraft(chatId: string, messageId: string) {
           action: draft.action,
         });
       }
-      markDraftOpened(chatId, messageId, draft.localId);
+      markDraftOpened(conversationId, messageId, draft.localId);
       navigate('/');
     },
-    [chatId, messageId, markDraftOpened, navigate],
+    [conversationId, messageId, markDraftOpened, navigate],
   );
 }
 
@@ -72,9 +72,9 @@ function useOpenDraft(chatId: string, messageId: string) {
  * `DraftReadyCard`) inside the assistant bubble. The data is already on
  * `message.toolCalls / .drafts / .previews`.
  */
-export function MessageBubble({ message, chatId }: MessageBubbleProps) {
+export function MessageBubble({ message, conversationId }: MessageBubbleProps) {
   if (message.role === 'user') return <UserBubble message={message} />;
-  return <AssistantBubble message={message} chatId={chatId} />;
+  return <AssistantBubble message={message} conversationId={conversationId} />;
 }
 
 function UserBubble({ message }: { message: ChatMessage }) {
@@ -87,8 +87,11 @@ function UserBubble({ message }: { message: ChatMessage }) {
   );
 }
 
-function AssistantBubble({ message, chatId }: { message: ChatMessage; chatId: string }) {
-  const openDraft = useOpenDraft(chatId, message.id);
+function AssistantBubble({
+  message,
+  conversationId,
+}: { message: ChatMessage; conversationId: string }) {
+  const openDraft = useOpenDraft(conversationId, message.id);
   if (message.error) {
     return (
       <div className="flex items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/10 text-destructive px-3 py-2 text-sm">
@@ -128,7 +131,7 @@ function AssistantBubble({ message, chatId }: { message: ChatMessage; chatId: st
       {message.drafts.length > 0 && (
         <DraftSection
           drafts={message.drafts}
-          chatId={chatId}
+          conversationId={conversationId}
           messageId={message.id}
           onOpen={openDraft}
         />
@@ -198,12 +201,12 @@ function ThinkingBlock({ content, streaming }: { content: string; streaming: boo
  */
 function DraftSection({
   drafts,
-  chatId,
+  conversationId,
   messageId,
   onOpen,
 }: {
   drafts: DraftReadyData[];
-  chatId: string;
+  conversationId: string;
   messageId: string;
   onOpen: (draft: DraftReadyData) => Promise<void>;
 }) {
@@ -219,7 +222,7 @@ function DraftSection({
           <button
             type="button"
             onClick={() => {
-              void approveAllDrafts(chatId, messageId);
+              void approveAllDrafts(conversationId, messageId);
             }}
             disabled={anyApproving}
             className="text-xs px-2.5 py-1 rounded border border-border bg-muted/40 hover:bg-muted disabled:opacity-50"
@@ -236,7 +239,7 @@ function DraftSection({
             void onOpen(draft);
           }}
           onApprove={(draft) => {
-            void approveDraft(chatId, messageId, draft.localId);
+            void approveDraft(conversationId, messageId, draft.localId);
           }}
         />
       ))}

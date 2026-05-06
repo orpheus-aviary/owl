@@ -1,10 +1,10 @@
 # 开发进度
 
-## 当前阶段：P3.4 UX 完善（进行中）
+## 当前阶段：P3.4 UX 完善 ✅ 完成
 
-**542/542 测试通过**（core 150 + cli 119 + daemon 128 + gui 145）。P3.4-a / b / c / d / e 均 2026-05-05..2026-05-07 shipped 或待手动测试确认。
+**563/563 测试通过**（core 150 + cli 119 + daemon 138 + gui 156）。P3.4 全部 6 子项于 2026-05-05..2026-05-07 shipped。下一步进入 **P4 migration 同步**（发 0.4.0）。
 
-### P3.4 子项（a → f 顺序，完成后与 P4 一起发 0.4.0）
+### P3.4 子项状态
 
 | # | 子项 | 规模 | 状态 |
 |---|---|---|---|
@@ -12,19 +12,22 @@
 | **P3.4-b** | 特殊笔记视觉区分（`#随记` 蓝边框 / `#待办` 粉边框，NoteList + 浏览页） | 小 | **✅ shipped 2026-05-05** |
 | **P3.4-c** | AI chat 笔记 id → pill（覆盖裸 UUID / 单反引号 / `[label](uuid)` 三形态，prompt 约束 + FTS5 提示） | 小 | **✅ shipped 2026-05-05** |
 | **P3.4-d** | TagBar 输入框 Tab/Enter 区分补全（Tab 纯字面量 / Enter 触发 picker） | 小 | **✅ shipped 2026-05-06** |
-| **P3.4-e** | 笔记 tab VSCode 风格（preview 字段 + 斜体 / NoteList 单击预览 / 双击固定 / 上下键预览切换） | 中 | **🧪 待手动测试 2026-05-07** |
-| **P3.4-f** | 聊天持久化 + 侧栏布局（按 `docs/plans/2026-04-18-chat-persistence.md`） | 中 | pending |
+| **P3.4-e** | 笔记 tab VSCode 风格（preview 字段 + 斜体 / NoteList 单击预览 / 双击固定 / 上下键预览切换） | 中 | **✅ shipped 2026-05-07** |
+| **P3.4-f** | 聊天持久化 + 侧栏布局（schema v3 + ConversationStore SQLite + ChatSidebar + 跨切换流式不断线 + 历史 reasoning/is_error 水合） | 大 | **✅ shipped 2026-05-07** |
 
-子项 scope 详情见 `docs/plans/2026-04-20-p3-plan.md` §7。各子项 Implementation record：
+各子项 Implementation record：
 - P3.4-a：`docs/plans/2026-05-05-p3-4-a-sorting-model-design.md`
 - P3.4-b：`docs/plans/2026-05-05-p3-4-b-special-notes-visual-design.md`
 - P3.4-c：`docs/plans/2026-05-05-p3-4-c-note-id-pill-design.md`
 - P3.4-d：`docs/plans/2026-05-06-p3-4-d-tagbar-tab-enter-design.md`
 - P3.4-e：`docs/plans/2026-05-07-p3-4-e-tab-preview-design.md`
+- P3.4-f：`docs/plans/2026-05-07-p3-4-f-chat-persistence-design.md`
 
 ### 下一步
 
-P3.4-e 待用户手动测试签字，通过后进入 P3.4-f 聊天持久化 + 侧栏布局（最后一个子项，完后整个 P3.4 完结，与 P4 一起发 0.4.0）。
+**P4 migration 同步**：用 TypeScript 重写 rclone bisync 同步工具（原 Go `migration/` 子项目）。范围见 `docs/plans/2026-04-20-p3-plan.md` §8。
+
+动工前先开 design doc 对齐 scope。完成后 P3.4 + P4 一起发 **0.4.0** GitHub Release + `@orpheus-aviary/owl-cli@0.4.0` npm。
 
 ## 整体路线
 

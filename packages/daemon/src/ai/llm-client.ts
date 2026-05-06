@@ -68,6 +68,14 @@ export interface LlmMessage {
   /** Anthropic-only: signature paired with the reasoning. Forwarded to the
    *  thinking content block when round-tripping. */
   reasoning_signature?: string;
+  /**
+   * Set on role='tool' messages to indicate a tool execution error. Stored
+   * on `ai_messages.is_error` by P3.4-f persistence so GUI hydration can
+   * recover `ChatToolCall.isError` (red failure state). Anthropic adapter
+   * currently does NOT round-trip this into `tool_result.is_error` — a
+   * pre-existing limitation deferred past P3.4-f.
+   */
+  is_error?: boolean;
 }
 
 export type StreamChunk =

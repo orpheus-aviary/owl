@@ -1,9 +1,10 @@
 import * as api from '@/lib/api';
+import type { AiHistoryMessage } from '@/lib/api';
 import { baseUrl } from '@/lib/api';
 import { type SseHttpError, streamSse } from '@/lib/sse-client';
 import { create } from 'zustand';
 import { type NoteAppliedNotice, dispatchAgentEvent } from './ai-dispatcher';
-import type { ChatMessage, ChatTabState } from './ai-store-types';
+import type { ChatMessage, ChatToolCall, ConversationMeta, StreamingState } from './ai-store-types';
 import { useDataBus } from './data-bus';
 import { useEditorStore } from './editor-store';
 
@@ -13,57 +14,70 @@ export type {
   DraftReadyCard,
   PreviewReadyCard,
   ChatMessage,
-  ChatTabState,
+  ConversationMeta,
+  StreamingState,
 } from './ai-store-types';
 export type { NoteAppliedNotice } from './ai-dispatcher';
 
 /**
- * Chat state for the AI page. One `ChatTabState` per tab in the chat
- * tab bar; each maps to a single backend conversation_id (filled in by
- * the first SSE event from /ai/chat).
+ * AI chat state (P3.4-f).
  *
- * Step 3 fully wires the SSE event dispatcher (`ai-dispatcher.ts`).
- * Side-effects beyond the chat state itself (Tier-1 editor merge,
- * draft handoff to the editor) layer on in Steps 6-7 by reading the
- * dispatched state — no more changes to this file are needed for them.
+ * State is split into three keyed-by-id maps rather than a monolithic
+ * `chats[]` so the concerns stay separable:
+ *   • `conversations`             — sidebar meta list, sourced from DB
+ *   • `messagesByConversation`    — lazy-hydrated on click; also filled
+ *                                    live by the SSE dispatcher for the
+ *                                    active send
+ *   • `streamingByConversation`   — per-conversation stream state; kept
+ *                                    alive across setActiveConversation
+ *                                    so users can switch away from a
+ *                                    running chat without aborting it
+ *
+ * Ephemeral conversations (user clicked "新建" but hasn't sent yet) live
+ * in `messagesByConversation` only; they don't appear in `conversations`
+ * until the first send persists them on the daemon.
  */
 
 interface AiState {
-  chats: ChatTabState[];
-  activeChatId: string | null;
-  /** Toast queue consumed by `<NoteAppliedToast>` (Step 6). */
+  conversations: ConversationMeta[];
+  conversationsLoaded: boolean;
+  messagesByConversation: Record<string, ChatMessage[]>;
+  streamingByConversation: Record<string, StreamingState>;
+  activeConversationId: string | null;
   noteAppliedNotices: NoteAppliedNotice[];
-  /**
-   * Per-chat MessageList scroll position, preserved across page
-   * navigations so switching away from /ai and back doesn't reset the
-   * user to the top of the history.
-   */
-  scrollByChatId: Record<string, number>;
+  scrollByConversation: Record<string, number>;
 
-  newChat: () => string;
-  closeChat: (id: string) => Promise<void>;
-  setActiveChat: (id: string) => void;
-  sendMessage: (chatId: string, text: string) => Promise<void>;
-  abortStreaming: (chatId: string) => void;
+  newConversation: () => string;
+  setActiveConversation: (id: string) => void;
+  /** Load sidebar list from the daemon; idempotent. */
+  loadConversations: () => Promise<void>;
+  /** Load a conversation's full message history, if not already cached. */
+  loadConversation: (id: string) => Promise<void>;
+  sendMessage: (id: string, text: string) => Promise<void>;
+  abortStreaming: (id: string) => void;
+  /**
+   * Delete a conversation. Ephemeral (never persisted) ids only clear
+   * local state; persisted ids also DELETE the daemon row (CASCADE clears
+   * ai_messages). Refreshes `conversations` from the daemon afterwards.
+   */
+  deleteConversation: (id: string) => Promise<void>;
   /** Drop a notice from the queue once its toast has been dismissed. */
   dismissNoteAppliedNotice: (noticeId: string) => void;
   /**
    * Flip a DraftReadyCard's `opened` flag so the card's "打开" button
    * becomes "已打开". Called after the editor accepts the draft.
    */
-  markDraftOpened: (chatId: string, messageId: string, draftLocalId: string) => void;
+  markDraftOpened: (conversationId: string, messageId: string, draftLocalId: string) => void;
   /**
    * Apply a single draft via the daemon REST API, bypassing the editor
    * staging flow. Reuses P2-8's Tier-1 path (toast + bus refresh, no tab
-   * opens). Failures surface on draft.error so the user can retry. Conflict
-   * detection compares the note's current DB state to the draft's
-   * `original_*` baselines and refuses the auto-merge if they've drifted.
+   * opens). Failures surface on draft.error so the user can retry.
    */
-  approveDraft: (chatId: string, messageId: string, draftLocalId: string) => Promise<void>;
+  approveDraft: (conversationId: string, messageId: string, draftLocalId: string) => Promise<void>;
   /** Approve every unprocessed draft on a message in parallel. */
-  approveAllDrafts: (chatId: string, messageId: string) => Promise<void>;
-  /** Record the message list's current scrollTop for a given chat. */
-  setChatScroll: (chatId: string, scrollTop: number) => void;
+  approveAllDrafts: (conversationId: string, messageId: string) => Promise<void>;
+  /** Record the message list's scrollTop for a given conversation. */
+  setConversationScroll: (conversationId: string, scrollTop: number) => void;
 }
 
 const TITLE_MAX = 32;
@@ -78,55 +92,96 @@ function localId(): string {
   return crypto.randomUUID();
 }
 
-export const useAiStore = create<AiState>((set, get) => ({
-  chats: [],
-  activeChatId: null,
-  noteAppliedNotices: [],
-  scrollByChatId: {},
+const emptyStreaming: StreamingState = {
+  isStreaming: false,
+  abortController: null,
+  assistantMessageId: null,
+};
 
-  setChatScroll: (chatId, scrollTop) => {
+export const useAiStore = create<AiState>((set, get) => ({
+  conversations: [],
+  conversationsLoaded: false,
+  messagesByConversation: {},
+  streamingByConversation: {},
+  activeConversationId: null,
+  noteAppliedNotices: [],
+  scrollByConversation: {},
+
+  setConversationScroll: (conversationId, scrollTop) => {
     set((state) => ({
-      scrollByChatId: { ...state.scrollByChatId, [chatId]: scrollTop },
+      scrollByConversation: { ...state.scrollByConversation, [conversationId]: scrollTop },
     }));
   },
 
-  newChat: () => {
+  newConversation: () => {
+    // Generate the id up front; the same UUID flows GUI → /ai/chat →
+    // daemon.getOrCreate → ai_conversations.id. Three-way agreement.
+    // Ephemeral until the first send persists it.
     const id = localId();
-    const tab: ChatTabState = {
-      id,
-      conversationId: null,
-      title: '新对话',
-      messages: [],
-      abortController: null,
-      isStreaming: false,
-    };
-    set((state) => ({ chats: [...state.chats, tab], activeChatId: id }));
+    set((state) => ({
+      messagesByConversation: { ...state.messagesByConversation, [id]: [] },
+      activeConversationId: id,
+    }));
     return id;
   },
 
-  setActiveChat: (id) => {
-    set({ activeChatId: id });
+  setActiveConversation: (id) => {
+    // Deliberately does NOT abort other conversations' streams —
+    // switching away from a running chat should leave it cooking
+    // in the background. See P3.4-f load-bearing contract §10.
+    set({ activeConversationId: id });
   },
 
-  abortStreaming: (chatId) => {
-    const tab = get().chats.find((c) => c.id === chatId);
-    if (!tab) return;
+  loadConversations: async () => {
+    try {
+      const res = await api.listAiConversations();
+      const conversations: ConversationMeta[] = (res.data?.conversations ?? []).map((c) => ({
+        id: c.id,
+        title: c.title,
+        createdAt: Date.parse(c.created_at),
+        updatedAt: Date.parse(c.updated_at),
+        messageCount: c.message_count,
+      }));
+      set({ conversations, conversationsLoaded: true });
+    } catch (err) {
+      console.error('loadConversations failed', err);
+    }
+  },
+
+  loadConversation: async (id) => {
+    // Already hydrated (either from a previous load or a live send)?
+    // Skip the refetch — the live messages are the authoritative copy.
+    if (get().messagesByConversation[id]?.length) return;
+    try {
+      const res = await api.getAiConversation(id);
+      const historyMessages: AiHistoryMessage[] = res.data?.messages ?? [];
+      const messages = hydrateDaemonMessages(historyMessages);
+      set((state) => ({
+        messagesByConversation: { ...state.messagesByConversation, [id]: messages },
+      }));
+    } catch (err) {
+      console.error('loadConversation failed', err);
+    }
+  },
+
+  abortStreaming: (conversationId) => {
+    const stream = get().streamingByConversation[conversationId];
+    if (!stream?.isStreaming) return;
     // Tag the in-flight assistant message so the bubble can render a
     // subtle "已停止生成" hint and distinguish user-abort from an
     // actual `error` event.
-    set((state) => ({
-      chats: state.chats.map((c) =>
-        c.id === chatId
-          ? {
-              ...c,
-              messages: c.messages.map((m) =>
-                m.role === 'assistant' && m.isStreaming ? { ...m, aborted: true } : m,
-              ),
-            }
-          : c,
-      ),
-    }));
-    tab.abortController?.abort();
+    const msgId = stream.assistantMessageId;
+    if (msgId) {
+      set((state) => ({
+        messagesByConversation: {
+          ...state.messagesByConversation,
+          [conversationId]: (state.messagesByConversation[conversationId] ?? []).map((m) =>
+            m.id === msgId && m.role === 'assistant' && m.isStreaming ? { ...m, aborted: true } : m,
+          ),
+        },
+      }));
+    }
+    stream.abortController?.abort();
   },
 
   dismissNoteAppliedNotice: (noticeId) => {
@@ -135,88 +190,76 @@ export const useAiStore = create<AiState>((set, get) => ({
     }));
   },
 
-  markDraftOpened: (chatId, messageId, draftLocalId) => {
-    patchDraft(set, chatId, messageId, draftLocalId, () => ({ opened: true }));
+  markDraftOpened: (conversationId, messageId, draftLocalId) => {
+    patchDraft(set, conversationId, messageId, draftLocalId, () => ({ opened: true }));
   },
 
-  approveDraft: async (chatId, messageId, draftLocalId) => {
-    const draft = findDraft(get(), chatId, messageId, draftLocalId);
+  approveDraft: async (conversationId, messageId, draftLocalId) => {
+    const draft = findDraft(get(), conversationId, messageId, draftLocalId);
     if (!draft || draft.approved || draft.approving) return;
-    patchDraft(set, chatId, messageId, draftLocalId, () => ({ approving: true, error: null }));
+    patchDraft(set, conversationId, messageId, draftLocalId, () => ({
+      approving: true,
+      error: null,
+    }));
     try {
       await applyDraftViaApi(draft);
-      patchDraft(set, chatId, messageId, draftLocalId, () => ({
+      patchDraft(set, conversationId, messageId, draftLocalId, () => ({
         approved: true,
         approving: false,
         error: null,
       }));
-      // Tier-1 toast + cross-store refresh, just like daemon-side append_memo.
       addNoteAppliedToast(set, draft);
       useDataBus.getState().bumpNotes();
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      patchDraft(set, chatId, messageId, draftLocalId, () => ({
+      patchDraft(set, conversationId, messageId, draftLocalId, () => ({
         approving: false,
         error: message,
       }));
     }
   },
 
-  approveAllDrafts: async (chatId, messageId) => {
-    const message = findMessage(get(), chatId, messageId);
+  approveAllDrafts: async (conversationId, messageId) => {
+    const message = findMessage(get(), conversationId, messageId);
     if (!message) return;
     const targets = message.drafts.filter((d) => !d.approved && !d.opened && !d.approving);
-    // Parallel per-card so a slow note doesn't hold up the rest. Each call
-    // reuses approveDraft's full lifecycle (in-flight flag, error capture,
-    // toast, bus bump) so failures stay isolated to their own card.
-    await Promise.all(targets.map((d) => get().approveDraft(chatId, messageId, d.localId)));
+    await Promise.all(targets.map((d) => get().approveDraft(conversationId, messageId, d.localId)));
   },
 
-  closeChat: async (id) => {
-    const tab = get().chats.find((c) => c.id === id);
-    if (!tab) return;
+  deleteConversation: async (id) => {
+    const state = get();
+    const stream = state.streamingByConversation[id];
+    stream?.abortController?.abort();
 
-    // 1. Abort any in-flight stream so the daemon stops writing and our
-    //    local state machine settles before we delete the conversation.
-    tab.abortController?.abort();
-
-    // 2. Wait for the abort to propagate. streamSse returns cleanly on
-    //    abort, so isStreaming should flip to false within a tick.
-    await waitForIdle(get, id);
-
-    // 3. Delete the server-side conversation if we ever got an id back.
-    if (tab.conversationId) {
+    const isPersisted = state.conversations.some((c) => c.id === id);
+    if (isPersisted) {
       try {
-        await api.deleteAiConversation(tab.conversationId);
+        await api.deleteAiConversation(id);
       } catch {
-        // Best-effort — daemon may have restarted. Either way we still
-        // remove the local tab so the UI doesn't hang on this entry.
+        // Best-effort: if daemon just restarted, we still want to clear local state.
       }
     }
 
-    // 4. Drop the tab; if it was active, hand focus to the previous one.
-    set((state) => {
-      const index = state.chats.findIndex((c) => c.id === id);
-      const remaining = state.chats.filter((c) => c.id !== id);
-      let nextActive = state.activeChatId;
-      if (state.activeChatId === id) {
-        if (remaining.length === 0) {
-          nextActive = null;
-        } else if (index >= remaining.length) {
-          nextActive = remaining[remaining.length - 1].id;
-        } else {
-          nextActive = remaining[index].id;
-        }
-      }
-      return { chats: remaining, activeChatId: nextActive };
+    set((s) => {
+      const { [id]: _msgs, ...restMessages } = s.messagesByConversation;
+      const { [id]: _stream, ...restStreaming } = s.streamingByConversation;
+      const { [id]: _scroll, ...restScroll } = s.scrollByConversation;
+      const nextActive = s.activeConversationId === id ? null : s.activeConversationId;
+      return {
+        conversations: s.conversations.filter((c) => c.id !== id),
+        messagesByConversation: restMessages,
+        streamingByConversation: restStreaming,
+        scrollByConversation: restScroll,
+        activeConversationId: nextActive,
+      };
     });
   },
 
-  sendMessage: async (chatId, text) => {
+  sendMessage: async (conversationId, text) => {
     const trimmed = text.trim();
     if (!trimmed) return;
-    const tab = get().chats.find((c) => c.id === chatId);
-    if (!tab || tab.isStreaming) return;
+    const stream = get().streamingByConversation[conversationId];
+    if (stream?.isStreaming) return;
 
     const userMsg: ChatMessage = {
       id: localId(),
@@ -241,35 +284,48 @@ export const useAiStore = create<AiState>((set, get) => ({
     const controller = new AbortController();
 
     set((state) => ({
-      chats: state.chats.map((c) =>
-        c.id === chatId
-          ? {
-              ...c,
-              messages: [...c.messages, userMsg, assistantMsg],
-              title: c.title === '新对话' ? titleFrom(trimmed) : c.title,
-              abortController: controller,
-              isStreaming: true,
-            }
-          : c,
-      ),
+      messagesByConversation: {
+        ...state.messagesByConversation,
+        [conversationId]: [
+          ...(state.messagesByConversation[conversationId] ?? []),
+          userMsg,
+          assistantMsg,
+        ],
+      },
+      streamingByConversation: {
+        ...state.streamingByConversation,
+        [conversationId]: {
+          isStreaming: true,
+          abortController: controller,
+          assistantMessageId: assistantMsg.id,
+        },
+      },
     }));
 
     try {
       await streamSse({
         url: `${baseUrl()}/ai/chat`,
-        body: { message: trimmed, conversation_id: tab.conversationId ?? undefined },
+        // Always pass conversation_id — our UUID becomes the DB primary key.
+        body: { message: trimmed, conversation_id: conversationId },
         signal: controller.signal,
         onEvent: (event, data) => {
-          set((state) =>
-            dispatchAgentEvent({
-              state: { chats: state.chats, noteAppliedNotices: state.noteAppliedNotices },
-              chatId,
+          set((state) => {
+            const prevMessages = state.messagesByConversation[conversationId] ?? [];
+            const next = dispatchAgentEvent({
+              state: { messages: prevMessages, noteAppliedNotices: state.noteAppliedNotices },
               assistantMessageId: assistantMsg.id,
               event,
               data,
               newLocalId: localId,
-            }),
-          );
+            });
+            return {
+              messagesByConversation: {
+                ...state.messagesByConversation,
+                [conversationId]: next.messages,
+              },
+              noteAppliedNotices: next.noteAppliedNotices,
+            };
+          });
           // Tier-1 side-effect: push the DB-reconciled content into any
           // open editor tab. The dispatcher itself stays pure, so this
           // forwarding lives out here. No-op when no tab is open.
@@ -278,68 +334,74 @@ export const useAiStore = create<AiState>((set, get) => ({
       });
     } catch (err) {
       const message = formatStreamError(err);
-      patchAssistantMessage(set, chatId, assistantMsg.id, (m) => ({ ...m, error: message }));
-    } finally {
-      patchTab(set, chatId, (c) => ({
-        ...c,
-        abortController: null,
-        isStreaming: false,
-        messages: c.messages.map((m) =>
-          m.id === assistantMsg.id ? { ...m, isStreaming: false } : m,
-        ),
+      patchAssistantMessage(set, conversationId, assistantMsg.id, (m) => ({
+        ...m,
+        error: message,
       }));
+    } finally {
+      set((state) => ({
+        streamingByConversation: {
+          ...state.streamingByConversation,
+          [conversationId]: emptyStreaming,
+        },
+        messagesByConversation: {
+          ...state.messagesByConversation,
+          [conversationId]: (state.messagesByConversation[conversationId] ?? []).map((m) =>
+            m.id === assistantMsg.id ? { ...m, isStreaming: false } : m,
+          ),
+        },
+      }));
+      // Refresh the sidebar — the daemon created a new row on first send
+      // (ephemeral → persisted) or bumped updated_at on a subsequent send,
+      // either way the sidebar order may have changed.
+      void get().loadConversations();
     }
   },
 }));
 
 // ─── Selectors ─────────────────────────────────────────────────────────
 
-export function useActiveChat(): ChatTabState | null {
-  return useAiStore((s) => s.chats.find((c) => c.id === s.activeChatId) ?? null);
+/**
+ * Stable reference for the "no active conversation / no messages yet" case.
+ * Returning a fresh `[]` inline would give zustand a new snapshot every
+ * render — React 19 aborts with "getSnapshot should be cached" + an
+ * infinite update loop.
+ */
+const EMPTY_MESSAGES: ChatMessage[] = [];
+
+export function useActiveConversationMessages(): ChatMessage[] {
+  return useAiStore((s) => {
+    const id = s.activeConversationId;
+    if (!id) return EMPTY_MESSAGES;
+    return s.messagesByConversation[id] ?? EMPTY_MESSAGES;
+  });
+}
+
+export function useIsActiveConversationStreaming(): boolean {
+  return useAiStore((s) => {
+    const id = s.activeConversationId;
+    return id ? (s.streamingByConversation[id]?.isStreaming ?? false) : false;
+  });
 }
 
 // ─── Internals ─────────────────────────────────────────────────────────
 
 type SetState = (updater: (state: AiState) => Partial<AiState>) => void;
 
-function patchTab(set: SetState, chatId: string, patch: (tab: ChatTabState) => ChatTabState): void {
-  set((state) => ({
-    chats: state.chats.map((c) => (c.id === chatId ? patch(c) : c)),
-  }));
-}
-
 function patchAssistantMessage(
   set: SetState,
-  chatId: string,
+  conversationId: string,
   messageId: string,
   patch: (msg: ChatMessage) => ChatMessage,
 ): void {
   set((state) => ({
-    chats: state.chats.map((c) =>
-      c.id === chatId
-        ? {
-            ...c,
-            messages: c.messages.map((m) => (m.id === messageId ? patch(m) : m)),
-          }
-        : c,
-    ),
+    messagesByConversation: {
+      ...state.messagesByConversation,
+      [conversationId]: (state.messagesByConversation[conversationId] ?? []).map((m) =>
+        m.id === messageId ? patch(m) : m,
+      ),
+    },
   }));
-}
-
-/**
- * Spin-wait for the tab's `isStreaming` flag to drop. We check inline
- * (no setTimeout(0) tricks) because streamSse exits synchronously after
- * the abort signal is observed during a `read()` await, and the finally
- * block runs in the next microtask. A handful of microtask yields is
- * enough; cap at ~50ms so a wedged stream doesn't hang `closeChat`.
- */
-async function waitForIdle(get: () => AiState, chatId: string): Promise<void> {
-  const deadline = Date.now() + 50;
-  while (Date.now() < deadline) {
-    const tab = get().chats.find((c) => c.id === chatId);
-    if (!tab || !tab.isStreaming) return;
-    await Promise.resolve(); // yield microtask
-  }
 }
 
 function formatStreamError(err: unknown): string {
@@ -368,55 +430,52 @@ function forwardNoteAppliedToEditor(data: unknown): void {
   const content = typeof payload.content === 'string' ? payload.content : '';
   const appended = typeof payload.appended_text === 'string' ? payload.appended_text : '';
   useEditorStore.getState().applyNoteAppliedFromAi(noteId, content, appended);
-  // Notify every list that depends on note state — data-bus subscribers
-  // (note-store, folder-store, browser-store) refetch automatically.
   useDataBus.getState().bumpNotes();
 }
 
 // ─── Draft approve helpers (P3.0.5 #2) ─────────────────────────────────
 
-type DraftCard = ChatTabState['messages'][number]['drafts'][number];
+type DraftCard = ChatMessage['drafts'][number];
 type DraftPatch = Partial<DraftCard>;
 
-function findMessage(state: AiState, chatId: string, messageId: string): ChatMessage | undefined {
-  const tab = state.chats.find((c) => c.id === chatId);
-  return tab?.messages.find((m) => m.id === messageId);
+function findMessage(
+  state: AiState,
+  conversationId: string,
+  messageId: string,
+): ChatMessage | undefined {
+  return state.messagesByConversation[conversationId]?.find((m) => m.id === messageId);
 }
 
 function findDraft(
   state: AiState,
-  chatId: string,
+  conversationId: string,
   messageId: string,
   draftLocalId: string,
 ): DraftCard | undefined {
-  return findMessage(state, chatId, messageId)?.drafts.find((d) => d.localId === draftLocalId);
+  return findMessage(state, conversationId, messageId)?.drafts.find(
+    (d) => d.localId === draftLocalId,
+  );
 }
 
 function patchDraft(
   set: SetState,
-  chatId: string,
+  conversationId: string,
   messageId: string,
   draftLocalId: string,
   patch: (d: DraftCard) => DraftPatch,
 ): void {
   set((state) => ({
-    chats: state.chats.map((c) =>
-      c.id === chatId
-        ? {
-            ...c,
-            messages: c.messages.map((m) =>
-              m.id === messageId
-                ? {
-                    ...m,
-                    drafts: m.drafts.map((d) =>
-                      d.localId === draftLocalId ? { ...d, ...patch(d) } : d,
-                    ),
-                  }
-                : m,
-            ),
-          }
-        : c,
-    ),
+    messagesByConversation: {
+      ...state.messagesByConversation,
+      [conversationId]: (state.messagesByConversation[conversationId] ?? []).map((m) =>
+        m.id === messageId
+          ? {
+              ...m,
+              drafts: m.drafts.map((d) => (d.localId === draftLocalId ? { ...d, ...patch(d) } : d)),
+            }
+          : m,
+      ),
+    },
   }));
 }
 
@@ -437,7 +496,6 @@ async function applyDraftViaApi(draft: DraftCard): Promise<void> {
     });
     return;
   }
-  // update path — verify baselines match before overwriting.
   if (draft.original_content !== undefined) {
     const current = await api.getNote(draft.note_id);
     const dbContent = current.data?.content ?? '';
@@ -452,13 +510,6 @@ async function applyDraftViaApi(draft: DraftCard): Promise<void> {
   });
 }
 
-/**
- * Push a Tier-1 toast notice into the noteAppliedNotices queue so the
- * NoteAppliedToast component fires the same UX it does for daemon-side
- * append_memo. We synthesize the appended text as the full content (the
- * user just approved a wholesale draft) — toast components downstream
- * already truncate for display.
- */
 function addNoteAppliedToast(set: SetState, draft: DraftCard): void {
   const notice: NoteAppliedNotice = {
     id: localId(),
@@ -468,4 +519,84 @@ function addNoteAppliedToast(set: SetState, draft: DraftCard): void {
     receivedAt: Date.now(),
   };
   set((state) => ({ noteAppliedNotices: [...state.noteAppliedNotices, notice] }));
+}
+
+// ─── History hydration (P3.4-f §5.5) ───────────────────────────────────
+
+/**
+ * Fold the daemon's flat LlmMessage[] into GUI ChatMessage[]. Each
+ * assistant+tool_calls row starts a new ChatMessage; subsequent tool
+ * rows slot into that assistant's `toolCalls[]` via tool_call_id match.
+ * Drafts / previews are NOT recoverable (transient UI artifacts) and
+ * hydrate as empty arrays. `thinking` is filled from `reasoning_content`.
+ */
+export function hydrateDaemonMessages(historyMessages: AiHistoryMessage[]): ChatMessage[] {
+  const out: ChatMessage[] = [];
+  for (const m of historyMessages) {
+    if (m.role === 'user') {
+      out.push({
+        id: localId(),
+        role: 'user',
+        content: m.content,
+        thinking: '',
+        toolCalls: [],
+        drafts: [],
+        previews: [],
+        isStreaming: false,
+      });
+    } else if (m.role === 'assistant') {
+      const toolCalls: ChatToolCall[] = (m.tool_calls ?? []).map((tc) => ({
+        id: tc.id,
+        name: tc.name,
+        args: safeParseArgs(tc.arguments),
+      }));
+      out.push({
+        id: localId(),
+        role: 'assistant',
+        content: m.content,
+        thinking: m.reasoning_content ?? '',
+        toolCalls,
+        drafts: [],
+        previews: [],
+        isStreaming: false,
+      });
+    } else if (m.role === 'tool') {
+      // Slot into the most recent assistant's toolCalls by tool_call_id.
+      const assistant = findLastAssistant(out);
+      if (!assistant || !m.tool_call_id) continue;
+      const call = assistant.toolCalls.find((tc) => tc.id === m.tool_call_id);
+      if (!call) continue;
+      call.result = safeParseResult(m.content);
+      if (m.is_error !== undefined) call.isError = m.is_error;
+    }
+  }
+  return out;
+}
+
+function findLastAssistant(messages: ChatMessage[]): ChatMessage | undefined {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].role === 'assistant') return messages[i];
+  }
+  return undefined;
+}
+
+function safeParseArgs(raw: string): Record<string, unknown> {
+  if (!raw) return {};
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+  } catch {
+    // fall through
+  }
+  return {};
+}
+
+function safeParseResult(raw: string): unknown {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return raw;
+  }
 }

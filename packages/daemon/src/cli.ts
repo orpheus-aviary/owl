@@ -80,7 +80,7 @@ program
     const deviceId = ensureDeviceId(db);
     const scheduler = new ReminderScheduler(db, sqlite, config, logger);
     const toolRegistry = createBuiltinRegistry();
-    const conversationStore = new ConversationStore();
+    const conversationStore = new ConversationStore(sqlite);
     const previewStore = new PreviewStore();
     const eventsBus = new EventsBus();
 

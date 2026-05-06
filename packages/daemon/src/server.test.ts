@@ -51,7 +51,7 @@ describe('daemon API', () => {
       deviceId,
       scheduler,
       toolRegistry: createBuiltinRegistry(),
-      conversationStore: new ConversationStore(),
+      conversationStore: new ConversationStore(sqlite),
       previewStore: new PreviewStore(),
       eventsBus: new EventsBus(),
     });

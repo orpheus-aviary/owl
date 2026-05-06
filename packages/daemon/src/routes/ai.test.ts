@@ -89,7 +89,7 @@ describe('AI routes (P2-7d)', () => {
       thinking_round_trip: true,
     };
     scheduler = new ReminderScheduler(db, sqlite, config, logger);
-    conversationStore = new ConversationStore();
+    conversationStore = new ConversationStore(sqlite);
     previewStore = new PreviewStore();
 
     app = buildServer({
@@ -255,6 +255,87 @@ describe('AI routes (P2-7d)', () => {
   });
 
   // ── GET /ai/conversations ──
+
+  it('GET /ai/conversations returns list with title + timestamps (updated_at DESC)', async () => {
+    nextLlm = new QueuedLlmClient([
+      [
+        { type: 'text_delta', text: 'ok' },
+        { type: 'done', stop_reason: 'end_turn' },
+      ],
+    ]);
+    const create = await app.inject({
+      method: 'POST',
+      url: '/ai/chat',
+      payload: { message: 'hello sidebar' },
+    });
+    const events = parseSseEvents(create.payload);
+    const convId = (events[0].data as { conversation_id: string }).conversation_id;
+
+    const list = await app.inject({ method: 'GET', url: '/ai/conversations' });
+    assert.equal(list.statusCode, 200);
+    const body = list.json() as {
+      data: {
+        conversations: { id: string; title: string; created_at: string; updated_at: string }[];
+      };
+    };
+    const found = body.data.conversations.find((c) => c.id === convId);
+    assert.ok(found, 'conversation must appear in list');
+    assert.equal(found.title, 'hello sidebar');
+    assert.ok(found.created_at);
+    assert.ok(found.updated_at);
+  });
+
+  // ── GET /ai/conversations/:id ──
+
+  it('GET /ai/conversations/:id returns messages, filters system + reasoning_signature', async () => {
+    nextLlm = new QueuedLlmClient([
+      [
+        { type: 'thinking_delta', text: 'thoughts' },
+        { type: 'thinking_signature', signature: 'anthropic-opaque-sig' },
+        { type: 'text_delta', text: 'answer' },
+        { type: 'done', stop_reason: 'end_turn' },
+      ],
+    ]);
+    const create = await app.inject({
+      method: 'POST',
+      url: '/ai/chat',
+      payload: { message: 'please think' },
+    });
+    const convId = (parseSseEvents(create.payload)[0].data as { conversation_id: string })
+      .conversation_id;
+
+    const get = await app.inject({ method: 'GET', url: `/ai/conversations/${convId}` });
+    assert.equal(get.statusCode, 200);
+    const body = get.json() as {
+      data: {
+        id: string;
+        title: string;
+        messages: Array<{
+          role: string;
+          content: string;
+          reasoning_content?: string;
+          reasoning_signature?: string;
+        }>;
+      };
+    };
+    assert.equal(body.data.id, convId);
+    // No system role in the shipped payload (prompt engineering is private).
+    assert.ok(!body.data.messages.some((m) => m.role === 'system'));
+    // Reasoning_content is surfaced for GUI hydration (→ ChatMessage.thinking).
+    const assistant = body.data.messages.find((m) => m.role === 'assistant');
+    assert.ok(assistant);
+    assert.equal(assistant.reasoning_content, 'thoughts');
+    // But reasoning_signature (Anthropic-only opaque blob) is stripped.
+    assert.equal(assistant.reasoning_signature, undefined);
+  });
+
+  it('GET /ai/conversations/:id returns 404 for unknown id', async () => {
+    const res = await app.inject({
+      method: 'GET',
+      url: '/ai/conversations/no-such-id',
+    });
+    assert.equal(res.statusCode, 404);
+  });
 
   // ── POST /ai/preview/apply ──
 

@@ -3,4 +3,5 @@ export const LAYOUT_KEYS = {
   editorLayout: 'owl-editor-layout',
   editorSplit: 'owl-editor-split',
   folderPanelOpen: 'owl-folder-panel-open',
+  aiLayout: 'owl-ai-layout',
 } as const;

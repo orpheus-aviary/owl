@@ -1,7 +1,13 @@
 import type { OwlConfig, OwlDatabase } from '@owl/core';
 import type Database from 'better-sqlite3';
 import type { ConversationStore } from './conversations.js';
-import type { LlmClient, LlmContentBlock, LlmToolCall, StreamChunk } from './llm-client.js';
+import type {
+  LlmClient,
+  LlmContentBlock,
+  LlmMessage,
+  LlmToolCall,
+  StreamChunk,
+} from './llm-client.js';
 import { buildSystemPrompt } from './system-prompt.js';
 import {
   type ToolContext,
@@ -97,18 +103,22 @@ export async function* runAgentLoop(
   yield { type: 'conversation_id', conversation_id: conversation.id };
 
   // System prompt is rebuilt every turn so date/time + recent-notes stay fresh.
-  // Replace any previous system message rather than stacking them.
+  // Memory-only (never persisted) — the store's setSystemMessage + SQL CHECK
+  // (role != 'system') enforce this jointly. P3.4-f §10.
   const systemContent = buildSystemPrompt(deps.db, deps.sqlite, deps.config.ai);
-  if (created || conversation.messages[0]?.role !== 'system') {
-    conversation.messages.unshift({ role: 'system', content: systemContent });
-  } else {
-    conversation.messages[0] = { role: 'system', content: systemContent };
+  deps.conversations.setSystemMessage(conversation.id, systemContent);
+
+  // Cold-start hydration can leave unbounded history in memory. Trim before
+  // the first LLM call so we don't burn tokens rehashing a long resumed chat.
+  if (!created) {
+    deps.conversations.trimToRounds(conversation.id, deps.config.ai.context_rounds);
   }
 
-  conversation.messages.push({ role: 'user', content: options.message });
+  // Persist the user turn. First call for a new id: ai_conversations row is
+  // INSERTed inside the same transaction with title = titleFrom(content).
+  deps.conversations.appendMessages(conversation.id, [{ role: 'user', content: options.message }]);
   deps.conversations.trimToRounds(conversation.id, deps.config.ai.context_rounds);
 
-  const tools = deps.registry.toLlmToolDefs();
   const toolCtx: ToolContext = { ...deps.toolCtx, registry: deps.registry };
   const maxIterations = options.maxIterations ?? MAX_ITERATIONS;
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
@@ -122,81 +132,118 @@ export async function* runAgentLoop(
       break;
     }
 
-    const turnSignal = mergeSignals(options.signal, timeoutMs);
-    let assembled: AssembledTurn;
-    try {
-      assembled = await assembleTurn(
-        deps.llmClient.chatCompletion(conversation.messages, tools, {
-          signal: turnSignal.signal,
-        }),
-        turnSignal.cleanup,
-      );
-    } catch (err) {
-      yield { type: 'error', message: errorMessage(err) };
+    const iterationResult = yield* runIteration({
+      options,
+      deps,
+      conversation,
+      toolCtx,
+      timeoutMs,
+    });
+
+    if (iterationResult.kind === 'error') {
       stopReason = 'error';
       break;
     }
-
-    if (assembled.thinking) {
-      // Surface thinking BEFORE the visible message so GUI can render the
-      // collapsible block above the bubble's main text without reordering.
-      yield { type: 'thinking', content: assembled.thinking };
-    }
-    if (assembled.text) {
-      yield { type: 'message', content: assembled.text };
-    }
-
-    // Push assistant turn into the conversation BEFORE running tools so
-    // the OpenAI/Anthropic adapters see a well-formed request next round
-    // (assistant tool_calls must precede the matching tool messages).
-    // reasoning_content / signature are required for round-trip on
-    // thinking-capable providers (DeepSeek V4, Anthropic Extended Thinking).
-    conversation.messages.push({
-      role: 'assistant',
-      content: assembled.text,
-      tool_calls: assembled.toolCalls.length > 0 ? assembled.toolCalls : undefined,
-      reasoning_content: assembled.thinking || undefined,
-      reasoning_signature: assembled.thinkingSignature || undefined,
-    });
-
-    if (assembled.toolCalls.length === 0) {
-      stopReason = assembled.stopReason ?? 'end_turn';
+    if (iterationResult.kind === 'terminal') {
+      stopReason = iterationResult.stopReason;
       break;
     }
-
-    for (const call of assembled.toolCalls) {
-      const args = parseToolArgs(call.arguments);
-      yield { type: 'tool_call', tool: call.name, args, tool_call_id: call.id };
-
-      const tool = deps.registry.get(call.name);
-      const { result, isError, sideEffect } = await runTool(tool, call.name, args, toolCtx);
-
-      if (sideEffect) {
-        yield sideEffectToEvent(sideEffect);
-      }
-
-      yield {
-        type: 'tool_result',
-        tool: call.name,
-        tool_call_id: call.id,
-        result,
-        is_error: isError,
-      };
-
-      conversation.messages.push({
-        role: 'tool',
-        tool_call_id: call.id,
-        content: stringifyToolResult(result),
-      });
-    }
-
+    // Continue: more tool rounds pending.
     if (iteration === maxIterations - 1) {
       stopReason = 'max_iterations';
     }
   }
 
-  conversation.updatedAt = new Date();
   yield { type: 'done', conversation_id: conversation.id, stop_reason: stopReason };
+}
+
+interface RunIterationDeps {
+  options: RunAgentLoopOptions;
+  deps: RunAgentLoopDeps;
+  conversation: { id: string; messages: LlmMessage[] };
+  toolCtx: ToolContext;
+  timeoutMs: number;
+}
+
+type IterationResult =
+  | { kind: 'error' }
+  | { kind: 'terminal'; stopReason: string }
+  | { kind: 'continue' };
+
+async function* runIteration(ctx: RunIterationDeps): AsyncGenerator<AgentEvent, IterationResult> {
+  const { options, deps, conversation, toolCtx, timeoutMs } = ctx;
+  const tools = deps.registry.toLlmToolDefs();
+  const turnSignal = mergeSignals(options.signal, timeoutMs);
+
+  let assembled: AssembledTurn;
+  try {
+    assembled = await assembleTurn(
+      deps.llmClient.chatCompletion(conversation.messages, tools, {
+        signal: turnSignal.signal,
+      }),
+      turnSignal.cleanup,
+    );
+  } catch (err) {
+    yield { type: 'error', message: errorMessage(err) };
+    return { kind: 'error' };
+  }
+
+  if (assembled.thinking) {
+    yield { type: 'thinking', content: assembled.thinking };
+  }
+  if (assembled.text) {
+    yield { type: 'message', content: assembled.text };
+  }
+
+  // Build the assistant message for this iteration. reasoning_content +
+  // signature are required for round-trip on thinking-capable providers
+  // (DeepSeek V4, Anthropic Extended Thinking).
+  const assistantMsg: LlmMessage = {
+    role: 'assistant',
+    content: assembled.text,
+    tool_calls: assembled.toolCalls.length > 0 ? assembled.toolCalls : undefined,
+    reasoning_content: assembled.thinking || undefined,
+    reasoning_signature: assembled.thinkingSignature || undefined,
+  };
+
+  if (assembled.toolCalls.length === 0) {
+    deps.conversations.appendMessages(conversation.id, [assistantMsg]);
+    return { kind: 'terminal', stopReason: assembled.stopReason ?? 'end_turn' };
+  }
+
+  const toolResultMsgs: LlmMessage[] = [];
+  for (const call of assembled.toolCalls) {
+    const args = parseToolArgs(call.arguments);
+    yield { type: 'tool_call', tool: call.name, args, tool_call_id: call.id };
+
+    const tool = deps.registry.get(call.name);
+    const { result, isError, sideEffect } = await runTool(tool, call.name, args, toolCtx);
+
+    if (sideEffect) {
+      yield sideEffectToEvent(sideEffect);
+    }
+
+    yield {
+      type: 'tool_result',
+      tool: call.name,
+      tool_call_id: call.id,
+      result,
+      is_error: isError,
+    };
+
+    toolResultMsgs.push({
+      role: 'tool',
+      tool_call_id: call.id,
+      content: stringifyToolResult(result),
+      is_error: isError,
+    });
+  }
+
+  // Atomic per-iteration batch: [assistant, ...toolResults]. Load-bearing
+  // P3.4-f invariant — crash here writes either nothing or the full
+  // iteration; no dangling tool_calls without matching tool_result rows.
+  deps.conversations.appendMessages(conversation.id, [assistantMsg, ...toolResultMsgs]);
+  return { kind: 'continue' };
 }
 
 // ─── Stream assembly ───────────────────────────────────────────────────

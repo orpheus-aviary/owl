@@ -337,9 +337,36 @@ export interface AiToolDescriptor {
 
 export interface AiConversationSummary {
   id: string;
+  /** P3.4-f: title derived from first user message (32-char truncated). */
+  title: string;
   created_at: string;
   updated_at: string;
   message_count: number;
+}
+
+/**
+ * Hydration-shaped message from `GET /ai/conversations/:id`. Mirrors the
+ * daemon's LlmMessage minus:
+ *   - role='system' (filtered by daemon — prompt engineering is private)
+ *   - reasoning_signature (Anthropic-only opaque blob, unused by GUI)
+ * `reasoning_content` IS included so GUI can hydrate `ChatMessage.thinking`.
+ * `is_error` on tool messages hydrates `ChatToolCall.isError`.
+ */
+export interface AiHistoryMessage {
+  role: 'user' | 'assistant' | 'tool';
+  content: string;
+  tool_calls?: { id: string; name: string; arguments: string }[];
+  tool_call_id?: string;
+  is_error?: boolean;
+  reasoning_content?: string;
+}
+
+export interface AiConversationDetail {
+  id: string;
+  title: string;
+  created_at: string;
+  updated_at: string;
+  messages: AiHistoryMessage[];
 }
 
 export interface AiPreviewSummary {
@@ -358,6 +385,9 @@ export const getAiCapabilities = () =>
 
 export const listAiConversations = () =>
   request<{ conversations: AiConversationSummary[] }>('GET', '/ai/conversations');
+
+export const getAiConversation = (id: string) =>
+  request<AiConversationDetail>('GET', `/ai/conversations/${id}`);
 
 export const deleteAiConversation = (id: string) =>
   request<{ id: string }>('DELETE', `/ai/conversations/${id}`);

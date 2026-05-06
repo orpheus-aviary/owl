@@ -1,17 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import { type DispatcherState, dispatchAgentEvent } from './ai-dispatcher';
-import type { ChatMessage, ChatTabState } from './ai-store-types';
+import type { ChatMessage } from './ai-store-types';
 
 /**
- * Build a minimal state with one chat tab + one streaming assistant
- * message ready to receive deltas. Each test starts from a fresh copy
- * so mutations from one case don't leak into the next.
+ * Build a minimal dispatcher state with one streaming assistant message
+ * ready to receive deltas. Each test starts from a fresh copy so
+ * mutations from one case don't leak into the next.
+ *
+ * P3.4-f: the dispatcher now owns a messages[] array directly (not
+ * nested inside ChatTabState). Conversation routing lives in the store.
  */
-function baseState(): {
-  state: DispatcherState;
-  chatId: string;
-  assistantMessageId: string;
-} {
+function baseState(): { state: DispatcherState; assistantMessageId: string } {
   const assistantMessageId = 'msg-assistant';
   const userMsg: ChatMessage = {
     id: 'msg-user',
@@ -33,17 +32,8 @@ function baseState(): {
     previews: [],
     isStreaming: true,
   };
-  const tab: ChatTabState = {
-    id: 'chat-1',
-    conversationId: null,
-    title: '新对话',
-    messages: [userMsg, assistantMsg],
-    abortController: null,
-    isStreaming: true,
-  };
   return {
-    state: { chats: [tab], noteAppliedNotices: [] },
-    chatId: tab.id,
+    state: { messages: [userMsg, assistantMsg], noteAppliedNotices: [] },
     assistantMessageId,
   };
 }
@@ -52,31 +42,30 @@ let counter = 0;
 const newLocalId = () => `id-${++counter}`;
 
 function activeMessage(state: DispatcherState, messageId: string): ChatMessage {
-  const tab = state.chats[0];
-  const msg = tab.messages.find((m) => m.id === messageId);
+  const msg = state.messages.find((m) => m.id === messageId);
   if (!msg) throw new Error('assistant message missing');
   return msg;
 }
 
 describe('dispatchAgentEvent', () => {
-  it('conversation_id sets tab.conversationId', () => {
-    const { state, chatId, assistantMessageId } = baseState();
+  it('conversation_id is a no-op (store owns the id)', () => {
+    const { state, assistantMessageId } = baseState();
     const next = dispatchAgentEvent({
       state,
-      chatId,
       assistantMessageId,
       event: 'conversation_id',
       data: { conversation_id: 'conv-abc' },
       newLocalId,
     });
-    expect(next.chats[0].conversationId).toBe('conv-abc');
+    // P3.4-f collapsed local+server id; the dispatcher no longer patches
+    // anything on conversation_id — state should be referentially unchanged.
+    expect(next).toBe(state);
   });
 
   it('thinking appends to the assistant message thinking buffer', () => {
-    const { state, chatId, assistantMessageId } = baseState();
+    const { state, assistantMessageId } = baseState();
     const after1 = dispatchAgentEvent({
       state,
-      chatId,
       assistantMessageId,
       event: 'thinking',
       data: { content: 'Considering ' },
@@ -84,22 +73,19 @@ describe('dispatchAgentEvent', () => {
     });
     const after2 = dispatchAgentEvent({
       state: after1,
-      chatId,
       assistantMessageId,
       event: 'thinking',
       data: { content: 'options…' },
       newLocalId,
     });
     expect(activeMessage(after2, assistantMessageId).thinking).toBe('Considering options…');
-    // Visible content stays untouched — thinking lives in its own field.
     expect(activeMessage(after2, assistantMessageId).content).toBe('');
   });
 
   it('message appends content to the streaming assistant message', () => {
-    const { state, chatId, assistantMessageId } = baseState();
+    const { state, assistantMessageId } = baseState();
     const after1 = dispatchAgentEvent({
       state,
-      chatId,
       assistantMessageId,
       event: 'message',
       data: { content: 'Hello ' },
@@ -107,7 +93,6 @@ describe('dispatchAgentEvent', () => {
     });
     const after2 = dispatchAgentEvent({
       state: after1,
-      chatId,
       assistantMessageId,
       event: 'message',
       data: { content: 'world' },
@@ -117,10 +102,9 @@ describe('dispatchAgentEvent', () => {
   });
 
   it('tool_call pushes a ChatToolCall onto the assistant message', () => {
-    const { state, chatId, assistantMessageId } = baseState();
+    const { state, assistantMessageId } = baseState();
     const next = dispatchAgentEvent({
       state,
-      chatId,
       assistantMessageId,
       event: 'tool_call',
       data: { tool_call_id: 't1', tool: 'search_notes', args: { query: 'foo' } },
@@ -132,10 +116,9 @@ describe('dispatchAgentEvent', () => {
   });
 
   it('tool_result patches the matching tool call', () => {
-    const { state, chatId, assistantMessageId } = baseState();
+    const { state, assistantMessageId } = baseState();
     const withCall = dispatchAgentEvent({
       state,
-      chatId,
       assistantMessageId,
       event: 'tool_call',
       data: { tool_call_id: 't1', tool: 'list_tags', args: {} },
@@ -143,7 +126,6 @@ describe('dispatchAgentEvent', () => {
     });
     const withResult = dispatchAgentEvent({
       state: withCall,
-      chatId,
       assistantMessageId,
       event: 'tool_result',
       data: { tool_call_id: 't1', tool: 'list_tags', result: { tags: [] }, is_error: false },
@@ -155,10 +137,9 @@ describe('dispatchAgentEvent', () => {
   });
 
   it('tool_result flags is_error=true', () => {
-    const { state, chatId, assistantMessageId } = baseState();
+    const { state, assistantMessageId } = baseState();
     const withCall = dispatchAgentEvent({
       state,
-      chatId,
       assistantMessageId,
       event: 'tool_call',
       data: { tool_call_id: 'tx', tool: 'whatever', args: {} },
@@ -166,7 +147,6 @@ describe('dispatchAgentEvent', () => {
     });
     const withResult = dispatchAgentEvent({
       state: withCall,
-      chatId,
       assistantMessageId,
       event: 'tool_result',
       data: { tool_call_id: 'tx', tool: 'whatever', result: { error: 'boom' }, is_error: true },
@@ -175,11 +155,10 @@ describe('dispatchAgentEvent', () => {
     expect(activeMessage(withResult, assistantMessageId).toolCalls[0].isError).toBe(true);
   });
 
-  it('note_applied pushes a notice and leaves chat messages untouched', () => {
-    const { state, chatId, assistantMessageId } = baseState();
+  it('note_applied pushes a notice and leaves assistant message untouched', () => {
+    const { state, assistantMessageId } = baseState();
     const next = dispatchAgentEvent({
       state,
-      chatId,
       assistantMessageId,
       event: 'note_applied',
       data: { note_id: 'memo', appended_text: 'milk', content: 'memo body\n\nmilk' },
@@ -191,15 +170,13 @@ describe('dispatchAgentEvent', () => {
       appendedText: 'milk',
       latestContent: 'memo body\n\nmilk',
     });
-    // Assistant message body is unchanged — toast-only event.
     expect(activeMessage(next, assistantMessageId).content).toBe('');
   });
 
   it('draft_ready pushes a DraftReadyCard with original_* baselines', () => {
-    const { state, chatId, assistantMessageId } = baseState();
+    const { state, assistantMessageId } = baseState();
     const next = dispatchAgentEvent({
       state,
-      chatId,
       assistantMessageId,
       event: 'draft_ready',
       data: {
@@ -228,10 +205,9 @@ describe('dispatchAgentEvent', () => {
   });
 
   it('draft_ready ignores unknown action values', () => {
-    const { state, chatId, assistantMessageId } = baseState();
+    const { state, assistantMessageId } = baseState();
     const next = dispatchAgentEvent({
       state,
-      chatId,
       assistantMessageId,
       event: 'draft_ready',
       data: { action: 'mystery', note_id: 'n', content: '', tags: [], folder_id: null },
@@ -241,10 +217,9 @@ describe('dispatchAgentEvent', () => {
   });
 
   it('preview_ready pushes a PreviewReadyCard', () => {
-    const { state, chatId, assistantMessageId } = baseState();
+    const { state, assistantMessageId } = baseState();
     const next = dispatchAgentEvent({
       state,
-      chatId,
       assistantMessageId,
       event: 'preview_ready',
       data: {
@@ -267,10 +242,9 @@ describe('dispatchAgentEvent', () => {
   });
 
   it('error sets message.error and clears its streaming flag', () => {
-    const { state, chatId, assistantMessageId } = baseState();
+    const { state, assistantMessageId } = baseState();
     const next = dispatchAgentEvent({
       state,
-      chatId,
       assistantMessageId,
       event: 'error',
       data: { message: 'LLM exploded' },
@@ -282,10 +256,9 @@ describe('dispatchAgentEvent', () => {
   });
 
   it('done flips assistant message isStreaming false', () => {
-    const { state, chatId, assistantMessageId } = baseState();
+    const { state, assistantMessageId } = baseState();
     const next = dispatchAgentEvent({
       state,
-      chatId,
       assistantMessageId,
       event: 'done',
       data: { conversation_id: 'c', stop_reason: 'end_turn' },
@@ -295,10 +268,9 @@ describe('dispatchAgentEvent', () => {
   });
 
   it('unknown events leave state unchanged', () => {
-    const { state, chatId, assistantMessageId } = baseState();
+    const { state, assistantMessageId } = baseState();
     const next = dispatchAgentEvent({
       state,
-      chatId,
       assistantMessageId,
       event: 'mystery_event_from_the_future',
       data: { x: 1 },
@@ -308,11 +280,9 @@ describe('dispatchAgentEvent', () => {
   });
 
   it('malformed events fail closed (no crash, no mutation)', () => {
-    const { state, chatId, assistantMessageId } = baseState();
-    // Missing tool_call_id / tool — handler should bail without throwing.
+    const { state, assistantMessageId } = baseState();
     const next = dispatchAgentEvent({
       state,
-      chatId,
       assistantMessageId,
       event: 'tool_call',
       data: { tool: 'no_id' },
@@ -324,7 +294,7 @@ describe('dispatchAgentEvent', () => {
 
 describe('end-to-end ordering', () => {
   it('replays a realistic Tier-1 turn into the right places', () => {
-    const { state, chatId, assistantMessageId } = baseState();
+    const { state, assistantMessageId } = baseState();
     const events: Array<[string, unknown]> = [
       ['conversation_id', { conversation_id: 'conv-1' }],
       ['tool_call', { tool_call_id: 't1', tool: 'append_memo', args: { text: 'milk' } }],
@@ -338,10 +308,8 @@ describe('end-to-end ordering', () => {
     ];
     let cur = state;
     for (const [event, data] of events) {
-      cur = dispatchAgentEvent({ state: cur, chatId, assistantMessageId, event, data, newLocalId });
+      cur = dispatchAgentEvent({ state: cur, assistantMessageId, event, data, newLocalId });
     }
-    const tab = cur.chats[0];
-    expect(tab.conversationId).toBe('conv-1');
     expect(cur.noteAppliedNotices).toHaveLength(1);
     const msg = activeMessage(cur, assistantMessageId);
     expect(msg.content).toBe('Done.');

@@ -757,7 +757,7 @@ describe('migrate — applyForwardMigrations (P3.4-a)', () => {
     }
   });
 
-  it('F2: v=1 db opened by createDatabase → forward migrations applied, user_version=2', () => {
+  it('F2: v=1 db opened by createDatabase → forward migrations applied up to LATEST', () => {
     const dbPath = join(tmp, 'f2.db');
     // Seed a clean v=1 db: apply 0001 only (via readInitialSql, not applyInitialSchema),
     // stamp user_version=1. This is exactly how a 0.3.0 user's db looks on disk.
@@ -772,7 +772,7 @@ describe('migrate — applyForwardMigrations (P3.4-a)', () => {
     }
     const { sqlite } = createDatabase({ dbPath });
     try {
-      assert.equal(sqlite.pragma('user_version', { simple: true }) as number, 2);
+      assert.equal(sqlite.pragma('user_version', { simple: true }) as number, LATEST_KNOWN_VERSION);
       const noteCols = (sqlite.pragma('table_info(notes)') as { name: string }[]).map(
         (c) => c.name,
       );
@@ -809,16 +809,26 @@ describe('migrate — applyForwardMigrations (P3.4-a)', () => {
         sqlite.close();
       }
     }
-    // Walk 1→3: v=2 exists and applies cleanly; v=3 file missing → throws.
-    // Contract: partial progress is preserved, user_version stays at 2.
+    // Walk 1→LATEST+1: v=2 + v=3 exist and apply cleanly; v=LATEST+1 file
+    // missing → throws. Partial progress is preserved, user_version stays
+    // at LATEST. Target = LATEST+1 so the "file missing" premise stays
+    // true as we ship more migrations.
+    const missing = LATEST_KNOWN_VERSION + 1;
     const sqlite = new BetterSqlite3(dbPath);
     try {
-      assert.throws(() => applyForwardMigrations(sqlite, 1, 3), /No migration file found for v3/);
-      assert.equal(sqlite.pragma('user_version', { simple: true }) as number, 2);
+      assert.throws(
+        () => applyForwardMigrations(sqlite, 1, missing),
+        new RegExp(`No migration file found for v${missing}`),
+      );
+      assert.equal(sqlite.pragma('user_version', { simple: true }) as number, LATEST_KNOWN_VERSION);
       const noteCols = (sqlite.pragma('table_info(notes)') as { name: string }[]).map(
         (c) => c.name,
       );
       assert.ok(noteCols.includes('pinned_at'));
+      const AI_TABLE_QUERY =
+        "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'ai_%'";
+      const aiTables = sqlite.prepare(AI_TABLE_QUERY).all() as { name: string }[];
+      assert.equal(aiTables.length, 2, 'ai_conversations + ai_messages created by 0003');
     } finally {
       sqlite.close();
     }
