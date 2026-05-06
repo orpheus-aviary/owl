@@ -318,6 +318,27 @@ export function TagBar({ tags, onTagsChange }: TagBarProps) {
     addHashtagDirect();
   }
 
+  function handleTabComplete(): boolean {
+    if (suggestions.length > 0) {
+      const tag = suggestions[selectedIndex] ?? suggestions[0];
+      if (!tag) return false;
+      setInput(`#${tag.tagValue}`);
+      setSuggestions([]);
+      setHasNavigated(false);
+      return true;
+    }
+    if (showFrequency && filteredFrequency.length > 0) {
+      const opt = filteredFrequency[selectedIndex] ?? filteredFrequency[0];
+      if (!opt) return false;
+      const needsArg = opt.type === '/time' || opt.type === '/alarm';
+      setInput(needsArg ? `${opt.type} ` : opt.type);
+      setShowFrequency(false);
+      setHasNavigated(false);
+      return true;
+    }
+    return false;
+  }
+
   function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
     if (pickerOpen) return;
 
@@ -331,6 +352,13 @@ export function TagBar({ tags, onTagsChange }: TagBarProps) {
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
       e.preventDefault();
       handleArrowKey(e.key);
+      return;
+    }
+
+    if (e.key === 'Tab' && !e.shiftKey) {
+      if (handleTabComplete()) {
+        e.preventDefault();
+      }
       return;
     }
 
