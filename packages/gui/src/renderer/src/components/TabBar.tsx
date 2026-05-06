@@ -51,7 +51,7 @@ export function TabBar({ onCloseTab }: TabBarProps) {
                 : 'text-muted-foreground hover:text-foreground hover:bg-accent/50'
             }`}
           >
-            <span className="truncate">{tab.title}</span>
+            <span className={`truncate ${tab.preview ? 'italic' : ''}`}>{tab.title}</span>
             {tab.dirty && (
               <span className="size-1.5 rounded-full bg-blue-400 shrink-0" title="未保存" />
             )}

@@ -383,3 +383,150 @@ describe('hasUnsavedTabs / getUnsavedTabs', () => {
     expect(unsaved.map((t) => t.noteId)).toEqual(['n1', 'n3']);
   });
 });
+
+/**
+ * P3.4-e preview/pinned tab semantics. Every invariant below protects a
+ * specific failure mode the user could hit by clicking through the list:
+ * dirty or AI-staged tabs getting silently replaced, preview tabs shuffling
+ * position, fetch races dropping the user on stale content, etc.
+ */
+describe('openNote preview/pinned semantics (P3.4-e)', () => {
+  beforeEach(() => {
+    useEditorStore.setState({ tabs: [], activeTabId: null, conflictPrompt: null });
+  });
+
+  it('default (no opts) opens a pinned tab', () => {
+    useEditorStore.getState().openNote(makeNote('n1', 'hello'));
+    expect(getTab('n1')?.preview).toBe(false);
+  });
+
+  it('{preview:true} opens a preview tab', () => {
+    useEditorStore.getState().openNote(makeNote('n1', 'hello'), { preview: true });
+    expect(getTab('n1')?.preview).toBe(true);
+  });
+
+  it('two different preview opens replace in place — only one preview tab exists, length stays 1', () => {
+    useEditorStore.getState().openNote(makeNote('n1', 'one'), { preview: true });
+    useEditorStore.getState().openNote(makeNote('n2', 'two'), { preview: true });
+    const tabs = useEditorStore.getState().tabs;
+    expect(tabs).toHaveLength(1);
+    expect(tabs[0]?.noteId).toBe('n2');
+    expect(tabs[0]?.preview).toBe(true);
+  });
+
+  it('preview tab position is preserved across replacement (not appended)', () => {
+    // Pin n1, then open n2 as preview → n1 at idx 0, n2-preview at idx 1.
+    // Swap n2 preview to n3 preview → n3 must land at idx 1, not idx 2.
+    useEditorStore.getState().openNote(makeNote('n1', 'one')); // pinned, idx 0
+    useEditorStore.getState().openNote(makeNote('n2', 'two'), { preview: true });
+    useEditorStore.getState().openNote(makeNote('n3', 'three'), { preview: true });
+    const tabs = useEditorStore.getState().tabs;
+    expect(tabs.map((t) => t.noteId)).toEqual(['n1', 'n3']);
+    expect(tabs[1]?.preview).toBe(true);
+  });
+
+  it('opening the same note again with {preview:true} keeps it as preview', () => {
+    useEditorStore.getState().openNote(makeNote('n1', 'hello'), { preview: true });
+    useEditorStore.getState().openNote(makeNote('n1', 'hello'), { preview: true });
+    expect(getTab('n1')?.preview).toBe(true);
+  });
+
+  it('opening the same preview note with {preview:false} promotes it to pinned', () => {
+    useEditorStore.getState().openNote(makeNote('n1', 'hello'), { preview: true });
+    useEditorStore.getState().openNote(makeNote('n1', 'hello'), { preview: false });
+    expect(getTab('n1')?.preview).toBe(false);
+  });
+
+  it('opening an already-pinned tab with {preview:true} does NOT demote it', () => {
+    // Pinned is a one-way state — a stray preview click must not replace
+    // or re-preview a tab the user explicitly committed to.
+    useEditorStore.getState().openNote(makeNote('n1', 'hello'));
+    useEditorStore.getState().openNote(makeNote('n1', 'hello'), { preview: true });
+    expect(getTab('n1')?.preview).toBe(false);
+  });
+
+  it('pinned tab still refreshes baseline on re-open (clean tab path)', () => {
+    useEditorStore.getState().openNote(makeNote('n1', 'old content'));
+    // Clean tab: fresh snapshot replaces content + originalContent.
+    useEditorStore.getState().openNote(makeNote('n1', 'new content'), { preview: true });
+    const tab = getTab('n1');
+    expect(tab?.content).toBe('new content');
+    expect(tab?.originalContent).toBe('new content');
+    // But preview must NOT flip to true.
+    expect(tab?.preview).toBe(false);
+  });
+
+  it('pinned dirty tab still rebases originalContent on re-open; preview stays false', () => {
+    useEditorStore.getState().openNote(makeNote('n1', 'v1'));
+    useEditorStore.getState().updateContent('n1', 'user edit');
+    expect(getTab('n1')?.dirty).toBe(true);
+
+    useEditorStore.getState().openNote(makeNote('n1', 'v2'), { preview: true });
+    const tab = getTab('n1');
+    // Baseline moved forward — dirty detection against new server state.
+    expect(tab?.originalContent).toBe('v2');
+    // User's live edits are preserved.
+    expect(tab?.content).toBe('user edit');
+    expect(tab?.preview).toBe(false);
+  });
+
+  it('clean→dirty edge forces preview=false (first-keystroke promotion)', () => {
+    useEditorStore.getState().openNote(makeNote('n1', 'baseline'), { preview: true });
+    expect(getTab('n1')?.preview).toBe(true);
+    useEditorStore.getState().updateContent('n1', 'baseline edited');
+    expect(getTab('n1')?.dirty).toBe(true);
+    expect(getTab('n1')?.preview).toBe(false);
+  });
+
+  it('updateTags clean→dirty also promotes out of preview', () => {
+    useEditorStore.getState().openNote(makeNote('n1', 'hello'), { preview: true });
+    useEditorStore.getState().updateTags('n1', [{ id: '#x', tagType: '#', tagValue: 'x' }]);
+    expect(getTab('n1')?.preview).toBe(false);
+  });
+
+  it('markSaved clears preview (saved tab is user-authoritative)', () => {
+    useEditorStore.getState().openNote(makeNote('n1', 'hello'), { preview: true });
+    // Force preview back to true (simulating a path that didn't dirty the tab).
+    useEditorStore.setState((s) => ({
+      tabs: s.tabs.map((t) => ({ ...t, preview: true })),
+    }));
+    useEditorStore.getState().markSaved('n1', 'hello', []);
+    expect(getTab('n1')?.preview).toBe(false);
+  });
+
+  it('openAiDraft creates a pinned tab (never a preview)', () => {
+    useEditorStore.getState().openAiDraft({
+      note_id: 'draft_abc',
+      content: 'AI wrote this',
+      tags: [],
+      folder_id: null,
+      action: 'create',
+    });
+    expect(getTab('draft_abc')?.preview).toBe(false);
+  });
+
+  it('stageAiUpdate forces preview=false — AI payload must not be replaceable', () => {
+    // Open as preview, then AI stages an update on top. The tab now carries
+    // unsaved AI intent; a subsequent preview click on a different note
+    // should replace a *different* preview tab (or create one), never this.
+    useEditorStore.getState().openNote(makeNote('n1', 'baseline'), { preview: true });
+    expect(getTab('n1')?.preview).toBe(true);
+
+    useEditorStore.getState().stageAiUpdate('n1', {
+      action: 'update',
+      content: 'ai version',
+      tags: [],
+      folder_id: null,
+      original_content: 'baseline',
+      original_tags: [],
+      original_folder_id: null,
+    });
+    expect(getTab('n1')?.preview).toBe(false);
+
+    // Opening another note as preview should append/replace its own slot —
+    // n1 (now pinned) must still exist.
+    useEditorStore.getState().openNote(makeNote('n2', 'other'), { preview: true });
+    const tabs = useEditorStore.getState().tabs;
+    expect(tabs.map((t) => t.noteId).sort()).toEqual(['n1', 'n2']);
+  });
+});

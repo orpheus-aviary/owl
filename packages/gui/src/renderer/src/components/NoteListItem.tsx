@@ -53,6 +53,13 @@ interface NoteListItemProps {
    * must not affect sorting or background, per P3.4-a design §1.1.
    */
   showPinBackground?: boolean;
+  /**
+   * Keyboard tab stop. Default `0` — every list page that relies on row-level
+   * Tab navigation (BrowserPage / FolderPanel / TrashPage) picks this up. The
+   * main editor `NoteList` passes `-1` because it owns a single container-level
+   * tab stop and ArrowUp/Down navigates within (P3.4-e design §4.5).
+   */
+  tabIndex?: number;
 }
 
 export function NoteListItem({
@@ -64,6 +71,7 @@ export function NoteListItem({
   onEditTag,
   draggable = false,
   showPinBackground = true,
+  tabIndex = 0,
 }: NoteListItemProps) {
   const title = extractTitle(note.content);
   const preview = extractPreview(note.content);
@@ -91,7 +99,7 @@ export function NoteListItem({
       {...(draggable ? attributes : {})}
       // biome-ignore lint/a11y/useSemanticElements: nested <button> breaks hydration — TagDisplay renders Popover/Dialog triggers.
       role="button"
-      tabIndex={0}
+      tabIndex={tabIndex}
       onClick={onClick}
       onDoubleClick={onDoubleClick}
       onKeyDown={(e) => {

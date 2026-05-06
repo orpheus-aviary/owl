@@ -5,8 +5,9 @@ import { type UnsavedAction, UnsavedDialog } from '@/components/UnsavedDialog';
 import { ResizeHandle } from '@/components/ui/resize-handle';
 import { useEditorShortcuts } from '@/hooks/useEditorShortcuts';
 import { useOwlLayout } from '@/hooks/useOwlLayout';
+import type { Note } from '@/lib/api';
 import { LAYOUT_KEYS } from '@/lib/layout-keys';
-import { openNoteById, useEditorStore } from '@/stores/editor-store';
+import { useEditorStore } from '@/stores/editor-store';
 import { useCallback, useRef, useState } from 'react';
 import { Group, Panel } from 'react-resizable-panels';
 
@@ -45,8 +46,12 @@ export function EditorPage() {
     pendingCloseId.current = null;
   }, []);
 
-  const handleSelectNote = useCallback((noteId: string) => {
-    openNoteById(noteId);
+  // NoteList hands over the fully-loaded `Note` (already in `useNoteStore`)
+  // so we open synchronously — no `openNoteById` fetch that could race a
+  // rapid click sequence and drop the user on a stale preview. opts decide
+  // preview vs pinned tab (P3.4-e).
+  const handleSelectNote = useCallback((note: Note, opts?: { preview?: boolean }) => {
+    useEditorStore.getState().openNote(note, opts);
   }, []);
 
   useEditorShortcuts({ requestCloseTab });

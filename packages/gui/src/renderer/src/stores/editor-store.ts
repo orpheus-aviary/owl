@@ -46,6 +46,22 @@ export interface TabState {
   isDraft: boolean;
   /** Set when an AI draft (create or update) is staged for save. */
   pendingAiUpdate: PendingAiUpdate | null;
+  /**
+   * VSCode-style preview flag. `true` = tab opened from a NoteList single
+   * click / keyboard nav and is eligible to be **replaced** by the next
+   * preview. `false` = "pinned" tab, stays put until explicit close.
+   *
+   * Invariants (see P3.4-e design doc):
+   * - `openNote(note, {preview:true})` is the ONLY entry point that sets
+   *   this true. Default is false.
+   * - clean → dirty transition forces preview=false.
+   * - `markSaved` / `stageAiUpdate` / `openAiDraft` / `replaceTabAfterCreate`
+   *   all force preview=false — any tab with unsaved AI state or committed
+   *   saves is user-authoritative, not ephemeral.
+   * - Pinned (preview=false) is a one-way state; `openNote({preview:true})`
+   *   on an already-pinned tab will NOT demote it.
+   */
+  preview: boolean;
 }
 
 /** Compare two NoteTag arrays by tagType:tagValue pairs (order-insensitive). */
@@ -86,7 +102,7 @@ interface EditorState {
   /** Populated by `requestSaveOrConflict`; consumed by `<ConflictDialog>`. */
   conflictPrompt: ConflictPrompt | null;
 
-  openNote: (note: Note) => void;
+  openNote: (note: Note, opts?: { preview?: boolean }) => void;
   closeTab: (noteId: string) => void;
   setActiveTab: (noteId: string) => void;
   updateContent: (noteId: string, content: string) => void;
@@ -217,7 +233,8 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   lineWrap: true,
   conflictPrompt: null,
 
-  openNote: (note: Note) => {
+  openNote: (note: Note, opts?: { preview?: boolean }) => {
+    const requestPreview = opts?.preview === true;
     const { tabs } = get();
     const existing = tabs.find((t) => t.noteId === note.id);
     if (existing) {
@@ -225,16 +242,23 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       // never stares at stale content after something (AI tool, external
       // sync) mutated the note behind our back. Dirty tabs keep the user's
       // local edits; we only rebase the save baseline.
+      //
+      // Preview semantics overlay on top of refresh:
+      // - Already pinned (preview=false): NEVER demote. Ignore opts.preview.
+      // - Already preview (preview=true): match opts.preview (true keeps
+      //   preview, false promotes to pinned).
       const tags = note.tags ?? [];
       set((state) => ({
         tabs: state.tabs.map((t) => {
           if (t.noteId !== note.id) return t;
+          const nextPreview = t.preview ? requestPreview : false;
           if (t.dirty) {
             return {
               ...t,
               originalContent: note.content,
               originalTags: tags,
               originalFolderId: note.folderId,
+              preview: nextPreview,
             };
           }
           return {
@@ -246,6 +270,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
             originalTags: tags,
             folderId: note.folderId,
             originalFolderId: note.folderId,
+            preview: nextPreview,
           };
         }),
         activeTabId: note.id,
@@ -265,8 +290,22 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       dirty: false,
       isDraft: false,
       pendingAiUpdate: null,
+      preview: requestPreview,
     };
-    set({ tabs: [...tabs, newTab], activeTabId: note.id });
+    // Preview insertion replaces the existing preview tab in place so the
+    // user's tab order doesn't shuffle every time they click through the
+    // list. Pinned opens (and preview when no prior preview exists) append.
+    set((state) => {
+      if (requestPreview) {
+        const previewIdx = state.tabs.findIndex((t) => t.preview);
+        if (previewIdx !== -1) {
+          const nextTabs = [...state.tabs];
+          nextTabs[previewIdx] = newTab;
+          return { tabs: nextTabs, activeTabId: note.id };
+        }
+      }
+      return { tabs: [...state.tabs, newTab], activeTabId: note.id };
+    });
   },
 
   closeTab: (noteId: string) => {
@@ -293,30 +332,37 @@ export const useEditorStore = create<EditorState>((set, get) => ({
 
   updateContent: (noteId: string, content: string) => {
     set((state) => ({
-      tabs: state.tabs.map((t) =>
-        t.noteId === noteId
-          ? {
-              ...t,
-              content,
-              title: extractTitle(content),
-              dirty: content !== t.originalContent || !tagsEqual(t.tags, t.originalTags),
-            }
-          : t,
-      ),
+      tabs: state.tabs.map((t) => {
+        if (t.noteId !== noteId) return t;
+        const nextDirty = content !== t.originalContent || !tagsEqual(t.tags, t.originalTags);
+        // Edge-trigger: the first keystroke that makes the tab dirty
+        // promotes it out of preview. Writing preview on every call would
+        // be wasteful and risks stale-equality surprises.
+        const becomingDirty = !t.dirty && nextDirty;
+        return {
+          ...t,
+          content,
+          title: extractTitle(content),
+          dirty: nextDirty,
+          preview: becomingDirty ? false : t.preview,
+        };
+      }),
     }));
   },
 
   updateTags: (noteId: string, tags: NoteTag[]) => {
     set((state) => ({
-      tabs: state.tabs.map((t) =>
-        t.noteId === noteId
-          ? {
-              ...t,
-              tags,
-              dirty: t.content !== t.originalContent || !tagsEqual(tags, t.originalTags),
-            }
-          : t,
-      ),
+      tabs: state.tabs.map((t) => {
+        if (t.noteId !== noteId) return t;
+        const nextDirty = t.content !== t.originalContent || !tagsEqual(tags, t.originalTags);
+        const becomingDirty = !t.dirty && nextDirty;
+        return {
+          ...t,
+          tags,
+          dirty: nextDirty,
+          preview: becomingDirty ? false : t.preview,
+        };
+      }),
     }));
   },
 
@@ -342,6 +388,9 @@ export const useEditorStore = create<EditorState>((set, get) => ({
               originalFolderId: t.folderId,
               dirty: false,
               pendingAiUpdate: null,
+              // A saved tab is user-authoritative — don't let the next
+              // preview click replace it.
+              preview: false,
             }
           : t,
       ),
@@ -505,6 +554,9 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         tags: draft.tags,
         folder_id: draft.folder_id,
       },
+      // Drafts are pinned — they carry unsaved user intent and must not
+      // be replaced by a subsequent preview click.
+      preview: false,
     };
     set((state) => ({
       tabs: [...state.tabs.filter((t) => t.noteId !== draft.note_id), newTab],
@@ -569,6 +621,9 @@ export const useEditorStore = create<EditorState>((set, get) => ({
               title: extractTitle(payload.content),
               dirty: true,
               pendingAiUpdate: enriched,
+              // AI update carries unsaved intent — pin so the next preview
+              // click can't replace it.
+              preview: false,
             }
           : t,
       ),
@@ -615,6 +670,8 @@ function replaceTabAfterCreate(
             dirty: false,
             isDraft: false,
             pendingAiUpdate: null,
+            // Draft → saved transition: tab is user-authoritative now.
+            preview: false,
           }
         : t,
     );
