@@ -2,7 +2,9 @@
 
 ## 当前阶段：P3.4 UX 完善 ✅ 完成
 
-**563/563 测试通过**（core 150 + cli 119 + daemon 138 + gui 156）。P3.4 全部 6 子项于 2026-05-05..2026-05-07 shipped。下一步进入 **P4 migration 同步**（发 0.4.0）。
+**563/563 测试通过**（core 150 + cli 119 + daemon 138 + gui 156）。P3.4 全部 6 子项于 2026-05-05..2026-05-07 shipped。下一步进入 **P4 skybridge 对接**（发 0.4.0）。
+
+> **P4 路线变更（2026-05-07）**：原 P4 定义为"TypeScript 重写 rclone bisync 同步工具"（`docs/plans/2026-04-20-p3-plan.md` §8），已作废。新 P4 为 **skybridge** 项目（原 `migration/` 仓改名）的对接，采用 local-first operation-log 模型，而非文件级 bisync。架构见 `aviary/docs/SKYBRIDGE_ARCH.md`，owl 端对接计划见 `docs/plans/2026-05-07-p4-skybridge-plan.md`。
 
 ### P3.4 子项状态
 
@@ -25,20 +27,32 @@
 
 ### 下一步
 
-**P4 migration 同步**：用 TypeScript 重写 rclone bisync 同步工具（原 Go `migration/` 子项目）。范围见 `docs/plans/2026-04-20-p3-plan.md` §8。
+**P4 skybridge 对接（Phase 1+2）**：
+- **Phase 1** — daemon 入口收敛：GUI、CLI 默认、CLI `--direct` 三条写入路径走同一 `core`，为 change log 作铺垫
+- **Phase 2** — 本地 change log：schema v4 加 `sync_changes` / `sync_cursor` / `conflict_record`，所有 core 写入在事务内追加 `sync_changes`；即使没有远程 server 也能先追踪变更
 
-动工前先开 design doc 对齐 scope。完成后 P3.4 + P4 一起发 **0.4.0** GitHub Release + `@orpheus-aviary/owl-cli@0.4.0` npm。
+动工前单独开 design doc 对齐 scope（`docs/plans/2026-05-07-p4-skybridge-plan.md` 是框架级入口）。P4 完成后 P3.4 + P4 一起发 **0.4.0** GitHub Release + `@orpheus-aviary/owl-cli@0.4.0` npm。
+
+skybridge 完整 Phase 1-6 路线见 `aviary/docs/SKYBRIDGE_ARCH.md`：
+- **P4** = Phase 1 + 2（本次）
+- **P5** = Phase 3 + 4（skybridge server 首发 + 后台 sync engine）
+- **P6** = Phase 5（多设备同步 + 冲突 UI）
 
 ## 整体路线
 
 ```
-P3.4 UX 完善 → P4 migration 同步（发 0.4.0）→ P5 打包/发布自动化 → P6 次要功能集
-                                                                     └→ P3.5 可选 MCP server
+P3.4 UX 完善 ✅
+  → P4 skybridge Phase 1+2（发 0.4.0）
+  → P5 skybridge Phase 3+4（server 首发 + 后台 sync，发 0.5.0）
+  → P6 skybridge Phase 5（多设备 GA，发 1.0.0 候选）
+  → P7 打包 / 发布自动化
+  → P8 次要功能集
+  └→ P3.5 可选 MCP server（任意时刻并行）
 ```
 
-完整规划：`docs/plans/2026-04-20-p3-plan.md`。
+完整规划：`aviary/docs/ROADMAP.md`（跨仓路线）、`docs/plans/2026-04-20-p3-plan.md`（owl 历史 P3 规划，§8 已作废）。
 
-**P6 非核心**（届时再定 scope）：tray 图标 / 图片粘贴 / FIM 补全 / `append_memo` 语义 / AI banner option C / `[[` note-link / 编辑器正文 slash command / `owl doctor --recover` / CLI 别名 / `@owl/core` 公开发布 / 0.3.0 rebuild 代码移除。
+**P8 非核心**（原 "P6 非核心"，届时再定 scope）：tray 图标 / 图片粘贴 / FIM 补全 / `append_memo` 语义 / AI banner option C / `[[` note-link / 编辑器正文 slash command / `owl doctor --recover` / CLI 别名 / `@owl/core` 公开发布 / 0.3.0 rebuild 代码移除。
 
 ## 历史归档
 
@@ -61,6 +75,9 @@ P2-8 / P2-9 手动测试清单分别在 `docs/plans/2026-04-17-p2-8-ai-page.md` 
 
 ## 关键参考
 
+- 跨仓路线（skybridge 对接上下文）：`aviary/docs/ROADMAP.md`
+- skybridge 架构框架：`aviary/docs/SKYBRIDGE_ARCH.md`
+- owl P4 skybridge 对接计划：`docs/plans/2026-05-07-p4-skybridge-plan.md`
 - 完整 COEDIT 计划：`docs/plans/COEDIT_PLAN.md`
 - 聊天持久化设计（P3.4-f）：`docs/plans/2026-04-18-chat-persistence.md`
-- P3 总规划：`docs/plans/2026-04-20-p3-plan.md`
+- P3 总规划（§8 已作废）：`docs/plans/2026-04-20-p3-plan.md`

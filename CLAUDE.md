@@ -30,15 +30,15 @@ just dev-daemon   # 启动 daemon dev
 ## 注意事项
 - **所有时间字段用 INTEGER（Unix 毫秒）**，tag_value 保持 TEXT
 - **FTS5 混合同步**：content 用触发器，tags_text 由业务层维护
-- **daemon 统一入口**：CLI 和 GUI 都通过 daemon HTTP API 操作数据
+- **daemon 统一入口**：CLI 和 GUI 都通过 daemon HTTP API 操作数据；CLI `--direct` 绕过 HTTP 但仍走同一 `core`，以保证 `sync_changes` 不被绕过（P4 Phase 1）
 - **daemon 自启动**：GUI 启动时检测并拉起 daemon，daemon 独立于 GUI 生命周期
 - **统一响应格式**：`{"success": bool, "data": {}, "message": "..."}`
 - **数据目录**：`~/orpheus-aviary-nest/owl/`
-- **owl.sync.db**：migration 同步副本，应用不直接读写
+- **skybridge 对接**：P4 起在 `owl.db` 加 `sync_changes` / `sync_cursor` / `conflict_record` 表，架构见 `aviary/docs/SKYBRIDGE_ARCH.md`。旧 `owl.sync.db` 文件为 rclone bisync 方案遗留，skybridge 路线下不再使用
 
 ## Commit 规范
 遵循上级 `orpheus-aviary/.claude/CLAUDE.md` 中的 Conventional Commits 规范。
-Scope: `db` / `config` / `notes` / `tags` / `daemon` / `gui` / `editor` / `browser` / `trash` / `reminders` / `ai` / `todo` / `settings` / `cli`
+Scope: `db` / `config` / `notes` / `tags` / `daemon` / `gui` / `editor` / `browser` / `trash` / `reminders` / `ai` / `todo` / `settings` / `cli` / `skybridge`
 
 ## 手动测试规范
 
