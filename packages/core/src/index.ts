@@ -100,6 +100,19 @@ export type { ListHashtagTagsOptions, HashtagTagRow } from './tags/list.js';
 export { searchNotes, searchNotesWithDetails } from './search/index.js';
 export type { SearchResult } from './search/index.js';
 
+// Conversations (AI chat persistence)
+export {
+  appendConversationMessages,
+  deleteConversation,
+  hydrateConversation,
+  listConversationSummaries,
+} from './conversations/index.js';
+export type {
+  ConversationMessageRow,
+  ConversationSummary,
+  HydratedConversation,
+} from './conversations/index.js';
+
 // Reminders
 export {
   syncReminders,
@@ -107,6 +120,7 @@ export {
   getOverdueReminders,
   getNextPendingReminder,
   markFired,
+  rescheduleRecurringReminder,
   getNoteTitle,
   normalizeFireAt,
   cleanupExpiredTrash,

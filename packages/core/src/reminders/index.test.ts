@@ -15,6 +15,7 @@ import {
   markFired,
   normalizeFireAt,
   recomputeTrashDeadlines,
+  rescheduleRecurringReminder,
   syncReminders,
 } from './index.js';
 
@@ -147,6 +148,72 @@ describe('markFired', () => {
     // Verify via overdue (should not appear either)
     const overdue = getOverdueReminders(db, Date.now() + 1000 * 60 * 60 * 24 * 365 * 10);
     assert.ok(!overdue.some((r) => r.noteId === note.id));
+  });
+});
+
+describe('rescheduleRecurringReminder', () => {
+  let db: OwlDatabase;
+  let sqlite: Database.Database;
+
+  before(() => {
+    const result = createDatabase({ dbPath: ':memory:' });
+    db = result.db;
+    sqlite = result.sqlite;
+  });
+
+  after(() => {
+    sqlite.close();
+  });
+
+  it('flips a fired row back to pending at the next fireAt', () => {
+    const note = createNote(db, sqlite, {
+      content: '# /daily reminder',
+      tags: [{ tagType: '/alarm', tagValue: '2026-05-01T10:00:00' }],
+    });
+
+    syncReminders(db, sqlite, note.id);
+    const pending = getPendingReminders(db);
+    const match = pending.find((r) => r.noteId === note.id);
+    assert.ok(match);
+
+    const firedAt = new Date('2026-05-01T10:00:00').getTime();
+    markFired(db, match.noteId, match.tagId, firedAt);
+
+    // Caller (scheduler) computes the next occurrence — here, +1 day.
+    const nextFireAt = firedAt + 24 * 60 * 60 * 1000;
+    rescheduleRecurringReminder(db, match.noteId, match.tagId, nextFireAt);
+
+    const reArmed = getPendingReminders(db).find((r) => r.noteId === note.id);
+    assert.ok(reArmed);
+    assert.equal(reArmed.status, 'pending');
+    assert.equal(reArmed.fireAt, nextFireAt);
+    assert.equal(reArmed.firedAt, null);
+  });
+
+  it('overwrites fire_at on a second reschedule (idempotent on conflict)', () => {
+    const note = createNote(db, sqlite, {
+      content: '# /weekly reminder',
+      tags: [{ tagType: '/alarm', tagValue: '2026-06-01T08:00:00' }],
+    });
+    syncReminders(db, sqlite, note.id);
+    const match = getPendingReminders(db).find((r) => r.noteId === note.id);
+    assert.ok(match);
+
+    markFired(db, match.noteId, match.tagId, new Date('2026-06-01T08:00:00').getTime());
+
+    const firstNext = new Date('2026-06-08T08:00:00').getTime();
+    rescheduleRecurringReminder(db, match.noteId, match.tagId, firstNext);
+
+    // Reschedule again with a different next time (e.g., user edited the
+    // /weekly cadence mid-cycle and scheduler re-armed).
+    const secondNext = new Date('2026-06-15T08:00:00').getTime();
+    rescheduleRecurringReminder(db, match.noteId, match.tagId, secondNext);
+
+    const final = getPendingReminders(db).find((r) => r.noteId === note.id);
+    assert.ok(final);
+    assert.equal(final.fireAt, secondNext);
+    assert.equal(final.status, 'pending');
+    assert.equal(final.firedAt, null);
   });
 });
 

@@ -11,6 +11,7 @@ import {
   getOverdueReminders,
   markFired,
   recomputeTrashDeadlines,
+  rescheduleRecurringReminder,
   schema,
   syncReminders,
 } from '@owl/core';
@@ -196,20 +197,7 @@ export class ReminderScheduler {
 
     const nextFireAt = this.computeNextFireAt(fired.fireAt, freq);
 
-    this.db
-      .insert(schema.reminderStatus)
-      .values({
-        noteId: fired.noteId,
-        tagId: fired.tagId,
-        fireAt: nextFireAt,
-        status: 'pending',
-        firedAt: null,
-      })
-      .onConflictDoUpdate({
-        target: [schema.reminderStatus.noteId, schema.reminderStatus.tagId],
-        set: { fireAt: nextFireAt, status: 'pending', firedAt: null },
-      })
-      .run();
+    rescheduleRecurringReminder(this.db, fired.noteId, fired.tagId, nextFireAt);
 
     this.logger.info(
       { noteId: fired.noteId, freq, nextFireAt: new Date(nextFireAt).toISOString() },

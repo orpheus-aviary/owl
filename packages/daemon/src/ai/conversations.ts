@@ -1,4 +1,12 @@
 import { randomUUID } from 'node:crypto';
+import {
+  type ConversationMessageRow,
+  type ConversationSummary,
+  appendConversationMessages,
+  deleteConversation,
+  hydrateConversation,
+  listConversationSummaries,
+} from '@owl/core';
 import type Database from 'better-sqlite3';
 import type { LlmMessage, LlmToolCall } from './llm-client.js';
 
@@ -8,12 +16,15 @@ import type { LlmMessage, LlmToolCall } from './llm-client.js';
  * through to `ai_conversations` / `ai_messages` snapshots each batch so
  * daemon restarts preserve history.
  *
+ * P4 Phase 1: all DB writes delegate to `@owl/core/conversations`. This
+ * class is now memory cache + `LlmMessage` ↔ row translation only.
+ *
  * Write discipline (see P3.4-f design §4.1 / §10):
  *   - `runAgentLoop` NEVER touches `conversation.messages` directly.
  *   - `setSystemMessage` is memory-only (system prompt rebuilt every turn).
  *   - `appendMessages` is atomic per agent-loop iteration:
  *     `[user]` for the opening turn, `[assistant, ...toolResults]` for
- *     each subsequent round. One transaction per call.
+ *     each subsequent round. One transaction per call (in core).
  *   - On first `appendMessages` for a new id, the `ai_conversations` row
  *     is inserted in the same transaction, with the title derived from
  *     the first user message.
@@ -30,30 +41,6 @@ export interface Conversation {
   messages: LlmMessage[];
   createdAt: Date;
   updatedAt: Date;
-}
-
-export interface ConversationSummary {
-  id: string;
-  title: string;
-  createdAt: Date;
-  updatedAt: Date;
-  messageCount: number;
-}
-
-const TITLE_MAX = 32;
-
-function titleFrom(text: string): string {
-  const collapsed = text.replace(/\s+/g, ' ').trim();
-  if (!collapsed) return '新对话';
-  return collapsed.length > TITLE_MAX ? `${collapsed.slice(0, TITLE_MAX)}…` : collapsed;
-}
-
-function extractUserText(msg: LlmMessage): string {
-  // In practice agent loop passes plain strings for user messages; blocks
-  // would only appear via hydration + re-append (unlikely), so flatten
-  // defensively rather than recurse.
-  if (typeof msg.content === 'string') return msg.content;
-  return JSON.stringify(msg.content);
 }
 
 export class ConversationStore {
@@ -111,13 +98,8 @@ export class ConversationStore {
 
   /**
    * Atomically append a batch of messages for one agent-loop iteration.
-   * Single transaction:
-   *   - First call for an id → INSERT ai_conversations
-   *   - INSERT ai_messages × N with monotonic seq
-   *   - UPDATE ai_conversations.updated_at = now()
-   * Memory is updated in the same call so cache + DB don't diverge.
-   * Skips role='system' at the API layer; the SQL CHECK catches any
-   * future code path that bypasses this skip.
+   * Filters role='system' (memory-only) and delegates the transaction to
+   * `core.appendConversationMessages`. Memory cache is updated in lockstep.
    */
   appendMessages(id: string, msgs: LlmMessage[]): void {
     const conv = this.conversations.get(id);
@@ -129,94 +111,21 @@ export class ConversationStore {
     const persistable = msgs.filter((m) => m.role !== 'system');
     const now = Date.now();
 
-    this.sqlite
-      .transaction(() => {
-        this.ensureConversationRow(id, persistable, now);
-        const startSeq = this.peekMaxSeq(id);
-        this.insertMessages(id, persistable, now, startSeq);
-        this.bumpUpdatedAt(id, now);
-      })
-      .immediate();
+    appendConversationMessages(this.sqlite, id, persistable.map(toRow), now);
 
-    // Mirror to in-memory cache.
+    // Mirror to in-memory cache (full msgs incl. system if any sneaks in).
     conv.messages.push(...msgs);
     conv.updatedAt = new Date(now);
   }
 
-  private ensureConversationRow(id: string, persistable: LlmMessage[], now: number): void {
-    const EXISTS_SQL = 'SELECT 1 FROM ai_conversations WHERE id = ?';
-    const existsRow = this.sqlite.prepare(EXISTS_SQL).get(id) as { 1: number } | undefined;
-    if (existsRow) return;
-    const firstUser = persistable.find((m) => m.role === 'user');
-    const title = titleFrom(firstUser ? extractUserText(firstUser) : '新对话');
-    const INSERT_SQL =
-      'INSERT INTO ai_conversations (id, title, created_at, updated_at) VALUES (?, ?, ?, ?)';
-    this.sqlite.prepare(INSERT_SQL).run(id, title, now, now);
-  }
-
-  private peekMaxSeq(id: string): number {
-    const MAX_SQL = 'SELECT COALESCE(MAX(seq), 0) AS m FROM ai_messages WHERE conversation_id = ?';
-    const row = this.sqlite.prepare(MAX_SQL).get(id) as { m: number };
-    return row.m;
-  }
-
-  private insertMessages(id: string, msgs: LlmMessage[], now: number, startSeq: number): void {
-    const INSERT_SQL = `INSERT INTO ai_messages
-        (id, conversation_id, role, content, tool_calls, tool_call_id,
-         is_error, reasoning_content, reasoning_signature, created_at, seq)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
-    const insert = this.sqlite.prepare(INSERT_SQL);
-    let seq = startSeq;
-    for (const msg of msgs) {
-      seq += 1;
-      insert.run(
-        randomUUID(),
-        id,
-        msg.role,
-        contentToString(msg.content),
-        msg.tool_calls ? JSON.stringify(msg.tool_calls) : null,
-        msg.tool_call_id ?? null,
-        msg.role === 'tool' ? (msg.is_error ? 1 : 0) : null,
-        msg.reasoning_content ?? null,
-        msg.reasoning_signature ?? null,
-        now,
-        seq,
-      );
-    }
-  }
-
-  private bumpUpdatedAt(id: string, now: number): void {
-    const SQL = 'UPDATE ai_conversations SET updated_at = ? WHERE id = ?';
-    this.sqlite.prepare(SQL).run(now, id);
-  }
-
   delete(id: string): boolean {
     const hadMemory = this.conversations.delete(id);
-    const res = this.sqlite.prepare('DELETE FROM ai_conversations WHERE id = ?').run(id);
-    return hadMemory || res.changes > 0;
+    const removed = deleteConversation(this.sqlite, id);
+    return hadMemory || removed;
   }
 
   list(): ConversationSummary[] {
-    const LIST_SQL = `
-      SELECT c.id, c.title, c.created_at, c.updated_at,
-             (SELECT COUNT(*) FROM ai_messages m WHERE m.conversation_id = c.id) AS message_count
-      FROM ai_conversations c
-      ORDER BY c.updated_at DESC
-    `;
-    const rows = this.sqlite.prepare(LIST_SQL).all() as {
-      id: string;
-      title: string;
-      created_at: number;
-      updated_at: number;
-      message_count: number;
-    }[];
-    return rows.map((r) => ({
-      id: r.id,
-      title: r.title,
-      createdAt: new Date(r.created_at),
-      updatedAt: new Date(r.updated_at),
-      messageCount: r.message_count,
-    }));
+    return listConversationSummaries(this.sqlite);
   }
 
   /**
@@ -255,55 +164,50 @@ export class ConversationStore {
   // ── internals ────────────────────────────────────────────────────────
 
   /**
-   * Rebuild a Conversation from `ai_conversations` + `ai_messages`. System
-   * is not in DB (§4.1); callers should invoke `setSystemMessage` afterward
-   * before the next LLM call. Returns undefined if the id isn't in DB.
+   * Rebuild a Conversation from `ai_conversations` + `ai_messages` via
+   * `core.hydrateConversation`. System is not in DB (§4.1); callers should
+   * invoke `setSystemMessage` afterward before the next LLM call.
    */
   private hydrateFromDb(id: string): Conversation | undefined {
-    const CONVO_SQL = 'SELECT id, created_at, updated_at FROM ai_conversations WHERE id = ?';
-    const meta = this.sqlite.prepare(CONVO_SQL).get(id) as
-      | { id: string; created_at: number; updated_at: number }
-      | undefined;
-    if (!meta) return undefined;
-
-    const MSG_SQL = `
-      SELECT role, content, tool_calls, tool_call_id,
-             is_error, reasoning_content, reasoning_signature
-      FROM ai_messages
-      WHERE conversation_id = ?
-      ORDER BY seq ASC
-    `;
-    const rows = this.sqlite.prepare(MSG_SQL).all(id) as {
-      role: 'user' | 'assistant' | 'tool';
-      content: string;
-      tool_calls: string | null;
-      tool_call_id: string | null;
-      is_error: number | null;
-      reasoning_content: string | null;
-      reasoning_signature: string | null;
-    }[];
-
-    const messages: LlmMessage[] = rows.map((r) => {
-      const msg: LlmMessage = { role: r.role, content: r.content };
-      if (r.tool_calls) {
-        msg.tool_calls = JSON.parse(r.tool_calls) as LlmToolCall[];
-      }
-      if (r.tool_call_id !== null) msg.tool_call_id = r.tool_call_id;
-      if (r.is_error !== null && r.role === 'tool') {
-        msg.is_error = r.is_error === 1;
-      }
-      if (r.reasoning_content !== null) msg.reasoning_content = r.reasoning_content;
-      if (r.reasoning_signature !== null) msg.reasoning_signature = r.reasoning_signature;
-      return msg;
-    });
-
+    const hydrated = hydrateConversation(this.sqlite, id);
+    if (!hydrated) return undefined;
     return {
-      id: meta.id,
-      messages,
-      createdAt: new Date(meta.created_at),
-      updatedAt: new Date(meta.updated_at),
+      id: hydrated.id,
+      createdAt: hydrated.createdAt,
+      updatedAt: hydrated.updatedAt,
+      messages: hydrated.messages.map(rowToLlmMessage),
     };
   }
+}
+
+function toRow(msg: LlmMessage): ConversationMessageRow {
+  if (msg.role === 'system') {
+    // Defensive: caller should filter, but keep the transform total.
+    throw new Error('system messages must not reach core.appendConversationMessages');
+  }
+  return {
+    role: msg.role,
+    content: contentToString(msg.content),
+    tool_calls: msg.tool_calls ? JSON.stringify(msg.tool_calls) : null,
+    tool_call_id: msg.tool_call_id ?? null,
+    is_error: msg.role === 'tool' ? (msg.is_error ? 1 : 0) : null,
+    reasoning_content: msg.reasoning_content ?? null,
+    reasoning_signature: msg.reasoning_signature ?? null,
+  };
+}
+
+function rowToLlmMessage(r: ConversationMessageRow): LlmMessage {
+  const msg: LlmMessage = { role: r.role, content: r.content };
+  if (r.tool_calls) {
+    msg.tool_calls = JSON.parse(r.tool_calls) as LlmToolCall[];
+  }
+  if (r.tool_call_id !== null) msg.tool_call_id = r.tool_call_id;
+  if (r.is_error !== null && r.role === 'tool') {
+    msg.is_error = r.is_error === 1;
+  }
+  if (r.reasoning_content !== null) msg.reasoning_content = r.reasoning_content;
+  if (r.reasoning_signature !== null) msg.reasoning_signature = r.reasoning_signature;
+  return msg;
 }
 
 function contentToString(content: LlmMessage['content']): string {

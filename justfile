@@ -15,7 +15,11 @@ typecheck:
     pnpm run typecheck
 
 [group('lint')]
-check: lint typecheck
+core-convergence:
+    bash scripts/check-core-convergence.sh
+
+[group('lint')]
+check: lint typecheck core-convergence
     @echo "All checks passed."
 
 # ─── Test ───────────────────────────────────────────────

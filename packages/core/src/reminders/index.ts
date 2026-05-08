@@ -126,6 +126,35 @@ export function markFired(db: OwlDatabase, noteId: string, tagId: string, firedA
     .run();
 }
 
+/**
+ * Upsert a `reminder_status` row back to 'pending' at `nextFireAt`.
+ *
+ * Used by the daemon scheduler when a recurring reminder (`/daily`,
+ * `/weekly`, `/monthly`, `/yearly`) just fired and the next occurrence
+ * needs to be armed. Frequency selection and `nextFireAt` calculation
+ * live in the scheduler — this function only owns the DB write.
+ */
+export function rescheduleRecurringReminder(
+  db: OwlDatabase,
+  noteId: string,
+  tagId: string,
+  nextFireAt: number,
+): void {
+  db.insert(reminderStatus)
+    .values({
+      noteId,
+      tagId,
+      fireAt: nextFireAt,
+      status: 'pending',
+      firedAt: null,
+    })
+    .onConflictDoUpdate({
+      target: [reminderStatus.noteId, reminderStatus.tagId],
+      set: { fireAt: nextFireAt, status: 'pending', firedAt: null },
+    })
+    .run();
+}
+
 // ─── Status-aware listing (used by AI tool `get_reminders`) ────────────
 
 export interface ReminderWithNote {

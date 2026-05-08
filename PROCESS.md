@@ -28,10 +28,23 @@
 ### 下一步
 
 **P4 skybridge 对接（Phase 1+2）**：
-- **Phase 1** — daemon 入口收敛：GUI、CLI 默认、CLI `--direct` 三条写入路径走同一 `core`，为 change log 作铺垫
+- **Phase 1** — daemon 入口收敛：GUI、CLI 默认、CLI `--direct` 三条写入路径走同一 `core`，为 change log 作铺垫 — **🟡 in progress 2026-05-08**（576/576 测试通过；待手动测试 + commit）
 - **Phase 2** — 本地 change log：schema v4 加 `sync_changes` / `sync_cursor` / `conflict_record`，所有 core 写入在事务内追加 `sync_changes`；即使没有远程 server 也能先追踪变更
 
-动工前单独开 design doc 对齐 scope（`docs/plans/2026-05-07-p4-skybridge-plan.md` 是框架级入口）。P4 完成后 P3.4 + P4 一起发 **0.4.0** GitHub Release + `@orpheus-aviary/owl-cli@0.4.0` npm。
+设计文档：`docs/plans/2026-05-07-p4-skybridge-plan.md`（框架级入口）、`docs/plans/2026-05-08-p4-phase1-entry-convergence-design.md`（Phase 1 实施细节）。P4 完成后 P3.4 + P4 一起发 **0.4.0** GitHub Release + `@orpheus-aviary/owl-cli@0.4.0` npm。
+
+#### Phase 1 实施记录（2026-05-08）
+
+调查结论：owl 的 mutation 路径绝大多数已经走 `@owl/core`（notes / folders / config / 调度器 / AI 工具 / CLI `--direct`）。仅两处绕过：
+
+1. `ConversationStore`（P3.4-f 引入）— 直接对 `ai_conversations` / `ai_messages` 执行 SQL
+2. `ReminderScheduler.handleFrequency` — 重复提醒触发后直接 drizzle upsert `reminder_status`
+
+落地改动：
+- 新增 `packages/core/src/conversations/`（raw sqlite 实现 `appendConversationMessages` / `deleteConversation` / `hydrateConversation` / `listConversationSummaries`）；daemon `ConversationStore` 退化为内存缓存 + LlmMessage ↔ row 翻译
+- 在 `packages/core/src/reminders/index.ts` 加 `rescheduleRecurringReminder`；scheduler `handleFrequency` 改为调用 core
+- 新增 `scripts/check-core-convergence.sh` grep 守卫脚本，扫描 daemon 源码不得有 `db.{insert,update,delete}(schema.X)` 或 SQL 关键字（`INSERT INTO` / `UPDATE foo SET` / `DELETE FROM`）；接入 `just check`
+- core 测试 +13（conversations 11、reschedule 2），全量 576/576 通过
 
 skybridge 完整 Phase 1-6 路线见 `aviary/docs/SKYBRIDGE_ARCH.md`：
 - **P4** = Phase 1 + 2（本次）
