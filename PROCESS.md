@@ -1,11 +1,12 @@
 # 开发进度
 
-## 当前阶段：0.4.0 已 ship — 下一步 P5（skybridge server + sync engine）
+## 当前阶段：0.4.1 hotfix 已 ship — 下一步 P5（skybridge server + sync engine）
 
-**600/600 测试通过**（core 187 + cli 119 + daemon 138 + gui 156）。P3.4 + P4 Phase 1+2 全部 shipped，2026-05-08 一并发 0.4.0：
+**600/600 测试通过**（core 187 + cli 119 + daemon 138 + gui 156）。P3.4 + P4 Phase 1+2 全部 shipped，2026-05-08 发 0.4.0；2026-05-09 发 GUI 0.4.1 hotfix（修复 macOS Sequoia 上 dmg 安装后报"已损坏"，原因是 electron-builder `identity: null` 跳过了 bundle-level codesign，新增 `afterPack` 钩子做 ad-hoc 签名）：
 
-- GUI Release：https://github.com/orpheus-aviary/owl/releases/tag/v0.4.0（`Owl-0.4.0-arm64.dmg`，sha256 `cc477a12...82ccb341`）
-- CLI npm：`npm i -g @orpheus-aviary/owl-cli`（@0.4.0）
+- GUI 0.4.1 Release：https://github.com/orpheus-aviary/owl/releases/tag/v0.4.1（`Owl-0.4.1-arm64.dmg`，sha256 `be62243b...67e23b7`）
+- GUI 0.4.0（已废）：https://github.com/orpheus-aviary/owl/releases/tag/v0.4.0
+- CLI npm：`npm i -g @orpheus-aviary/owl-cli`（@0.4.0，hotfix 仅改 GUI 打包，CLI 不受影响）
 - 实施细节：`docs/history/P3-4-P4-shipped.md`
 
 ### 下一步
@@ -47,7 +48,7 @@ P3.4 UX 完善 ✅ + P4 skybridge Phase 1+2 ✅ → 0.4.0 发版完成
 | P3.2-d SSE 反向通道 | `docs/plans/2026-05-02-p3-2-d-events-channel-design.md` § Implementation record |
 | P3.2.5 release polish | `docs/plans/2026-05-03-p3-2-5-design.md` § Implementation record |
 | P3.3 0.3.0 发版 | `docs/history/P3-3-shipped.md` |
-| P3.4 UX 完善 + P4 skybridge Phase 1+2 + 0.4.0 发版 | `docs/history/P3-4-P4-shipped.md` |
+| P3.4 UX 完善 + P4 skybridge Phase 1+2 + 0.4.0 发版 + 0.4.1 hotfix | `docs/history/P3-4-P4-shipped.md` |
 
 P2-8 / P2-9 手动测试清单分别在 `docs/plans/2026-04-17-p2-8-ai-page.md` 和 `docs/plans/2026-04-20-p2-9-resizable-panels.md` 的附录段。
 

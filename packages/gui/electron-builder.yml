@@ -14,6 +14,10 @@ files:
 
 asar: false
 
+# After the .app is assembled, run a manual ad-hoc codesign over the bundle.
+# See scripts/codesign-adhoc.mjs for why this is needed.
+afterPack: scripts/codesign-adhoc.mjs
+
 mac:
   target:
     - target: dmg
