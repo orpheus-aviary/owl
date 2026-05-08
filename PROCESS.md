@@ -29,7 +29,7 @@
 
 **P4 skybridge 对接（Phase 1+2）**：
 - **Phase 1** — daemon 入口收敛：GUI、CLI 默认、CLI `--direct` 三条写入路径走同一 `core` — **✅ shipped 2026-05-08**（576/576 测试，commit 39a7a1c）
-- **Phase 2** — 本地 change log：schema v4 加 `sync_changes` / `sync_cursor` / `conflict_record`，所有 core mutation 在事务内追加 `sync_changes` — **🟡 in progress 2026-05-08**（600/600 测试通过；待手动测试 + commit）
+- **Phase 2** — 本地 change log：schema v4 加 `sync_changes` / `sync_cursor` / `conflict_record`，所有 core mutation 在事务内追加 `sync_changes` — **✅ shipped 2026-05-08**（600/600 测试 + 13 项 daemon HTTP smoke 通过，commit 955692e）
 
 设计文档：`docs/plans/2026-05-07-p4-skybridge-plan.md`（框架级入口）、`docs/plans/2026-05-08-p4-phase1-entry-convergence-design.md`（Phase 1 实施细节）。P4 完成后 P3.4 + P4 一起发 **0.4.0** GitHub Release + `@orpheus-aviary/owl-cli@0.4.0` npm。
 
