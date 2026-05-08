@@ -55,7 +55,7 @@ export function registerFolderRoutes(app: FastifyInstance, ctx: AppContext): voi
       return fail(reply, 400, 'Parent folder not found', 'PARENT_NOT_FOUND');
     }
 
-    const folder = createFolder(ctx.db, {
+    const folder = createFolder(ctx.db, ctx.sqlite, {
       name: body.name.trim(),
       parentId: body.parent_id ?? null,
       position: body.position,
@@ -74,7 +74,7 @@ export function registerFolderRoutes(app: FastifyInstance, ctx: AppContext): voi
     }
 
     try {
-      const updated = updateFolder(ctx.db, id, {
+      const updated = updateFolder(ctx.db, ctx.sqlite, id, {
         name: body.name,
         parentId: body.parent_id,
         position: body.position,
@@ -90,7 +90,7 @@ export function registerFolderRoutes(app: FastifyInstance, ctx: AppContext): voi
   // DELETE /folders/:id — delete + promote children one level up
   app.delete('/folders/:id', async (req, reply) => {
     const { id } = req.params as { id: string };
-    if (!deleteFolder(ctx.db, id)) {
+    if (!deleteFolder(ctx.db, ctx.sqlite, id)) {
       return fail(reply, 404, 'Folder not found', 'FOLDER_NOT_FOUND');
     }
     ok(reply, null, 'Folder deleted');

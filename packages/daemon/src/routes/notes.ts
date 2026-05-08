@@ -246,7 +246,7 @@ export function registerNoteRoutes(app: FastifyInstance, ctx: AppContext): void 
     const { id } = req.params as { id: string };
     if (SPECIAL_NOTE_IDS.has(id))
       return fail(reply, 403, SPECIAL_PROTECTED_MSG, 'SPECIAL_NOTE_PROTECTED');
-    if (!permanentDeleteNote(ctx.db, id))
+    if (!permanentDeleteNote(ctx.db, ctx.sqlite, id))
       return fail(reply, 404, 'Note not found', 'NOTE_NOT_FOUND');
     ok(reply, null, 'Note permanently deleted');
   });
@@ -273,7 +273,7 @@ export function registerNoteRoutes(app: FastifyInstance, ctx: AppContext): void 
   app.post('/notes/batch-permanent-delete', async (req, reply) => {
     const body = req.body as { ids: string[] };
     if (!body.ids?.length) return fail(reply, 400, 'IDs required', 'MISSING_IDS');
-    const count = batchPermanentDeleteNotes(ctx.db, body.ids);
+    const count = batchPermanentDeleteNotes(ctx.db, ctx.sqlite, body.ids);
     ok(reply, { count }, `${count} notes permanently deleted`);
   });
 
@@ -287,7 +287,7 @@ export function registerNoteRoutes(app: FastifyInstance, ctx: AppContext): void 
       return fail(reply, 400, 'pinned (boolean) is required', 'USAGE_ERROR');
     }
     try {
-      setNotePinned(ctx.db, id, body.pinned);
+      setNotePinned(ctx.db, ctx.sqlite, id, body.pinned);
     } catch (err) {
       if (err instanceof Error && /not found/.test(err.message)) {
         return fail(reply, 404, 'Note not found', 'NOTE_NOT_FOUND');

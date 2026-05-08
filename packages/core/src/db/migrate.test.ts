@@ -752,6 +752,17 @@ describe('migrate — applyForwardMigrations (P3.4-a)', () => {
         )
         .get();
       assert.ok(idx, 'idx_notes_folder_position index must exist');
+      // 0004 (P4 Phase 2) skybridge tables
+      const skybridgeTables = sqlite
+        .prepare(
+          "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('sync_changes','sync_cursor','conflict_record')",
+        )
+        .all() as { name: string }[];
+      assert.equal(
+        skybridgeTables.length,
+        3,
+        '0004 must create sync_changes / sync_cursor / conflict_record',
+      );
     } finally {
       sqlite.close();
     }
@@ -829,6 +840,18 @@ describe('migrate — applyForwardMigrations (P3.4-a)', () => {
         "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'ai_%'";
       const aiTables = sqlite.prepare(AI_TABLE_QUERY).all() as { name: string }[];
       assert.equal(aiTables.length, 2, 'ai_conversations + ai_messages created by 0003');
+      // 0004 (P4 Phase 2) — must have run because LATEST_KNOWN_VERSION is at
+      // least 4 and partial-progress preserves all earlier successes.
+      const skyTables = sqlite
+        .prepare(
+          "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('sync_changes','sync_cursor','conflict_record')",
+        )
+        .all() as { name: string }[];
+      assert.equal(
+        skyTables.length,
+        3,
+        'sync_changes + sync_cursor + conflict_record created by 0004',
+      );
     } finally {
       sqlite.close();
     }

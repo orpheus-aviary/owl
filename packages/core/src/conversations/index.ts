@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type Database from 'better-sqlite3';
+import { emitSyncChange } from '../sync/changes.js';
 
 /**
  * Persistence layer for AI chat history (`ai_conversations` + `ai_messages`).
@@ -68,10 +69,26 @@ export function appendConversationMessages(
 
   sqlite
     .transaction(() => {
-      ensureConversationRow(sqlite, conversationId, rows, now);
+      const created = ensureConversationRow(sqlite, conversationId, rows, now);
       const startSeq = peekMaxSeq(sqlite, conversationId);
       insertMessages(sqlite, conversationId, rows, now, startSeq);
       bumpUpdatedAt(sqlite, conversationId, now);
+
+      const payload: Record<string, unknown> = {
+        messages: rows,
+        applied_at_ms: now,
+      };
+      if (created) {
+        payload.title = created.title;
+        payload.created_at_ms = now;
+      }
+      emitSyncChange(sqlite, {
+        entityType: 'conversation',
+        entityId: conversationId,
+        op: 'append',
+        payload,
+        nowMs: now,
+      });
     })
     .immediate();
 }
@@ -81,16 +98,17 @@ function ensureConversationRow(
   id: string,
   rows: ConversationMessageRow[],
   now: number,
-): void {
+): { title: string } | null {
   const existsRow = sqlite.prepare('SELECT 1 FROM ai_conversations WHERE id = ?').get(id) as
     | { 1: number }
     | undefined;
-  if (existsRow) return;
+  if (existsRow) return null;
   const firstUser = rows.find((r) => r.role === 'user');
   const title = titleFrom(firstUser ? firstUser.content : '新对话');
   sqlite
     .prepare('INSERT INTO ai_conversations (id, title, created_at, updated_at) VALUES (?, ?, ?, ?)')
     .run(id, title, now, now);
+  return { title };
 }
 
 function peekMaxSeq(sqlite: Database.Database, id: string): number {
@@ -141,8 +159,19 @@ function bumpUpdatedAt(sqlite: Database.Database, id: string, now: number): void
  * true if a row was deleted.
  */
 export function deleteConversation(sqlite: Database.Database, id: string): boolean {
-  const res = sqlite.prepare('DELETE FROM ai_conversations WHERE id = ?').run(id);
-  return res.changes > 0;
+  return sqlite
+    .transaction(() => {
+      const res = sqlite.prepare('DELETE FROM ai_conversations WHERE id = ?').run(id);
+      if (res.changes === 0) return false;
+      emitSyncChange(sqlite, {
+        entityType: 'conversation',
+        entityId: id,
+        op: 'delete',
+        payload: {},
+      });
+      return true;
+    })
+    .immediate();
 }
 
 /**

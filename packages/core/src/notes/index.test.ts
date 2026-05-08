@@ -147,7 +147,7 @@ describe('notes CRUD', () => {
 
   it('permanently deletes a note', () => {
     const note = createNote(db, sqlite, { content: 'Perm delete' });
-    assert.ok(permanentDeleteNote(db, note.id));
+    assert.ok(permanentDeleteNote(db, sqlite, note.id));
     assert.equal(getNote(db, note.id), null);
   });
 
@@ -174,8 +174,8 @@ describe('notes CRUD', () => {
     ensureSpecialNotes(db);
     assert.equal(deleteNote(db, sqlite, MEMO, { autoDeleteDays: 30 }), null);
     assert.equal(deleteNote(db, sqlite, TODO, { autoDeleteDays: 30 }), null);
-    assert.equal(permanentDeleteNote(db, MEMO), false);
-    assert.equal(permanentDeleteNote(db, TODO), false);
+    assert.equal(permanentDeleteNote(db, sqlite, MEMO), false);
+    assert.equal(permanentDeleteNote(db, sqlite, TODO), false);
     const memo = getNote(db, MEMO);
     assert.ok(memo);
     assert.equal(memo.trashLevel, 0);
@@ -599,7 +599,7 @@ describe('setNotePinned (P3.4-a)', () => {
     // difference would be observable.
     await new Promise((r) => setTimeout(r, 5));
 
-    const pinnedAt = setNotePinned(db, note.id, true);
+    const pinnedAt = setNotePinned(db, sqlite, note.id, true);
     assert.ok(pinnedAt instanceof Date);
 
     const after = getNote(db, note.id);
@@ -610,7 +610,7 @@ describe('setNotePinned (P3.4-a)', () => {
       'setNotePinned must NOT touch updated_at',
     );
 
-    const cleared = setNotePinned(db, note.id, false);
+    const cleared = setNotePinned(db, sqlite, note.id, false);
     assert.equal(cleared, null);
     const afterUnpin = getNote(db, note.id);
     assert.equal(afterUnpin?.pinnedAt, null);
@@ -618,7 +618,7 @@ describe('setNotePinned (P3.4-a)', () => {
   });
 
   it('throws on missing note', () => {
-    assert.throws(() => setNotePinned(db, 'nonexistent-id', true), /not found/);
+    assert.throws(() => setNotePinned(db, sqlite, 'nonexistent-id', true), /not found/);
   });
 });
 

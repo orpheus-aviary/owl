@@ -29,17 +29,17 @@ describe('folders CRUD', () => {
   });
 
   it('creates a root folder with auto-incremented position', () => {
-    const a = createFolder(db, { name: 'Work' });
-    const b = createFolder(db, { name: 'Personal' });
+    const a = createFolder(db, sqlite, { name: 'Work' });
+    const b = createFolder(db, sqlite, { name: 'Personal' });
     assert.equal(a.parentId, null);
     assert.equal(a.position, 0);
     assert.equal(b.position, 1);
   });
 
   it('creates child folders and lists them', () => {
-    const parent = createFolder(db, { name: 'Projects' });
-    const c1 = createFolder(db, { name: 'Owl', parentId: parent.id });
-    const c2 = createFolder(db, { name: 'Lark', parentId: parent.id });
+    const parent = createFolder(db, sqlite, { name: 'Projects' });
+    const c1 = createFolder(db, sqlite, { name: 'Owl', parentId: parent.id });
+    const c2 = createFolder(db, sqlite, { name: 'Lark', parentId: parent.id });
     assert.equal(c1.parentId, parent.id);
     assert.equal(c1.position, 0);
     assert.equal(c2.position, 1);
@@ -50,42 +50,42 @@ describe('folders CRUD', () => {
   });
 
   it('updates folder name', () => {
-    const f = createFolder(db, { name: 'Old' });
-    const updated = updateFolder(db, f.id, { name: 'New' });
+    const f = createFolder(db, sqlite, { name: 'Old' });
+    const updated = updateFolder(db, sqlite, f.id, { name: 'New' });
     assert.equal(updated?.name, 'New');
   });
 
   it('refuses to move folder into itself or its descendants', () => {
-    const p = createFolder(db, { name: 'P' });
-    const c = createFolder(db, { name: 'C', parentId: p.id });
-    const gc = createFolder(db, { name: 'GC', parentId: c.id });
-    assert.throws(() => updateFolder(db, p.id, { parentId: p.id }));
-    assert.throws(() => updateFolder(db, p.id, { parentId: c.id }));
-    assert.throws(() => updateFolder(db, p.id, { parentId: gc.id }));
+    const p = createFolder(db, sqlite, { name: 'P' });
+    const c = createFolder(db, sqlite, { name: 'C', parentId: p.id });
+    const gc = createFolder(db, sqlite, { name: 'GC', parentId: c.id });
+    assert.throws(() => updateFolder(db, sqlite, p.id, { parentId: p.id }));
+    assert.throws(() => updateFolder(db, sqlite, p.id, { parentId: c.id }));
+    assert.throws(() => updateFolder(db, sqlite, p.id, { parentId: gc.id }));
   });
 
   it('deleteFolder promotes children to grandparent', () => {
-    const root = createFolder(db, { name: 'Root' });
-    const mid = createFolder(db, { name: 'Mid', parentId: root.id });
-    const leaf = createFolder(db, { name: 'Leaf', parentId: mid.id });
+    const root = createFolder(db, sqlite, { name: 'Root' });
+    const mid = createFolder(db, sqlite, { name: 'Mid', parentId: root.id });
+    const leaf = createFolder(db, sqlite, { name: 'Leaf', parentId: mid.id });
 
-    const deleted = deleteFolder(db, mid.id);
+    const deleted = deleteFolder(db, sqlite, mid.id);
     assert.equal(deleted, true);
     const reloaded = getFolder(db, leaf.id);
     assert.equal(reloaded?.parentId, root.id);
   });
 
   it('deleteFolder resets note folder_id to null', () => {
-    const f = createFolder(db, { name: 'Temp' });
+    const f = createFolder(db, sqlite, { name: 'Temp' });
     const note = createNote(db, sqlite, { content: 'tagged', folderId: f.id });
-    deleteFolder(db, f.id);
+    deleteFolder(db, sqlite, f.id);
     const result = listNotes(db, sqlite, { folderId: null });
     assert.ok(result.items.some((n) => n.id === note.id));
   });
 
   it('reorderFolders updates positions and parent in one transaction', () => {
-    const a = createFolder(db, { name: 'A' });
-    const b = createFolder(db, { name: 'B' });
+    const a = createFolder(db, sqlite, { name: 'A' });
+    const b = createFolder(db, sqlite, { name: 'B' });
     const count = reorderFolders(db, sqlite, [
       { id: a.id, parentId: null, position: 10 },
       { id: b.id, parentId: null, position: 11 },
@@ -96,10 +96,10 @@ describe('folders CRUD', () => {
   });
 
   it('getFolderSubtreeIds returns self + all descendants', () => {
-    const r = createFolder(db, { name: 'R' });
-    const c1 = createFolder(db, { name: 'C1', parentId: r.id });
-    const c2 = createFolder(db, { name: 'C2', parentId: r.id });
-    const gc = createFolder(db, { name: 'GC', parentId: c1.id });
+    const r = createFolder(db, sqlite, { name: 'R' });
+    const c1 = createFolder(db, sqlite, { name: 'C1', parentId: r.id });
+    const c2 = createFolder(db, sqlite, { name: 'C2', parentId: r.id });
+    const gc = createFolder(db, sqlite, { name: 'GC', parentId: c1.id });
     const ids = new Set(getFolderSubtreeIds(sqlite, r.id));
     assert.ok(ids.has(r.id));
     assert.ok(ids.has(c1.id));
@@ -123,8 +123,8 @@ describe('listNotes with include_descendants', () => {
   });
 
   it('default true: folder query returns notes from descendants', () => {
-    const parent = createFolder(db, { name: 'Parent' });
-    const child = createFolder(db, { name: 'Child', parentId: parent.id });
+    const parent = createFolder(db, sqlite, { name: 'Parent' });
+    const child = createFolder(db, sqlite, { name: 'Child', parentId: parent.id });
 
     createNote(db, sqlite, { content: 'in parent', folderId: parent.id });
     createNote(db, sqlite, { content: 'in child', folderId: child.id });
@@ -134,8 +134,8 @@ describe('listNotes with include_descendants', () => {
   });
 
   it('includeDescendants=false: exact folder match only', () => {
-    const parent = createFolder(db, { name: 'P2' });
-    const child = createFolder(db, { name: 'C2', parentId: parent.id });
+    const parent = createFolder(db, sqlite, { name: 'P2' });
+    const child = createFolder(db, sqlite, { name: 'C2', parentId: parent.id });
 
     createNote(db, sqlite, { content: 'p', folderId: parent.id });
     createNote(db, sqlite, { content: 'c', folderId: child.id });

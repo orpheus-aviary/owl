@@ -3,6 +3,7 @@ import { asc, eq, sql } from 'drizzle-orm';
 import { v4 as uuidv4 } from 'uuid';
 import type { OwlDatabase } from '../db/index.js';
 import { folders } from '../db/schema.js';
+import { emitSyncChange } from '../sync/changes.js';
 
 // ─── Types ─────────────────────────────────────────────
 
@@ -38,37 +39,62 @@ export interface ReorderFolderItem {
 
 // ─── CRUD ──────────────────────────────────────────────
 
-export function createFolder(db: OwlDatabase, input: CreateFolderInput): Folder {
+export function createFolder(
+  db: OwlDatabase,
+  sqlite: Database.Database,
+  input: CreateFolderInput,
+): Folder {
   const id = uuidv4();
   const now = new Date();
+  const nowMs = now.getTime();
 
-  // When no explicit position is supplied, append at end of siblings.
-  let position = input.position;
-  if (position === undefined) {
-    const parentId = input.parentId ?? null;
-    const siblings = db
-      .select({ position: folders.position })
-      .from(folders)
-      .where(parentId === null ? sql`${folders.parentId} IS NULL` : eq(folders.parentId, parentId))
-      .all();
-    position = siblings.reduce((max, s) => Math.max(max, s.position), -1) + 1;
-  }
+  return sqlite
+    .transaction(() => {
+      // When no explicit position is supplied, append at end of siblings.
+      let position = input.position;
+      if (position === undefined) {
+        const parentId = input.parentId ?? null;
+        const siblings = db
+          .select({ position: folders.position })
+          .from(folders)
+          .where(
+            parentId === null ? sql`${folders.parentId} IS NULL` : eq(folders.parentId, parentId),
+          )
+          .all();
+        position = siblings.reduce((max, s) => Math.max(max, s.position), -1) + 1;
+      }
 
-  db.insert(folders)
-    .values({
-      id,
-      name: input.name,
-      parentId: input.parentId ?? null,
-      position,
-      createdAt: now,
-      updatedAt: now,
-      deviceId: input.deviceId ?? null,
+      db.insert(folders)
+        .values({
+          id,
+          name: input.name,
+          parentId: input.parentId ?? null,
+          position,
+          createdAt: now,
+          updatedAt: now,
+          deviceId: input.deviceId ?? null,
+        })
+        .run();
+
+      emitSyncChange(sqlite, {
+        entityType: 'folder',
+        entityId: id,
+        op: 'create',
+        payload: {
+          name: input.name,
+          parent_id: input.parentId ?? null,
+          position,
+          created_at_ms: nowMs,
+          updated_at_ms: nowMs,
+        },
+        nowMs,
+      });
+
+      const row = db.select().from(folders).where(eq(folders.id, id)).get();
+      if (!row) throw new Error(`Failed to retrieve folder after creation: ${id}`);
+      return row;
     })
-    .run();
-
-  const row = db.select().from(folders).where(eq(folders.id, id)).get();
-  if (!row) throw new Error(`Failed to retrieve folder after creation: ${id}`);
-  return row;
+    .immediate();
 }
 
 export function getFolder(db: OwlDatabase, id: string): Folder | null {
@@ -105,41 +131,109 @@ function assertNoCycle(db: OwlDatabase, id: string, newParentId: string): void {
   }
 }
 
-export function updateFolder(db: OwlDatabase, id: string, input: UpdateFolderInput): Folder | null {
-  const existing = db.select().from(folders).where(eq(folders.id, id)).get();
-  if (!existing) return null;
+export function updateFolder(
+  db: OwlDatabase,
+  sqlite: Database.Database,
+  id: string,
+  input: UpdateFolderInput,
+): Folder | null {
+  return sqlite
+    .transaction(() => {
+      const existing = db.select().from(folders).where(eq(folders.id, id)).get();
+      if (!existing) return null;
 
-  if (input.parentId !== undefined && input.parentId !== null) {
-    assertNoCycle(db, id, input.parentId);
-  }
+      if (input.parentId !== undefined && input.parentId !== null) {
+        assertNoCycle(db, id, input.parentId);
+      }
 
-  const updates: Record<string, unknown> = { updatedAt: new Date() };
-  if (input.name !== undefined) updates.name = input.name;
-  if (input.parentId !== undefined) updates.parentId = input.parentId;
-  if (input.position !== undefined) updates.position = input.position;
-  if (input.deviceId !== undefined) updates.deviceId = input.deviceId;
+      const now = new Date();
+      const nowMs = now.getTime();
+      const updates: Record<string, unknown> = { updatedAt: now };
+      if (input.name !== undefined) updates.name = input.name;
+      if (input.parentId !== undefined) updates.parentId = input.parentId;
+      if (input.position !== undefined) updates.position = input.position;
+      if (input.deviceId !== undefined) updates.deviceId = input.deviceId;
 
-  db.update(folders).set(updates).where(eq(folders.id, id)).run();
-  return db.select().from(folders).where(eq(folders.id, id)).get() ?? null;
+      db.update(folders).set(updates).where(eq(folders.id, id)).run();
+
+      // Sparse post-state payload: only the columns the caller asked to write
+      // (plus updated_at_ms which always changes). device_id and content-style
+      // hashes are derived server-side from sync_changes.device_id.
+      const payload: Record<string, unknown> = { updated_at_ms: nowMs };
+      if (input.name !== undefined) payload.name = input.name;
+      if (input.parentId !== undefined) payload.parent_id = input.parentId;
+      if (input.position !== undefined) payload.position = input.position;
+
+      emitSyncChange(sqlite, {
+        entityType: 'folder',
+        entityId: id,
+        op: 'update',
+        payload,
+        nowMs,
+      });
+
+      return db.select().from(folders).where(eq(folders.id, id)).get() ?? null;
+    })
+    .immediate();
 }
 
 /**
  * Delete a folder and promote its direct children to its own parent (one level
  * up). Notes inside the deleted folder have `folder_id` reset to NULL via the
  * existing `ON DELETE SET NULL` FK.
+ *
+ * P4 Phase 2 ordering: SELECT children ids first, then UPDATE, then emit per-
+ * child `folder/update` rows, then DELETE the folder, then emit `folder/delete`.
+ * The SELECT-before-UPDATE order is mandatory — once UPDATE runs, the children
+ * no longer match `parent_id = id` so we can't recover their ids.
  */
-export function deleteFolder(db: OwlDatabase, id: string): boolean {
-  const existing = db.select().from(folders).where(eq(folders.id, id)).get();
-  if (!existing) return false;
+export function deleteFolder(db: OwlDatabase, sqlite: Database.Database, id: string): boolean {
+  return sqlite
+    .transaction(() => {
+      const existing = db.select().from(folders).where(eq(folders.id, id)).get();
+      if (!existing) return false;
 
-  const grandparentId = existing.parentId;
-  db.update(folders)
-    .set({ parentId: grandparentId, updatedAt: new Date() })
-    .where(eq(folders.parentId, id))
-    .run();
+      const grandparentId = existing.parentId;
+      const now = new Date();
+      const nowMs = now.getTime();
 
-  const result = db.delete(folders).where(eq(folders.id, id)).run();
-  return result.changes > 0;
+      const childIds = db
+        .select({ id: folders.id })
+        .from(folders)
+        .where(eq(folders.parentId, id))
+        .all()
+        .map((r) => r.id);
+
+      if (childIds.length > 0) {
+        db.update(folders)
+          .set({ parentId: grandparentId, updatedAt: now })
+          .where(eq(folders.parentId, id))
+          .run();
+        for (const childId of childIds) {
+          emitSyncChange(sqlite, {
+            entityType: 'folder',
+            entityId: childId,
+            op: 'update',
+            payload: { parent_id: grandparentId, updated_at_ms: nowMs },
+            nowMs,
+          });
+        }
+      }
+
+      const result = db.delete(folders).where(eq(folders.id, id)).run();
+      if (result.changes === 0) return false;
+
+      emitSyncChange(sqlite, {
+        entityType: 'folder',
+        entityId: id,
+        op: 'delete',
+        payload: {},
+        nowMs,
+      });
+
+      return true;
+    })
+    .immediate();
 }
 
 /** Apply a batch of (id, parentId, position) updates in a single transaction. */
@@ -157,7 +251,16 @@ export function reorderFolders(
     let count = 0;
     for (const row of rows) {
       const result = stmt.run(row.parentId, row.position, now, row.id);
-      count += result.changes;
+      if (result.changes > 0) {
+        count += result.changes;
+        emitSyncChange(sqlite, {
+          entityType: 'folder',
+          entityId: row.id,
+          op: 'update',
+          payload: { parent_id: row.parentId, position: row.position, updated_at_ms: now },
+          nowMs: now,
+        });
+      }
     }
     return count;
   });

@@ -6,6 +6,7 @@ import type { OwlDatabase } from '../db/index.js';
 import { noteTags, notes, tags } from '../db/schema.js';
 import { SPECIAL_NOTES } from '../db/special-notes.js';
 import { getFolderSubtreeIds } from '../folders/index.js';
+import { emitSyncChange } from '../sync/changes.js';
 import type { ParsedTag } from '../tags/parser.js';
 import { AlreadyTrashedError, VersionMismatchError } from './errors.js';
 import { contentHash } from './hash.js';
@@ -119,29 +120,49 @@ export function createNote(
 ): NoteWithTags {
   const id = uuidv4();
   const now = new Date();
+  const nowMs = now.getTime();
   const hash = contentHash(input.content);
 
-  db.insert(notes)
-    .values({
-      id,
-      content: input.content,
-      folderId: input.folderId ?? null,
-      createdAt: now,
-      updatedAt: now,
-      trashLevel: 0,
-      deviceId: input.deviceId ?? null,
-      contentHash: hash,
+  return sqlite
+    .transaction(() => {
+      db.insert(notes)
+        .values({
+          id,
+          content: input.content,
+          folderId: input.folderId ?? null,
+          createdAt: now,
+          updatedAt: now,
+          trashLevel: 0,
+          deviceId: input.deviceId ?? null,
+          contentHash: hash,
+        })
+        .run();
+
+      if (input.tags?.length) {
+        syncNoteTags(db, sqlite, id, input.tags);
+      }
+
+      emitSyncChange(sqlite, {
+        entityType: 'note',
+        entityId: id,
+        op: 'create',
+        payload: {
+          content: input.content,
+          folder_id: input.folderId ?? null,
+          trash_level: 0,
+          created_at_ms: nowMs,
+          updated_at_ms: nowMs,
+          tags: (input.tags ?? []).map((t) => ({ tag_type: t.tagType, tag_value: t.tagValue })),
+        },
+        nowMs,
+      });
+
+      // Safe: we just inserted this note
+      const note = getNote(db, id);
+      if (!note) throw new Error(`Failed to retrieve note after creation: ${id}`);
+      return note;
     })
-    .run();
-
-  if (input.tags?.length) {
-    syncNoteTags(db, sqlite, id, input.tags);
-  }
-
-  // Safe: we just inserted this note
-  const note = getNote(db, id);
-  if (!note) throw new Error(`Failed to retrieve note after creation: ${id}`);
-  return note;
+    .immediate();
 }
 
 export function getNote(db: OwlDatabase, id: string): NoteWithTags | null {
@@ -342,7 +363,9 @@ export function updateNote(
       }
     }
 
-    const updates: Record<string, unknown> = { updatedAt: new Date() };
+    const now = new Date();
+    const nowMs = now.getTime();
+    const updates: Record<string, unknown> = { updatedAt: now };
 
     if (input.content !== undefined) {
       updates.content = input.content;
@@ -360,6 +383,22 @@ export function updateNote(
     if (input.tags !== undefined) {
       syncNoteTags(db, sqlite, id, input.tags);
     }
+
+    // Sparse post-state. content_hash + device_id derived server-side from
+    // (content, sync_changes.device_id), so omit from payload.
+    const payload: Record<string, unknown> = { updated_at_ms: nowMs };
+    if (input.content !== undefined) payload.content = input.content;
+    if (input.folderId !== undefined) payload.folder_id = input.folderId;
+    if (input.tags !== undefined) {
+      payload.tags = input.tags.map((t) => ({ tag_type: t.tagType, tag_value: t.tagValue }));
+    }
+    emitSyncChange(sqlite, {
+      entityType: 'note',
+      entityId: id,
+      op: 'update',
+      payload,
+      nowMs,
+    });
 
     return getNote(db, id);
   });
@@ -403,6 +442,7 @@ export function deleteNote(
     }
 
     const now = new Date();
+    const nowMs = now.getTime();
     const newLevel = note.trashLevel + 1;
     const thresholdDays = opts.autoDeleteDays ?? 0;
     const autoDeleteAt =
@@ -417,6 +457,19 @@ export function deleteNote(
       })
       .where(eq(notes.id, id))
       .run();
+
+    emitSyncChange(sqlite, {
+      entityType: 'note',
+      entityId: id,
+      op: 'trash',
+      payload: {
+        trash_level: newLevel,
+        trashed_at_ms: nowMs,
+        auto_delete_at_ms: autoDeleteAt ? autoDeleteAt.getTime() : null,
+        updated_at_ms: nowMs,
+      },
+      nowMs,
+    });
 
     return getNote(db, id);
   });
@@ -447,16 +500,32 @@ export function restoreNote(
       }
     }
 
+    const now = new Date();
+    const nowMs = now.getTime();
     const newLevel = note.trashLevel - 1;
+    const newTrashedAt = newLevel === 0 ? null : note.trashedAt;
     db.update(notes)
       .set({
         trashLevel: newLevel,
-        trashedAt: newLevel === 0 ? null : note.trashedAt,
+        trashedAt: newTrashedAt,
         autoDeleteAt: null,
-        updatedAt: new Date(),
+        updatedAt: now,
       })
       .where(eq(notes.id, id))
       .run();
+
+    emitSyncChange(sqlite, {
+      entityType: 'note',
+      entityId: id,
+      op: 'restore',
+      payload: {
+        trash_level: newLevel,
+        trashed_at_ms: newTrashedAt ? newTrashedAt.getTime() : null,
+        auto_delete_at_ms: null,
+        updated_at_ms: nowMs,
+      },
+      nowMs,
+    });
 
     return getNote(db, id);
   });
@@ -464,10 +533,25 @@ export function restoreNote(
 }
 
 /** Permanent delete */
-export function permanentDeleteNote(db: OwlDatabase, id: string): boolean {
+export function permanentDeleteNote(
+  db: OwlDatabase,
+  sqlite: Database.Database,
+  id: string,
+): boolean {
   if (isSpecialNote(id)) return false;
-  const result = db.delete(notes).where(eq(notes.id, id)).run();
-  return result.changes > 0;
+  return sqlite
+    .transaction(() => {
+      const result = db.delete(notes).where(eq(notes.id, id)).run();
+      if (result.changes === 0) return false;
+      emitSyncChange(sqlite, {
+        entityType: 'note',
+        entityId: id,
+        op: 'delete',
+        payload: {},
+      });
+      return true;
+    })
+    .immediate();
 }
 
 /** Batch soft delete — see `deleteNote` for the `auto_delete_at` semantics. */
@@ -504,12 +588,16 @@ export function batchRestoreNotes(
 }
 
 /** Batch permanent delete */
-export function batchPermanentDeleteNotes(db: OwlDatabase, ids: string[]): number {
+export function batchPermanentDeleteNotes(
+  db: OwlDatabase,
+  sqlite: Database.Database,
+  ids: string[],
+): number {
   if (ids.length === 0) return 0;
   let count = 0;
 
   for (const id of ids) {
-    if (permanentDeleteNote(db, id)) count++;
+    if (permanentDeleteNote(db, sqlite, id)) count++;
   }
 
   return count;
@@ -570,13 +658,30 @@ export { contentHash } from './hash.js';
  * Throws if the note does not exist. Silently accepts special notes — their
  * pin state is user preference like any other.
  */
-export function setNotePinned(db: OwlDatabase, id: string, pinned: boolean): Date | null {
-  const existing = db.select().from(notes).where(eq(notes.id, id)).get();
-  if (!existing) throw new Error(`Note ${id} not found`);
+export function setNotePinned(
+  db: OwlDatabase,
+  sqlite: Database.Database,
+  id: string,
+  pinned: boolean,
+): Date | null {
+  return sqlite
+    .transaction(() => {
+      const existing = db.select().from(notes).where(eq(notes.id, id)).get();
+      if (!existing) throw new Error(`Note ${id} not found`);
 
-  const next = pinned ? new Date() : null;
-  db.update(notes).set({ pinnedAt: next }).where(eq(notes.id, id)).run();
-  return next;
+      const next = pinned ? new Date() : null;
+      db.update(notes).set({ pinnedAt: next }).where(eq(notes.id, id)).run();
+
+      emitSyncChange(sqlite, {
+        entityType: 'note',
+        entityId: id,
+        op: 'pin',
+        payload: { pinned_at_ms: next ? next.getTime() : null },
+      });
+
+      return next;
+    })
+    .immediate();
 }
 
 /**
@@ -634,10 +739,21 @@ export function reorderNotesInFolder(
   }
 
   // Apply in a single transaction: position i*1000 (1-indexed) for each id.
+  // Per-note `note/update` sync_changes emitted in the same tx so a partial
+  // failure rolls back both positions and change-log rows.
   const tx = sqlite.transaction((ids: string[]) => {
     const stmt = sqlite.prepare('UPDATE notes SET position = ? WHERE id = ?');
+    const nowMs = Date.now();
     for (let i = 0; i < ids.length; i++) {
-      stmt.run((i + 1) * 1000, ids[i]);
+      const position = (i + 1) * 1000;
+      stmt.run(position, ids[i]);
+      emitSyncChange(sqlite, {
+        entityType: 'note',
+        entityId: ids[i],
+        op: 'update',
+        payload: { position },
+        nowMs,
+      });
     }
   });
   tx.immediate(orderedIds);

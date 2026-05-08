@@ -100,6 +100,10 @@ export type { ListHashtagTagsOptions, HashtagTagRow } from './tags/list.js';
 export { searchNotes, searchNotesWithDetails } from './search/index.js';
 export type { SearchResult } from './search/index.js';
 
+// Sync (P4 Phase 2 — local change log)
+export { emitSyncChange } from './sync/changes.js';
+export type { SyncEntityType, SyncOp, EmitSyncChangeArgs } from './sync/changes.js';
+
 // Conversations (AI chat persistence)
 export {
   appendConversationMessages,
