@@ -7,7 +7,7 @@
  * pnpm-lock.yaml so the published artifact locks to exactly what we
  * build and test against.
  */
-import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -67,14 +67,17 @@ if (existsSync(licenseSrc)) copyFileSync(licenseSrc, join(distDir, 'LICENSE'));
 const readmeSrc = join(cliDir, 'README.md');
 if (existsSync(readmeSrc)) copyFileSync(readmeSrc, join(distDir, 'README.md'));
 
-// Copy migrations SQL (needed by @owl/core's migration runner at runtime)
+// Copy migrations SQL (needed by @owl/core's migration runner at runtime).
+// Copy ALL NNNN_*.sql so applyForwardMigrations can walk past the initial
+// schema; previously this hard-coded only 0001 which broke fresh `--direct`
+// installs once LATEST_KNOWN_VERSION moved past 1.
 const migrationsSrc = join(repoRoot, 'packages/core/src/db/migrations');
 if (existsSync(migrationsSrc)) {
   const dest = join(distDir, 'migrations');
   mkdirSync(dest, { recursive: true });
-  for (const entry of ['0001_initial.sql']) {
-    const srcFile = join(migrationsSrc, entry);
-    if (existsSync(srcFile)) copyFileSync(srcFile, join(dest, entry));
+  const sqlFiles = readdirSync(migrationsSrc).filter((f) => /^\d{4}_.+\.sql$/.test(f));
+  for (const entry of sqlFiles) {
+    copyFileSync(join(migrationsSrc, entry), join(dest, entry));
   }
 }
 
