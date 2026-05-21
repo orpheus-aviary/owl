@@ -13,6 +13,7 @@ import { runMigrate } from './commands/migrate.js';
 import { runOpen } from './commands/open.js';
 import { runSearch } from './commands/search.js';
 import { runSkillExport } from './commands/skill.js';
+import { runSyncConfigShow, runSyncLogin, runSyncRun, runSyncStatus } from './commands/sync.js';
 import { runTag } from './commands/tag.js';
 import { runTrashList } from './commands/trash.js';
 import { resolveConfig } from './lib/config.js';
@@ -323,6 +324,53 @@ export function buildProgram(): Command {
           streams,
         },
       );
+    });
+
+  // ── sync (P5-a Step 8) ──
+  // Daemon-only. No `withContext` because we don't need an OwlBackend —
+  // each subcommand fetches the daemon directly.
+  const syncCmd = program.command('sync').description('skybridge sync (P5-a manual)');
+  syncCmd
+    .command('run')
+    .description('trigger one manual sync round (pull then push)')
+    .action(async (_: Record<string, unknown>, cmd: Command) => {
+      const opts = cmd.optsWithGlobals() as GlobalOptions;
+      await runSyncRun({ pretty: opts.pretty === true, direct: opts.direct === true }, { streams });
+    });
+  syncCmd
+    .command('status')
+    .description('show skybridge configuration + cursor + pending counts')
+    .action(async (_: Record<string, unknown>, cmd: Command) => {
+      const opts = cmd.optsWithGlobals() as GlobalOptions;
+      await runSyncStatus(
+        { pretty: opts.pretty === true, direct: opts.direct === true },
+        { streams },
+      );
+    });
+  syncCmd
+    .command('login')
+    .description('write skybridge credentials to skybridge_config.toml')
+    .requiredOption('--email <email>', 'login email')
+    .option('--server-url <url>', 'skybridge server URL (defaults to existing config)')
+    .action(async (flags: { email: string; serverUrl?: string }, cmd: Command) => {
+      const opts = cmd.optsWithGlobals() as GlobalOptions;
+      await runSyncLogin(
+        {
+          email: flags.email,
+          serverUrl: flags.serverUrl,
+          pretty: opts.pretty === true,
+          direct: opts.direct === true,
+        },
+        { streams },
+      );
+    });
+  const syncConfig = syncCmd.command('config').description('inspect local skybridge configuration');
+  syncConfig
+    .command('show')
+    .description('print skybridge_config.toml with the auth token masked')
+    .action(async (_: Record<string, unknown>, cmd: Command) => {
+      const opts = cmd.optsWithGlobals() as GlobalOptions;
+      await runSyncConfigShow({ pretty: opts.pretty === true }, { streams });
     });
 
   // ── skill export ──
