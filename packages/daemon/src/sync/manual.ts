@@ -44,6 +44,7 @@ import {
 } from '@owl/core';
 import type { SkybridgeConfig } from '@owl/core';
 import type { AppContext } from '../context.js';
+import { createCoalescer } from './coalesce.js';
 
 // ─── App version (sent on registerDevice) ─────────────────────────────
 
@@ -263,21 +264,31 @@ function translateSkybridgeError(err: unknown, configPath: string): Error {
   return new SkybridgeSyncFailedError('unknown sync failure', err);
 }
 
-// ─── Module-level inflight dedupe ─────────────────────────────────────
+// ─── Module-level coalescing runner ───────────────────────────────────
+//
+// First caller starts a round. Concurrent callers that arrive WHILE a
+// round is in flight share a single follow-up round which fires once the
+// inflight one finishes — they cannot reuse the inflight Promise because
+// its `SELECT ... WHERE synced_at IS NULL` may have read the outbox
+// before their commit landed, silently dropping them from the push.
+// (P5-a follow-up F3: PATCH→sync 紧邻偶发 pushedTotal=0.)
+//
+// The runner closes over `ctx` — `AppContext` is a long-lived singleton
+// per daemon process so re-binding on every call would be wasteful.
 
-let inflightSync: Promise<RunSyncResult> | null = null;
+let currentCtx: AppContext | null = null;
+const syncCoalescer = createCoalescer<RunSyncResult>(() => {
+  if (!currentCtx) throw new Error('runManualSync called without ctx');
+  return doRunManualSync(currentCtx);
+});
 
 /**
- * Trigger one manual sync round. Concurrent callers (CLI + GUI + future
- * background poll) share the same Promise so we never fire two rounds
- * in parallel on the same daemon.
+ * Trigger one manual sync round (CLI / GUI / future background poll).
+ * See `createCoalescer` for the dedupe semantics.
  */
 export function runManualSync(ctx: AppContext): Promise<RunSyncResult> {
-  if (inflightSync) return inflightSync;
-  inflightSync = doRunManualSync(ctx).finally(() => {
-    inflightSync = null;
-  });
-  return inflightSync;
+  currentCtx = ctx;
+  return syncCoalescer.run();
 }
 
 async function doRunManualSync(ctx: AppContext): Promise<RunSyncResult> {
@@ -503,5 +514,5 @@ export function messageForError(err: unknown): string {
 
 /** @internal */
 export function __resetInflightSync(): void {
-  inflightSync = null;
+  syncCoalescer.reset();
 }
