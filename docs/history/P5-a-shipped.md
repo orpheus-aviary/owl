@@ -88,10 +88,37 @@ just skybridge-uninstall
 just check
 ```
 
+## 手动验收记录（2026-05-22）
+
+design §13 单机双 profile 流程，8 步全过：
+
+| # | 验证 | 结果 |
+|---|---|---|
+| 1 | profile A login → `[server]+[auth]` 写入 toml | ok |
+| 2 | GUI 在 profile A 创建 2 条 note → 8 行 `sync_changes` pending（含 special notes seed + GUI 自动 update） | ok |
+| 3 | profile A 首次 sync → `pushedTotal=8 / pulledTotal=0 / serverSeqHigh=8` | ok |
+| 4 | profile A 第二次 sync（self-replay） → `pulledTotal=8 / appliedTotal=0 / skippedTotal=8 / cursorAfter=8`，cid 命中本地 synced 行全跳过 | ok |
+| 5 | profile B login → B 的 toml 写入 | ok |
+| 6 | profile B 首次 sync → `pulledTotal=8 / appliedTotal=8`，B 的 `notes` 表出现 A 的 4 条记录（2 special + 2 user） | ok |
+| 7 | profile B PATCH 测试笔记 1 + sync → `pushedTotal=1 / serverSeqHigh=9`（注：首次调用 sync 偶发 `pushedTotal=0`，重试一次成功，记录为 F3） | ok（重试后） |
+| 8 | profile A pull B 的 edit → `pulledTotal=1 / appliedTotal=1 / cursorAfter=9`，content 落库，GUI Cmd+R 刷新可见 | ok |
+
+验收过程中暴露了 5 个 follow-up（未阻断 P5-a，留 P5-b）：
+
+| 编号 | 现象 | 触发条件 | 处置方向 |
+|---|---|---|---|
+| **F1** | dev-mode Electron 启动崩 `SIGKILL (Code Signature Invalid)` | macOS Sequoia/26 跑 `just dev` / `just dev-fast`，特别是刚跑过 `ensure-electron-abi`（`@electron/rebuild` 重新编了 native module） | 临时解：手动 `codesign --force --deep --sign -` 所有 `.node` 文件 + `Electron.app`。长期：在 `ensure-electron-abi` 后追加 ad-hoc 重签所有 native 产物的步骤 |
+| **F2** | GUI 渲染进程硬编码 `DAEMON_PORT = 47010`（`packages/gui/src/main/daemon.ts:6`） | 测试要双 profile 时只能让其中一个 profile 占用 47010；用 `OWL_NEST_DIR` 换 nest 但端口不能换 | 让 GUI 读 `OWL_NEST_DIR/owl/owl_config.toml` 解析 daemon.port，或加 `OWL_GUI_DAEMON_PORT` env override |
+| **F3** | PATCH→sync 紧邻调用时第一次 sync `pushedTotal=0`，重试即正常 | mutation commit 后立即 POST /sync/run | inflight Promise 残留？或 better-sqlite3 事务可见性（WAL）？需复现 + 单测覆盖 |
+| **F4** | `notes.device_id` 有两个 UUID 命名空间 | local 写：`local_metadata.device_uuid`（emit & 直接 mutation）；apply 写：skybridge `[device].id`（来自 ServerChange.deviceId） | P5-b：apply 端继续用 skybridge id，但向用户展示时映射回友好名（device.name） |
+| **F5** | 编辑页面笔记预览栏显示创建/修改时间（不该显示） | 与 sync 无关，P3.4-e tab preview 副作用 | UI 调整，独立 commit |
+
+清场流程已验证通过：`just skybridge-uninstall` → `just check` 全绿，guard 不再报错。
+
 ## 设计文档 & 后续
 
 - 设计文档：`docs/plans/2026-05-21-p5-a-skybridge-sync-engine-design.md`（v6 锁定）
 - 跨仓架构：`aviary/docs/SKYBRIDGE_ARCH.md`
 - skybridge 仓配套：`skybridge/PROCESS.md`
 
-下一步 **P5-b**（tags + FTS apply / 后台触发）→ **P5-c**（双机 / 远程 server 验收 + keychain）→ 完整 0.5.0 发版（design doc §14 路线）。
+下一步 **P5-b**（folder/conversation apply + tags + FTS apply / 后台触发 / F1–F4 修复）→ **P5-c**（双机 / 远程 server 验收 + keychain）→ 完整 0.5.0 发版（design doc §14 路线）。

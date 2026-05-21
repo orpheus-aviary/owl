@@ -1,21 +1,60 @@
 # 开发进度
 
-## 当前阶段：0.4.1 hotfix 已 ship — 下一步 P5（skybridge server + sync engine）
+## 当前阶段：P5-a shipped (内部) — 单机双 profile 手动验收 2026-05-22 通过；不发版，下一步 P5-b
 
-**600/600 测试通过**（core 187 + cli 119 + daemon 138 + gui 156）。P3.4 + P4 Phase 1+2 全部 shipped，2026-05-08 发 0.4.0；2026-05-09 发 GUI 0.4.1 hotfix（修复 macOS Sequoia 上 dmg 安装后报"已损坏"，原因是 electron-builder `identity: null` 跳过了 bundle-level codesign，新增 `afterPack` 钩子做 ad-hoc 签名）：
+**P5-a 设计文档**（v6 锁定）：`docs/plans/2026-05-21-p5-a-skybridge-sync-engine-design.md`
+**实施记录**：`docs/history/P5-a-shipped.md`
+
+11-commit P5-a 切片（截至 2026-05-22）：
+
+| Step | 仓 | Commit | 内容 |
+|---|---|---|---|
+| design | owl | `4f9b9ba` | P5-a design doc v6 |
+| 0a | owl | `b384f2e` | `OWL_NEST_DIR` env override（profile B 隔离先决条件） |
+| 0b | owl | `23fcf6e` | delete emit 加 `updated_at_ms`（LWW 锚点必需） |
+| 1 | skybridge | `668b13b` | `tsconfig.build.json` 拆生产 build |
+| 2 | skybridge | `8afc7d2` | 三 package gen-publishable-manifest + just pack-* |
+| 3 | skybridge | `d127997` | README 加本地分发章节 |
+| 4a | owl | `694d81b` | schema v5（sync_changes 加 cid/server_seq/synced_at + UNIQUE 索引 + v4 backfill） + emitSyncChange 返回 cid |
+| 4b | owl | `3c8e09d` | `packages/core/src/sync/payloads/note.ts` apply-side validator + 28 测试 |
+| 5 | owl | `f3d1fe3` | `packages/core/src/sync/engine.ts` — `runSync()` + 结构化接口 + LWW apply + cursor upsert + Fake client 23 测试 |
+| 6 | owl | `34e398f` | `packages/core/src/skybridge/config.ts` — skybridge_config.toml read/write + 3 错误码 + 13 测试 |
+| 7 | owl | `c73a2de` | daemon `sync/manual.ts` 非字面量 dynamic import + `routes/sync.ts` + `sync.e2e.ts` 双层 gate + 10 unit tests |
+| 8 | owl | `77921ed` | CLI `owl sync run / status / login / config show` + 15 vitest tests + 7 个 SKYBRIDGE_* 错误码 |
+| 9 | owl | `14ba0da` | 5 个本地 dev 脚本 + daemon `test:e2e` script |
+| 10 | owl | `a327ce0` | justfile `[skybridge]` group + `just check` 链接入守卫 |
+| 11 | owl | `8432fa8` | `docs/history/P5-a-shipped.md` 实施记录 |
+| 12 | — | n/a | 单机双 profile 手动验收 8/8 通过（详见 `docs/history/P5-a-shipped.md` § 手动验收记录） |
+
+测试基线：**owl 702/702**（core 264 + cli 134 + daemon 148 + gui 156），skybridge **78/78** vitest。
+
+owl `main` 比 origin 多 11 commits（未 push）；skybridge `main` 多 3 commits（未 push）；本地**不发版**、不 npm publish、不 push tag。
+
+### P5-a 验收过程中发现的 follow-ups（留 P5-b）
+
+| 编号 | 现象 | 影响 | 备注 |
+|---|---|---|---|
+| F1 | dev-mode Electron 在 `@electron/rebuild` 后崩溃（`SIGKILL (Code Signature Invalid)`） | macOS Sequoia / 26 跑 `just dev` 后第一次启 GUI 失败 | 临时解：`codesign --force --deep --sign -` 所有 `.node` 文件 + `Electron.app`。长期：把这一步加进 `ensure-electron-abi` 后置钩子 |
+| F2 | GUI dev 模式硬编码 `DAEMON_PORT = 47010` (`packages/gui/src/main/daemon.ts:6`) | 多 profile 测试时无法用非默认端口跑 GUI；只能把 profile A 配成 47010 | P5-b 加 `process.env.OWL_DAEMON_PORT` override，或读 `OWL_NEST_DIR/owl/owl_config.toml` |
+| F3 | PATCH→sync 紧邻调用偶发 `pushedTotal=0`（pending 行在 DB 已 commit，sync 看不到） | 用户重试一次就好；可能是 inflight Promise 残留或事务可见性时序 | 需查 `runManualSync` inflight 重置 + better-sqlite3 隔离级别 |
+| F4 | `notes.device_id` 两个命名空间（local_metadata 的 uuid vs skybridge `[device].id`） | 同一设备在本地行/远端行用不同 UUID，向用户呈现易混淆 | P5-b 统一为 skybridge-registered id，或者新增 `local_device_uuid` 字段拆开语义 |
+| F5 | 编辑页面笔记预览栏不应显示创建/修改时间（P3.4-e tab preview UI 副作用） | 与 P5-a 无关，但顺手记录 | UI 调整，不影响 sync 引擎 |
+
+### 下一阶段 P5-b（未排期）
+
+- folder / conversation entity 的 apply 端
+- tags + FTS5 同步（把 `syncNoteTags` 抽出来给 apply 复用，含 `notes_fts.tags_text` 维护）
+- 后台触发（定时 / SSE / 网络恢复）
+- 上述 F1–F4 follow-ups
+
+## 历史：0.4.x 发版状态
+
+P5-a 前的基线 **600/600 测试通过**（core 187 + cli 119 + daemon 138 + gui 156）。P3.4 + P4 Phase 1+2 全部 shipped，2026-05-08 发 0.4.0；2026-05-09 发 GUI 0.4.1 hotfix（修复 macOS Sequoia 上 dmg 安装后报"已损坏"，原因是 electron-builder `identity: null` 跳过了 bundle-level codesign，新增 `afterPack` 钩子做 ad-hoc 签名）：
 
 - GUI 0.4.1 Release：https://github.com/orpheus-aviary/owl/releases/tag/v0.4.1（`Owl-0.4.1-arm64.dmg`，sha256 `be62243b...67e23b7`）
 - GUI 0.4.0（已废）：https://github.com/orpheus-aviary/owl/releases/tag/v0.4.0
 - CLI npm：`npm i -g @orpheus-aviary/owl-cli`（@0.4.0，hotfix 仅改 GUI 打包，CLI 不受影响）
 - 实施细节：`docs/history/P3-4-P4-shipped.md`
-
-### 下一步
-
-**P5 skybridge Phase 3+4**（发 0.5.0）：
-- **Phase 3** — skybridge server 首发：HTTP push/pull endpoints、device 注册、`sync_changes` apply 引擎
-- **Phase 4** — owl 端 sync engine：HTTP client + SSE 订阅 + 后台 push/pull/定时/网络恢复触发 + GUI 同步状态栏
-
-跨仓架构 `aviary/docs/SKYBRIDGE_ARCH.md`。开工前在 skybridge 仓单独拉 server design doc，然后 owl 端拉 P5 phase 3/4 各自的 design doc。
 
 ## 整体路线
 
