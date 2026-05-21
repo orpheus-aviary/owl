@@ -3,7 +3,27 @@ import { existsSync, readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { paths } from '@owl/core';
 
-const DAEMON_PORT = 47010;
+/**
+ * Daemon port resolution: `OWL_DAEMON_PORT` env override → 47010 default.
+ *
+ * The daemon itself reads `daemon.port` from `owl_config.toml`. Multi-profile
+ * local tests (e.g. P5-a single-machine two-profile sync) need the GUI to
+ * follow a non-default port, hence the env override. The variable is read
+ * once at module load — `electron-vite dev` and packaged launches both honor
+ * envs set by `just`, the daemon spawn script, or a parent shell.
+ */
+function resolveDaemonPort(): number {
+  const raw = process.env.OWL_DAEMON_PORT;
+  if (!raw) return 47010;
+  const port = Number.parseInt(raw, 10);
+  if (!Number.isFinite(port) || port <= 0 || port > 65535) {
+    console.warn(`Invalid OWL_DAEMON_PORT=${raw}, falling back to 47010`);
+    return 47010;
+  }
+  return port;
+}
+
+const DAEMON_PORT = resolveDaemonPort();
 const DAEMON_URL = `http://127.0.0.1:${DAEMON_PORT}`;
 
 // ESM context — recreate CommonJS-style resolver bound to this module.
