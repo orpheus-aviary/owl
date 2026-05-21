@@ -12,6 +12,9 @@ interface SyncChangeRow {
   op: string;
   payload: string;
   created_at: number;
+  client_change_id: string | null;
+  server_seq: number | null;
+  synced_at: number | null;
 }
 
 function readAll(sqlite: Database.Database): SyncChangeRow[] {
@@ -180,5 +183,102 @@ describe('emitSyncChange — transaction integration', () => {
 
     const rows = readAll(sqlite);
     assert.equal(rows.length, 0);
+  });
+});
+
+describe('emitSyncChange — schema v5 outbox columns (P5-a Step 4a)', () => {
+  let sqlite: Database.Database;
+
+  before(() => {
+    const result = createDatabase({ dbPath: ':memory:' });
+    sqlite = result.sqlite;
+  });
+
+  beforeEach(() => {
+    clearAll(sqlite);
+  });
+
+  after(() => {
+    sqlite.close();
+  });
+
+  it('returns a UUID-shaped client_change_id and writes it to the row', () => {
+    const cid = emitSyncChange(sqlite, {
+      entityType: 'note',
+      entityId: 'n1',
+      op: 'create',
+      payload: { content: 'x', updated_at_ms: 1_000 },
+      nowMs: 1_000,
+    });
+
+    // randomUUID() format: 8-4-4-4-12 lowercase hex
+    assert.match(cid, /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+
+    const rows = readAll(sqlite);
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0]?.client_change_id, cid);
+  });
+
+  it('initialises server_seq and synced_at to NULL (outbox pending state)', () => {
+    emitSyncChange(sqlite, {
+      entityType: 'note',
+      entityId: 'n1',
+      op: 'create',
+      payload: { content: 'x' },
+    });
+    const row = readAll(sqlite)[0];
+    assert.equal(row?.server_seq, null);
+    assert.equal(row?.synced_at, null);
+  });
+
+  it('two consecutive emits produce distinct cids', () => {
+    const a = emitSyncChange(sqlite, {
+      entityType: 'note',
+      entityId: 'n1',
+      op: 'create',
+      payload: {},
+    });
+    const b = emitSyncChange(sqlite, {
+      entityType: 'note',
+      entityId: 'n2',
+      op: 'create',
+      payload: {},
+    });
+    assert.notEqual(a, b);
+  });
+
+  it('client_change_id is UNIQUE — second insert with same cid throws', () => {
+    const cid = emitSyncChange(sqlite, {
+      entityType: 'note',
+      entityId: 'n1',
+      op: 'create',
+      payload: {},
+    });
+    // Bypass emit and inject a duplicate cid via raw SQL to verify the index
+    assert.throws(() => {
+      sqlite
+        .prepare(
+          `INSERT INTO sync_changes
+               (device_id, entity_type, entity_id, op, payload, created_at, client_change_id)
+             VALUES ('dev-x', 'note', 'n2', 'create', '{}', 1000, ?)`,
+        )
+        .run(cid);
+    }, /UNIQUE constraint failed.*sync_changes\.client_change_id/i);
+  });
+
+  it('does NOT validate payload at emit (pin op without updated_at_ms succeeds)', () => {
+    // Pin emit deliberately omits updated_at_ms because setNotePinned()
+    // must not touch notes.updated_at. emit must accept this; validator
+    // is apply-side only (parseNotePayload).
+    const cid = emitSyncChange(sqlite, {
+      entityType: 'note',
+      entityId: 'n1',
+      op: 'pin',
+      payload: { pinned_at_ms: 1_000 },
+    });
+    assert.match(cid, /^[0-9a-f-]{36}$/);
+    const row = readAll(sqlite)[0];
+    assert.equal(row?.op, 'pin');
+    assert.equal(JSON.parse(row?.payload ?? '{}').pinned_at_ms, 1_000);
   });
 });

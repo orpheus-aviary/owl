@@ -42,14 +42,28 @@ export interface EmitSyncChangeArgs {
  * Production daemon always calls `ensureDeviceId` at boot — the fallback
  * exists only to keep core mutation tests self-contained.
  */
-export function emitSyncChange(sqlite: Database.Database, args: EmitSyncChangeArgs): void {
+/**
+ * Appends one row to sync_changes and returns the generated `client_change_id`.
+ *
+ * P5-a Step 4a: cid is required by skybridge push semantics — server uses it
+ * to dedupe (accepted vs duplicates), and crash + replay must produce the
+ * same cid for the same row. Generated per-row with `randomUUID()`. Returned
+ * for tests/correlation; existing call sites don't need to capture it.
+ *
+ * No payload validation runs at emit. Validation is apply-side only
+ * (`parseNotePayload`) — design doc §3.3 / §6.3 explain why:
+ *  - pin / reorder emits omit `updated_at_ms` by design, would false-positive
+ *  - emit is internal trusted code; apply is the external-data boundary
+ */
+export function emitSyncChange(sqlite: Database.Database, args: EmitSyncChangeArgs): string {
   const deviceId = readOrInitDeviceId(sqlite);
+  const clientChangeId = randomUUID();
   const createdAt = args.nowMs ?? Date.now();
   sqlite
     .prepare(
       `INSERT INTO sync_changes
-         (device_id, entity_type, entity_id, op, payload, created_at)
-       VALUES (?, ?, ?, ?, ?, ?)`,
+         (device_id, entity_type, entity_id, op, payload, created_at, client_change_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       deviceId,
@@ -58,7 +72,9 @@ export function emitSyncChange(sqlite: Database.Database, args: EmitSyncChangeAr
       args.op,
       JSON.stringify(args.payload),
       createdAt,
+      clientChangeId,
     );
+  return clientChangeId;
 }
 
 function readOrInitDeviceId(sqlite: Database.Database): string {

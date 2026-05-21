@@ -911,4 +911,125 @@ describe('migrate — applyForwardMigrations (P3.4-a)', () => {
       sqlite.close();
     }
   });
+
+  it('F9: 0005 adds outbox columns + cid UNIQUE + pending partial index (P5-a Step 4a)', () => {
+    const dbPath = join(tmp, 'f9.db');
+    const { sqlite } = createDatabase({ dbPath });
+    try {
+      const cols = (sqlite.pragma('table_info(sync_changes)') as { name: string }[]).map(
+        (c) => c.name,
+      );
+      assert.ok(cols.includes('client_change_id'), 'client_change_id column must exist');
+      assert.ok(cols.includes('server_seq'), 'server_seq column must exist');
+      assert.ok(cols.includes('synced_at'), 'synced_at column must exist');
+
+      const indexes = sqlite
+        .prepare(
+          "SELECT name, sql FROM sqlite_master WHERE type='index' AND tbl_name='sync_changes'",
+        )
+        .all() as { name: string; sql: string | null }[];
+      const cidIdx = indexes.find((i) => i.name === 'idx_sync_changes_cid');
+      assert.ok(cidIdx, 'idx_sync_changes_cid must exist');
+      assert.match(cidIdx?.sql ?? '', /UNIQUE/i, 'cid index must be UNIQUE');
+
+      const pendingIdx = indexes.find((i) => i.name === 'idx_sync_changes_pending');
+      assert.ok(pendingIdx, 'idx_sync_changes_pending must exist');
+      assert.match(
+        pendingIdx?.sql ?? '',
+        /synced_at\s+IS\s+NULL/i,
+        'pending index must be partial (WHERE synced_at IS NULL)',
+      );
+    } finally {
+      sqlite.close();
+    }
+  });
+
+  it('F10: v4 → v5 backfills cid for existing rows and rewrites empty delete payloads', () => {
+    const dbPath = join(tmp, 'f10.db');
+    // Seed a real v4 db: walk 1→4 via applyForwardMigrations, then stop and
+    // insert v4-shape sync_changes rows representative of pre-Step-0b state.
+    {
+      const seed = new BetterSqlite3(dbPath);
+      try {
+        seed.exec(readInitialSql());
+        seed.pragma('user_version = 1');
+        applyForwardMigrations(seed, 1, 4);
+        assert.equal(seed.pragma('user_version', { simple: true }) as number, 4);
+
+        seed
+          .prepare(`INSERT INTO local_metadata (key, value) VALUES ('device_uuid', 'dev-fixed')`)
+          .run();
+        const ins = seed.prepare(
+          `INSERT INTO sync_changes
+             (device_id, entity_type, entity_id, op, payload, created_at)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+        );
+        // n1: delete with empty payload — pre-Step-0b shape; backfill target
+        ins.run('dev-fixed', 'note', 'n1', 'delete', '{}', 1_700_000_000_000);
+        // n2: create with full payload — must be untouched
+        ins.run(
+          'dev-fixed',
+          'note',
+          'n2',
+          'create',
+          JSON.stringify({ content: 'hi', updated_at_ms: 1_700_000_001_000 }),
+          1_700_000_001_000,
+        );
+        // n3: trash with updated_at_ms — must be untouched
+        ins.run(
+          'dev-fixed',
+          'note',
+          'n3',
+          'trash',
+          JSON.stringify({ trash_level: 1, updated_at_ms: 1_700_000_002_000 }),
+          1_700_000_002_000,
+        );
+      } finally {
+        seed.close();
+      }
+    }
+
+    // Open via createDatabase → applyForwardMigrations walks v4 → v5.
+    const { sqlite } = createDatabase({ dbPath });
+    try {
+      assert.equal(sqlite.pragma('user_version', { simple: true }) as number, LATEST_KNOWN_VERSION);
+
+      const rows = sqlite
+        .prepare(
+          'SELECT entity_id, op, payload, client_change_id FROM sync_changes ORDER BY local_seq',
+        )
+        .all() as {
+        entity_id: string;
+        op: string;
+        payload: string;
+        client_change_id: string;
+      }[];
+      assert.equal(rows.length, 3);
+
+      // All three rows have a cid populated (32-char lowercase hex per migration).
+      for (const r of rows) {
+        assert.match(r.client_change_id, /^[0-9a-f]{32}$/, `row ${r.entity_id} cid backfilled`);
+      }
+
+      // n1 (delete) payload was backfilled to {"updated_at_ms": <created_at>}
+      const n1 = rows.find((r) => r.entity_id === 'n1');
+      assert.ok(n1, 'n1 row exists');
+      const n1p = JSON.parse(n1?.payload ?? '{}') as { updated_at_ms: number };
+      assert.equal(n1p.updated_at_ms, 1_700_000_000_000);
+
+      // n2 (create) payload untouched
+      const n2 = rows.find((r) => r.entity_id === 'n2');
+      const n2p = JSON.parse(n2?.payload ?? '{}') as { content: string; updated_at_ms: number };
+      assert.equal(n2p.content, 'hi');
+      assert.equal(n2p.updated_at_ms, 1_700_000_001_000);
+
+      // n3 (trash) payload untouched
+      const n3 = rows.find((r) => r.entity_id === 'n3');
+      const n3p = JSON.parse(n3?.payload ?? '{}') as { trash_level: number; updated_at_ms: number };
+      assert.equal(n3p.trash_level, 1);
+      assert.equal(n3p.updated_at_ms, 1_700_000_002_000);
+    } finally {
+      sqlite.close();
+    }
+  });
 });
