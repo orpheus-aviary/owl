@@ -112,7 +112,7 @@ export function NoteListItem({
       // and the pinned background instead of fighting them. See P3.4-b design §3.
       style={specialColor ? { boxShadow: `inset 4px 0 0 ${specialColor}` } : undefined}
       className={cn(
-        'w-full text-left px-3 py-2 border-b border-border transition-colors outline-none cursor-pointer select-none',
+        '@container w-full text-left px-3 py-2 border-b border-border transition-colors outline-none cursor-pointer select-none',
         'hover:bg-accent/50',
         pinned && showPinBackground && 'bg-primary/5',
         isActive && 'bg-accent border-l-2 border-l-primary',
@@ -141,7 +141,10 @@ export function NoteListItem({
             )}
           </div>
         </div>
-        <div className="shrink-0 text-right text-xs leading-relaxed pt-0.5">
+        {/* Container-query gated: below ~380px row width, title gets the full
+            space and the timestamp column collapses. Avoids the prior behavior
+            where the date column was pushed off-screen at narrow widths. */}
+        <div className="hidden @[380px]:block shrink-0 text-right text-xs leading-relaxed pt-0.5">
           <div
             className={cn(
               activeSort === 'created' ? 'text-foreground font-bold' : 'text-muted-foreground',
