@@ -60,6 +60,12 @@ interface NoteListItemProps {
    * tab stop and ArrowUp/Down navigates within (P3.4-e design §4.5).
    */
   tabIndex?: number;
+  /**
+   * When `true`, the create/update timestamp column is never rendered, even on
+   * wide rows. Used by the editor-page `NoteList` sidebar where the list acts
+   * as a tab picker — timestamps add noise without aiding selection.
+   */
+  hideDates?: boolean;
 }
 
 export function NoteListItem({
@@ -72,6 +78,7 @@ export function NoteListItem({
   draggable = false,
   showPinBackground = true,
   tabIndex = 0,
+  hideDates = false,
 }: NoteListItemProps) {
   const title = extractTitle(note.content);
   const preview = extractPreview(note.content);
@@ -143,25 +150,29 @@ export function NoteListItem({
         </div>
         {/* Container-query gated: below ~380px row width, title gets the full
             space and the timestamp column collapses. Avoids the prior behavior
-            where the date column was pushed off-screen at narrow widths. */}
-        <div className="hidden @[380px]:block shrink-0 text-right text-xs leading-relaxed pt-0.5">
-          <div
-            className={cn(
-              activeSort === 'created' ? 'text-foreground font-bold' : 'text-muted-foreground',
-            )}
-          >
-            创建 {formatDateCompact(new Date(note.createdAt))}
+            where the date column was pushed off-screen at narrow widths.
+            `hideDates` (used by the editor sidebar NoteList) forces the column
+            off entirely regardless of width. */}
+        {!hideDates && (
+          <div className="hidden @[380px]:block shrink-0 text-right text-xs leading-relaxed pt-0.5">
+            <div
+              className={cn(
+                activeSort === 'created' ? 'text-foreground font-bold' : 'text-muted-foreground',
+              )}
+            >
+              创建 {formatDateCompact(new Date(note.createdAt))}
+            </div>
+            <div
+              className={cn(
+                activeSort === 'updated' || !activeSort
+                  ? 'text-foreground font-bold'
+                  : 'text-muted-foreground',
+              )}
+            >
+              修改 {formatDateCompact(new Date(note.updatedAt))}
+            </div>
           </div>
-          <div
-            className={cn(
-              activeSort === 'updated' || !activeSort
-                ? 'text-foreground font-bold'
-                : 'text-muted-foreground',
-            )}
-          >
-            修改 {formatDateCompact(new Date(note.updatedAt))}
-          </div>
-        </div>
+        )}
       </div>
     </div>
   );

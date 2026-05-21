@@ -210,6 +210,7 @@ export function NoteList({ activeNoteId, onSelectNote }: NoteListProps) {
                         onClick={() => handleItemClick(note)}
                         onDoubleClick={() => handleItemDoubleClick(note)}
                         tabIndex={-1}
+                        hideDates
                       />
                     </div>
                   </ContextMenuTrigger>
