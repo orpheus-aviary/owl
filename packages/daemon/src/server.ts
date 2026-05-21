@@ -6,6 +6,7 @@ import { registerConfigRoutes } from './routes/config.js';
 import { registerEventsRoutes } from './routes/events.js';
 import { registerFolderRoutes } from './routes/folders.js';
 import { registerNoteRoutes } from './routes/notes.js';
+import { registerSyncRoutes } from './routes/sync.js';
 import { registerSystemRoutes } from './routes/system.js';
 import { registerTagRoutes } from './routes/tags.js';
 import { registerTodoRoutes } from './routes/todos.js';
@@ -52,6 +53,7 @@ export function buildServer(ctx: AppContext) {
   registerAiRoutes(app, ctx);
   registerSystemRoutes(app);
   registerEventsRoutes(app, ctx);
+  registerSyncRoutes(app, ctx);
 
   return app;
 }

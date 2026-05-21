@@ -45,6 +45,9 @@ export function registerSystemRoutes(app: FastifyInstance): void {
         { method: 'POST', path: '/ai/preview/apply', description: 'Commit a staged preview' },
         { method: 'GET', path: '/status', description: 'Health check' },
         { method: 'GET', path: '/api/capabilities', description: 'List all endpoints' },
+        { method: 'POST', path: '/sync/run', description: 'Trigger one skybridge sync round' },
+        { method: 'GET', path: '/sync/status', description: 'Skybridge sync status snapshot' },
+        { method: 'POST', path: '/sync/login', description: 'Write skybridge auth credentials' },
       ],
     });
   });

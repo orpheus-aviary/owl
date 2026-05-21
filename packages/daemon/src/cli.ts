@@ -11,6 +11,7 @@ import {
   ensureSpecialNotes,
   loadConfig,
   paths,
+  readSkybridgeConfig,
 } from '@owl/core';
 import { Command } from 'commander';
 import { ConversationStore } from './ai/conversations.js';
@@ -120,6 +121,22 @@ program
         port: config.daemon.port,
       });
       logger.info({ address, pid: process.pid }, 'Daemon started');
+      // Tell the operator whether skybridge config is present at boot — no
+      // network probe, just file existence + [server].url. Sync routes are
+      // always registered; an absent config just makes them fail with
+      // SKYBRIDGE_NOT_CONFIGURED.
+      const skybridgeEnabled = (() => {
+        try {
+          readSkybridgeConfig();
+          return true;
+        } catch {
+          return false;
+        }
+      })();
+      logger.info(
+        { enabled: skybridgeEnabled },
+        `skybridge: ${skybridgeEnabled ? 'enabled' : 'disabled'}`,
+      );
       console.log(`Owl daemon running at ${address} (PID: ${process.pid})`);
       scheduler.start();
     } catch (err) {
