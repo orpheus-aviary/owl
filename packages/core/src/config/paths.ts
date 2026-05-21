@@ -4,8 +4,21 @@ import { join } from 'node:path';
 const NEST_DIR = 'orpheus-aviary-nest';
 const OWL_DIR = 'owl';
 
-/** Root data directory: ~/orpheus-aviary-nest/ */
+/**
+ * Root data directory.
+ *
+ * Honors `OWL_NEST_DIR` env override so multiple owl profiles can coexist on
+ * the same machine (e.g. P5-a manual sync acceptance, where profile A uses
+ * the default nest and profile B uses `OWL_NEST_DIR=$HOME/...-profileB`).
+ *
+ * Re-evaluated on every call — tests can flip the env between assertions
+ * without module-state reset gymnastics.
+ *
+ * Fallback: `~/orpheus-aviary-nest/`.
+ */
 export function nestDir(): string {
+  const override = process.env.OWL_NEST_DIR;
+  if (override && override.length > 0) return override;
   return join(homedir(), NEST_DIR);
 }
 
