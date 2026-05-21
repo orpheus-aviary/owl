@@ -104,6 +104,9 @@ export type { SearchResult } from './search/index.js';
 export { emitSyncChange } from './sync/changes.js';
 export type { SyncEntityType, SyncOp, EmitSyncChangeArgs } from './sync/changes.js';
 
+// Sync apply-side payload validators (P5-a Step 4b — note ops only)
+export * as syncPayloads from './sync/payloads/note.js';
+
 // Conversations (AI chat persistence)
 export {
   appendConversationMessages,
