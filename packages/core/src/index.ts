@@ -107,6 +107,20 @@ export type { SyncEntityType, SyncOp, EmitSyncChangeArgs } from './sync/changes.
 // Sync apply-side payload validators (P5-a Step 4b — note ops only)
 export * as syncPayloads from './sync/payloads/note.js';
 
+// Sync engine (P5-a Step 5 — pull/push runner with structural client)
+export { runSync, upsertSyncCursor, SkybridgeProtocolError } from './sync/engine.js';
+export type {
+  LocalChangeLike,
+  ServerChangeLike,
+  PushAckLike,
+  PushResultLike,
+  PullResultLike,
+  SkybridgeClientLike,
+  RunSyncDeps,
+  RunSyncResult,
+  RunSyncLogger,
+} from './sync/engine.js';
+
 // Conversations (AI chat persistence)
 export {
   appendConversationMessages,
