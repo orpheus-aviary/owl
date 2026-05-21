@@ -123,13 +123,28 @@ ensure-node-abi:
 # Guarantee the current better-sqlite3 binding is Electron-loadable. Prepended
 # to every dev / package recipe. No-op when Node's probe fails (which we take
 # to mean Electron ABI is already in place).
+#
+# macOS Sequoia (≥15) post-rebuild step: @electron/rebuild produces fresh
+# .node files without a valid code signature, and Electron now refuses to
+# load them — `just dev` SIGKILLs with "Code Signature Invalid" on first
+# launch. Ad-hoc sign every .node + Electron.app to clear the failure. The
+# step is a no-op on non-macOS and harmless when the binaries were already
+# signed correctly.
 [private]
 ensure-electron-abi:
     #!/usr/bin/env bash
     set -euo pipefail
     if (cd packages/core && node -e "const D = require('better-sqlite3'); new D(':memory:').close();" 2>/dev/null); then
         echo "[abi] rebuilding better-sqlite3 for Electron ABI..."
-        cd packages/gui && pnpm exec electron-builder install-app-deps
+        (cd packages/gui && pnpm exec electron-builder install-app-deps)
+        if [[ "$(uname)" == "Darwin" ]]; then
+            echo "[abi] ad-hoc codesigning .node files + Electron.app..."
+            find node_modules -name "*.node" -type f -print0 \
+              | xargs -0 -n1 codesign --force --deep --sign - 2>/dev/null || true
+            if [[ -d node_modules/electron/dist/Electron.app ]]; then
+                codesign --force --deep --sign - node_modules/electron/dist/Electron.app 2>/dev/null || true
+            fi
+        fi
     else
         echo "[abi] better-sqlite3 not Node-loadable — assume Electron ABI, skip"
     fi
