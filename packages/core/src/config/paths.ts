@@ -71,3 +71,13 @@ export function aviaryConfigPath(): string {
 export function migrationConfigPath(): string {
   return join(nestDir(), 'migration', 'config.toml');
 }
+
+/** Skybridge directory: ~/orpheus-aviary-nest/skybridge/ */
+export function skybridgeDir(): string {
+  return join(nestDir(), 'skybridge');
+}
+
+/** Skybridge client config (owl-side connection state, not server.toml) */
+export function skybridgeConfigPath(): string {
+  return join(skybridgeDir(), 'skybridge_config.toml');
+}

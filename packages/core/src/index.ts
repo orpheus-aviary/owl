@@ -121,6 +121,26 @@ export type {
   RunSyncLogger,
 } from './sync/engine.js';
 
+// Skybridge client config (P5-a Step 6 — TOML read/write)
+export {
+  clearSkybridgeAuth,
+  readSkybridgeConfig,
+  removeSkybridgeConfig,
+  requireAuth,
+  skybridgeConfigPath,
+  SkybridgeAuthRequiredError,
+  SkybridgeNotConfiguredError,
+  SkybridgeServerUrlMissingError,
+  writeSkybridgeConfig,
+} from './skybridge/config.js';
+export type {
+  SkybridgeAuthSection,
+  SkybridgeConfig,
+  SkybridgeDeviceSection,
+  SkybridgeServerSection,
+  SkybridgeWorkspaceSection,
+} from './skybridge/config.js';
+
 // Conversations (AI chat persistence)
 export {
   appendConversationMessages,

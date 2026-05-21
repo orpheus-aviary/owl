@@ -1,0 +1,199 @@
+/**
+ * Unit suite for `packages/core/src/skybridge/config.ts` (P5-a Step 6).
+ *
+ * Uses a per-test temp dir; never touches the real
+ * `~/orpheus-aviary-nest/skybridge/`.
+ */
+
+import assert from 'node:assert/strict';
+import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { after, before, beforeEach, describe, it } from 'node:test';
+import {
+  SkybridgeAuthRequiredError,
+  type SkybridgeConfig,
+  SkybridgeNotConfiguredError,
+  SkybridgeServerUrlMissingError,
+  clearSkybridgeAuth,
+  readSkybridgeConfig,
+  removeSkybridgeConfig,
+  requireAuth,
+  writeSkybridgeConfig,
+} from './config.js';
+
+const SERVER_URL = 'http://127.0.0.1:18443';
+
+let tmp: string;
+let cfgPath: string;
+
+before(() => {
+  tmp = mkdtempSync(join(tmpdir(), 'sky-cfg-'));
+  cfgPath = join(tmp, 'skybridge_config.toml');
+});
+
+beforeEach(() => {
+  removeSkybridgeConfig(cfgPath);
+});
+
+after(() => {
+  rmSync(tmp, { recursive: true, force: true });
+});
+
+// ─── error surface ──────────────────────────────────────
+
+describe('readSkybridgeConfig — error surface', () => {
+  it('missing file → SkybridgeNotConfiguredError (code SKYBRIDGE_NOT_CONFIGURED)', () => {
+    try {
+      readSkybridgeConfig(cfgPath);
+      assert.fail('expected throw');
+    } catch (err) {
+      assert.ok(err instanceof SkybridgeNotConfiguredError);
+      assert.equal(err.code, 'SKYBRIDGE_NOT_CONFIGURED');
+      assert.equal(err.path, cfgPath);
+    }
+  });
+
+  it('file present but [server].url missing → SkybridgeServerUrlMissingError', () => {
+    writeFileSync(cfgPath, '[server]\n# no url\n', 'utf-8');
+    try {
+      readSkybridgeConfig(cfgPath);
+      assert.fail('expected throw');
+    } catch (err) {
+      assert.ok(err instanceof SkybridgeServerUrlMissingError);
+      assert.equal(err.code, 'SKYBRIDGE_SERVER_URL_MISSING');
+    }
+  });
+
+  it('[server].url empty string → SkybridgeServerUrlMissingError', () => {
+    writeFileSync(cfgPath, '[server]\nurl = ""\n', 'utf-8');
+    assert.throws(() => readSkybridgeConfig(cfgPath), SkybridgeServerUrlMissingError);
+  });
+});
+
+// ─── round-trip ─────────────────────────────────────────
+
+describe('writeSkybridgeConfig + readSkybridgeConfig — round-trip', () => {
+  it('server-only config round-trips with auth/device/workspace undefined', () => {
+    const cfg: SkybridgeConfig = { server: { url: SERVER_URL } };
+    writeSkybridgeConfig(cfg, cfgPath);
+    const back = readSkybridgeConfig(cfgPath);
+    assert.deepEqual(back, { server: { url: SERVER_URL } });
+    assert.equal(back.auth, undefined);
+    assert.equal(back.device, undefined);
+    assert.equal(back.workspace, undefined);
+  });
+
+  it('full config round-trips all four sections', () => {
+    const cfg: SkybridgeConfig = {
+      server: { url: SERVER_URL },
+      auth: { user_id: 'usr_1', token: 'tok_1', email: 'jay@local' },
+      device: {
+        id: 'dev_1',
+        name: "Jay's MacBook (owl)",
+        app_version: 'owl 0.5.0-dev',
+        client_version: '0.1.0',
+      },
+      workspace: { id: 'ws_1', slug: 'owl/default' },
+    };
+    writeSkybridgeConfig(cfg, cfgPath);
+    const back = readSkybridgeConfig(cfgPath);
+    assert.deepEqual(back, cfg);
+  });
+
+  it('file is chmod 600 after write (POSIX-only check)', () => {
+    if (process.platform === 'win32') return;
+    writeSkybridgeConfig({ server: { url: SERVER_URL } }, cfgPath);
+    const mode = statSync(cfgPath).mode & 0o777;
+    assert.equal(mode, 0o600);
+  });
+
+  it('writing creates the parent dir if missing', () => {
+    const nested = join(tmp, 'deeper', 'sk.toml');
+    writeSkybridgeConfig({ server: { url: SERVER_URL } }, nested);
+    const back = readSkybridgeConfig(nested);
+    assert.equal(back.server.url, SERVER_URL);
+  });
+
+  it('write overwrites — second call wins, no merge', () => {
+    writeSkybridgeConfig(
+      {
+        server: { url: SERVER_URL },
+        auth: { user_id: 'u1', token: 't1', email: 'a@b' },
+      },
+      cfgPath,
+    );
+    writeSkybridgeConfig({ server: { url: 'http://2' } }, cfgPath);
+    const back = readSkybridgeConfig(cfgPath);
+    assert.equal(back.server.url, 'http://2');
+    assert.equal(back.auth, undefined);
+  });
+});
+
+// ─── partial auth → ignored ─────────────────────────────
+
+describe('readSkybridgeConfig — partial auth section', () => {
+  it('auth without token is dropped (no half-state)', () => {
+    writeFileSync(
+      cfgPath,
+      `[server]\nurl = "${SERVER_URL}"\n\n[auth]\nuser_id = "x"\nemail = "y@z"\n`,
+      'utf-8',
+    );
+    const back = readSkybridgeConfig(cfgPath);
+    assert.equal(back.auth, undefined);
+  });
+});
+
+// ─── requireAuth ────────────────────────────────────────
+
+describe('requireAuth narrowing', () => {
+  it('returns the same config when auth is present', () => {
+    const cfg: SkybridgeConfig = {
+      server: { url: SERVER_URL },
+      auth: { user_id: 'u', token: 't', email: 'e' },
+    };
+    const narrowed = requireAuth(cfg);
+    assert.equal(narrowed.auth.token, 't');
+  });
+
+  it('throws SkybridgeAuthRequiredError when auth is absent', () => {
+    assert.throws(
+      () => requireAuth({ server: { url: SERVER_URL } }),
+      (err: unknown) =>
+        err instanceof SkybridgeAuthRequiredError &&
+        (err as SkybridgeAuthRequiredError & { code: string }).code === 'SKYBRIDGE_AUTH_REQUIRED',
+    );
+  });
+});
+
+// ─── clearSkybridgeAuth ─────────────────────────────────
+
+describe('clearSkybridgeAuth', () => {
+  it('drops [auth] but keeps server/device/workspace', () => {
+    const cfg: SkybridgeConfig = {
+      server: { url: SERVER_URL },
+      auth: { user_id: 'u', token: 't', email: 'e' },
+      device: {
+        id: 'dev_1',
+        name: 'mb',
+        app_version: 'owl 0.5.0',
+        client_version: '0.1.0',
+      },
+      workspace: { id: 'ws_1', slug: 'owl/default' },
+    };
+    writeSkybridgeConfig(cfg, cfgPath);
+    clearSkybridgeAuth(cfgPath);
+    const back = readSkybridgeConfig(cfgPath);
+    assert.equal(back.auth, undefined);
+    assert.equal(back.device?.id, 'dev_1');
+    assert.equal(back.workspace?.id, 'ws_1');
+    // On-disk TOML should not contain a [auth] heading at all
+    const raw = readFileSync(cfgPath, 'utf-8');
+    assert.ok(!raw.includes('[auth]'), `expected no [auth] section, got:\n${raw}`);
+  });
+
+  it('no-op when file does not exist', () => {
+    // Should not throw
+    clearSkybridgeAuth(cfgPath);
+  });
+});
