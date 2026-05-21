@@ -155,13 +155,22 @@ describe('sync_changes emission — notes', () => {
     assert.equal(p.auto_delete_at_ms, null);
   });
 
-  it('permanentDeleteNote emits note/delete with empty payload', () => {
+  it('permanentDeleteNote emits note/delete with updated_at_ms payload (P5-a Step 0b)', () => {
+    const before = Date.now();
     const note = createNote(db, sqlite, { content: 'gone' });
     permanentDeleteNote(db, sqlite, note.id);
+    const after = Date.now();
     const row = lastChange(sqlite);
     assert.equal(row.op, 'delete');
     assert.equal(row.entity_id, note.id);
-    assert.equal(row.payload, '{}');
+    const payload = JSON.parse(row.payload) as { updated_at_ms: number };
+    assert.equal(typeof payload.updated_at_ms, 'number');
+    assert.ok(
+      payload.updated_at_ms >= before && payload.updated_at_ms <= after,
+      `updated_at_ms ${payload.updated_at_ms} outside [${before}, ${after}]`,
+    );
+    // Confirm no stray fields slipped in
+    assert.deepEqual(Object.keys(payload).sort(), ['updated_at_ms']);
   });
 
   it('batchPermanentDeleteNotes emits one delete per id', () => {

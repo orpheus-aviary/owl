@@ -543,11 +543,15 @@ export function permanentDeleteNote(
     .transaction(() => {
       const result = db.delete(notes).where(eq(notes.id, id)).run();
       if (result.changes === 0) return false;
+      // P5-a Step 0b: include updated_at_ms so the apply-side LWW
+      // (notes.updated_at vs payload.updated_at_ms) has a comparable
+      // timestamp on the remote side. Pre-Step-0b emit was `{}`, which
+      // would have been rejected by parseNotePayload at apply time.
       emitSyncChange(sqlite, {
         entityType: 'note',
         entityId: id,
         op: 'delete',
-        payload: {},
+        payload: { updated_at_ms: Date.now() },
       });
       return true;
     })
