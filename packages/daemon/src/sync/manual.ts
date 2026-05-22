@@ -344,6 +344,7 @@ async function doRunManualSync(ctx: AppContext): Promise<RunSyncResult> {
       throw new SkybridgeSyncFailedError('workspace registration did not yield an id');
 
     return await runSync({
+      db: ctx.db,
       sqlite: ctx.sqlite,
       client: adaptClient(client),
       workspaceId,

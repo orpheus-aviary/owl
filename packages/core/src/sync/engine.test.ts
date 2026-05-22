@@ -182,10 +182,13 @@ function collectingLogger(): RunSyncLogger & { lines: string[] } {
 // ─── shared DB lifecycle ─────────────────────────────────────────────
 
 let sqlite: Database.Database;
+// biome-ignore lint/suspicious/noExplicitAny: drizzle wrapper type irrelevant to tests
+let db: any;
 
 before(() => {
   const result = createDatabase({ dbPath: ':memory:' });
   sqlite = result.sqlite;
+  db = result.db;
 });
 
 beforeEach(() => {
@@ -208,6 +211,7 @@ describe('runSync — empty', () => {
     client.enqueuePull({ changes: [], hasMore: false });
 
     const result = await runSync({
+      db,
       sqlite,
       client,
       workspaceId: WORKSPACE_ID,
@@ -258,6 +262,7 @@ describe('runSync — first run upsert', () => {
     });
 
     const result = await runSync({
+      db,
       sqlite,
       client,
       workspaceId: WORKSPACE_ID,
@@ -284,6 +289,7 @@ describe('runSync — protocol guard', () => {
 
     await assert.rejects(
       runSync({
+        db,
         sqlite,
         client,
         workspaceId: WORKSPACE_ID,
@@ -315,6 +321,7 @@ describe('runSync — push', () => {
     });
 
     const result = await runSync({
+      db,
       sqlite,
       client,
       workspaceId: WORKSPACE_ID,
@@ -352,6 +359,7 @@ describe('runSync — push', () => {
 
     await assert.rejects(
       runSync({
+        db,
         sqlite,
         client,
         workspaceId: WORKSPACE_ID,
@@ -382,6 +390,7 @@ describe('runSync — push', () => {
     });
 
     const result = await runSync({
+      db,
       sqlite,
       client,
       workspaceId: WORKSPACE_ID,
@@ -435,6 +444,7 @@ describe('runSync — pull apply note create', () => {
     });
 
     const result = await runSync({
+      db,
       sqlite,
       client,
       workspaceId: WORKSPACE_ID,
@@ -457,7 +467,7 @@ describe('runSync — pull apply note create', () => {
     assert.equal(b?.content, 'beta');
   });
 
-  it('tags field in create payload → skipped + log line', async () => {
+  it('tags field in create payload → applied to note_tags + FTS (P5-b §5.3)', async () => {
     const client = new FakeSkybridgeClient();
     client.enqueuePull({
       changes: [
@@ -478,23 +488,23 @@ describe('runSync — pull apply note create', () => {
       hasMore: false,
     });
 
-    const logger = collectingLogger();
     await runSync({
+      db,
       sqlite,
       client,
       workspaceId: WORKSPACE_ID,
       serverUrl: SERVER_URL,
       nowMs: fakeNow,
-      logger,
     });
     const nt = sqlite
       .prepare('SELECT count(*) AS n FROM note_tags WHERE note_id = ?')
       .get('n-tag') as { n: number };
-    assert.equal(nt.n, 0, 'tags table not touched in P5-a');
-    assert.ok(
-      logger.lines.some((l) => l.includes('skipped (P5-a)') && l.includes('n-tag')),
-      `expected skipped(P5-a) log, got: ${logger.lines.join('\n')}`,
-    );
+    assert.equal(nt.n, 1, 'tag association written');
+
+    const fts = sqlite
+      .prepare("SELECT rowid FROM notes_fts WHERE notes_fts MATCH 'foo'")
+      .all() as Array<{ rowid: number }>;
+    assert.equal(fts.length, 1, 'FTS tags_text updated');
   });
 });
 
@@ -516,6 +526,7 @@ describe('runSync — pull apply note update / LWW', () => {
       hasMore: false,
     });
     const result = await runSync({
+      db,
       sqlite,
       client,
       workspaceId: WORKSPACE_ID,
@@ -545,6 +556,7 @@ describe('runSync — pull apply note update / LWW', () => {
       hasMore: false,
     });
     const result = await runSync({
+      db,
       sqlite,
       client,
       workspaceId: WORKSPACE_ID,
@@ -571,6 +583,7 @@ describe('runSync — pull apply note update / LWW', () => {
       hasMore: false,
     });
     const result = await runSync({
+      db,
       sqlite,
       client,
       workspaceId: WORKSPACE_ID,
@@ -596,6 +609,7 @@ describe('runSync — pull apply note update / LWW', () => {
       hasMore: false,
     });
     const result = await runSync({
+      db,
       sqlite,
       client,
       workspaceId: WORKSPACE_ID,
@@ -628,6 +642,7 @@ describe('runSync — pull apply note update / LWW', () => {
       hasMore: false,
     });
     await runSync({
+      db,
       sqlite,
       client,
       workspaceId: WORKSPACE_ID,
@@ -663,6 +678,7 @@ describe('runSync — pull apply note update / LWW', () => {
       hasMore: false,
     });
     await runSync({
+      db,
       sqlite,
       client,
       workspaceId: WORKSPACE_ID,
@@ -690,6 +706,7 @@ describe('runSync — pull apply note update / LWW', () => {
       hasMore: false,
     });
     const result = await runSync({
+      db,
       sqlite,
       client,
       workspaceId: WORKSPACE_ID,
@@ -715,6 +732,7 @@ describe('runSync — pull apply note update / LWW', () => {
       hasMore: false,
     });
     const result = await runSync({
+      db,
       sqlite,
       client,
       workspaceId: WORKSPACE_ID,
@@ -740,6 +758,7 @@ describe('runSync — pull apply note update / LWW', () => {
       hasMore: false,
     });
     const result = await runSync({
+      db,
       sqlite,
       client,
       workspaceId: WORKSPACE_ID,
@@ -793,6 +812,7 @@ describe('runSync — self-replay skip', () => {
     });
 
     const result = await runSync({
+      db,
       sqlite,
       client,
       workspaceId: WORKSPACE_ID,
@@ -827,6 +847,7 @@ describe('runSync — pull skip non-note + metadata ops', () => {
       hasMore: false,
     });
     const result = await runSync({
+      db,
       sqlite,
       client,
       workspaceId: WORKSPACE_ID,
@@ -854,6 +875,7 @@ describe('runSync — pull skip non-note + metadata ops', () => {
       hasMore: false,
     });
     const result = await runSync({
+      db,
       sqlite,
       client,
       workspaceId: WORKSPACE_ID,
@@ -909,6 +931,7 @@ describe('runSync — pull validator failure', () => {
 
     await assert.rejects(
       runSync({
+        db,
         sqlite,
         client,
         workspaceId: WORKSPACE_ID,
@@ -965,6 +988,7 @@ describe('runSync — multi-batch pull', () => {
       hasMore: false,
     });
     const result = await runSync({
+      db,
       sqlite,
       client,
       workspaceId: WORKSPACE_ID,
@@ -1007,6 +1031,7 @@ describe('runSync — second-run cursor update', () => {
         hasMore: false,
       });
       await runSync({
+        db,
         sqlite,
         client,
         workspaceId: WORKSPACE_ID,
@@ -1036,6 +1061,7 @@ describe('runSync — second-run cursor update', () => {
       hasMore: false,
     });
     await runSync({
+      db,
       sqlite,
       client,
       workspaceId: WORKSPACE_ID,
@@ -1048,5 +1074,478 @@ describe('runSync — second-run cursor update', () => {
       n: number;
     };
     assert.equal(allCursors.n, 1);
+  });
+});
+
+// ─── P5-b §4.4: folder apply ─────────────────────────────────────────
+
+interface FolderRow {
+  id: string;
+  name: string;
+  parent_id: string | null;
+  position: number;
+  updated_at: number;
+  device_id: string | null;
+  local_device_uuid: string;
+}
+
+function readFolder(sqlite: Database.Database, id: string): FolderRow | undefined {
+  return sqlite.prepare('SELECT * FROM folders WHERE id = ?').get(id) as FolderRow | undefined;
+}
+
+function makeFolderChange(input: {
+  serverSeq: number;
+  cid?: string;
+  deviceId?: string;
+  entityId: string;
+  op: 'create' | 'update' | 'delete' | string;
+  payload: Record<string, unknown>;
+}): ServerChangeLike {
+  return {
+    serverSeq: input.serverSeq,
+    clientChangeId: input.cid ?? `cid-${input.serverSeq}`,
+    deviceId: input.deviceId ?? REMOTE_DEVICE,
+    entityType: 'folder',
+    entityId: input.entityId,
+    op: input.op,
+    payload: input.payload,
+  };
+}
+
+describe('runSync — pull apply folder (P5-b §4.4)', () => {
+  it('create inserts folder with remote device_id + local local_device_uuid', async () => {
+    const client = new FakeSkybridgeClient();
+    client.enqueuePull({
+      changes: [
+        makeFolderChange({
+          serverSeq: 1,
+          entityId: 'f-a',
+          op: 'create',
+          payload: {
+            name: 'Inbox',
+            parent_id: null,
+            position: 0,
+            created_at_ms: 1_000,
+            updated_at_ms: 1_000,
+          },
+        }),
+      ],
+      hasMore: false,
+    });
+    const result = await runSync({
+      db,
+      sqlite,
+      client,
+      workspaceId: WORKSPACE_ID,
+      serverUrl: SERVER_URL,
+      nowMs: fakeNow,
+    });
+    assert.equal(result.appliedTotal, 1);
+    const row = readFolder(sqlite, 'f-a');
+    assert.ok(row, 'folder row inserted');
+    assert.equal(row.name, 'Inbox');
+    assert.equal(row.device_id, REMOTE_DEVICE);
+    assert.equal(row.local_device_uuid, 'dev-local');
+  });
+
+  it('update sparse — preserves parent_id when not in payload', async () => {
+    // seed
+    sqlite
+      .prepare(
+        'INSERT INTO folders (id, name, parent_id, position, created_at, updated_at, local_device_uuid) VALUES (?, ?, ?, 0, 0, 100, ?)',
+      )
+      .run('f-p', 'Parent', null, 'dev-local');
+    sqlite
+      .prepare(
+        'INSERT INTO folders (id, name, parent_id, position, created_at, updated_at, local_device_uuid) VALUES (?, ?, ?, 0, 0, 100, ?)',
+      )
+      .run('f-c', 'Child', 'f-p', 'dev-local');
+
+    const client = new FakeSkybridgeClient();
+    client.enqueuePull({
+      changes: [
+        makeFolderChange({
+          serverSeq: 1,
+          entityId: 'f-c',
+          op: 'update',
+          payload: { updated_at_ms: 200, name: 'Renamed' },
+        }),
+      ],
+      hasMore: false,
+    });
+    await runSync({
+      db,
+      sqlite,
+      client,
+      workspaceId: WORKSPACE_ID,
+      serverUrl: SERVER_URL,
+      nowMs: fakeNow,
+    });
+    const row = readFolder(sqlite, 'f-c');
+    assert.equal(row?.name, 'Renamed');
+    assert.equal(row?.parent_id, 'f-p', 'parent_id preserved across sparse update');
+  });
+
+  it('delete with older local → deleted', async () => {
+    sqlite
+      .prepare(
+        'INSERT INTO folders (id, name, parent_id, position, created_at, updated_at, local_device_uuid) VALUES (?, ?, ?, 0, 0, 100, ?)',
+      )
+      .run('f-d', 'Doomed', null, 'dev-local');
+
+    const client = new FakeSkybridgeClient();
+    client.enqueuePull({
+      changes: [
+        makeFolderChange({
+          serverSeq: 1,
+          entityId: 'f-d',
+          op: 'delete',
+          payload: { updated_at_ms: 200 },
+        }),
+      ],
+      hasMore: false,
+    });
+    const result = await runSync({
+      db,
+      sqlite,
+      client,
+      workspaceId: WORKSPACE_ID,
+      serverUrl: SERVER_URL,
+      nowMs: fakeNow,
+    });
+    assert.equal(result.appliedTotal, 1);
+    assert.equal(readFolder(sqlite, 'f-d'), undefined);
+  });
+
+  it('delete with newer local → skipped', async () => {
+    sqlite
+      .prepare(
+        'INSERT INTO folders (id, name, parent_id, position, created_at, updated_at, local_device_uuid) VALUES (?, ?, ?, 0, 0, 500, ?)',
+      )
+      .run('f-keep', 'Keep', null, 'dev-local');
+
+    const client = new FakeSkybridgeClient();
+    client.enqueuePull({
+      changes: [
+        makeFolderChange({
+          serverSeq: 1,
+          entityId: 'f-keep',
+          op: 'delete',
+          payload: { updated_at_ms: 200 },
+        }),
+      ],
+      hasMore: false,
+    });
+    const logger = collectingLogger();
+    const result = await runSync({
+      db,
+      sqlite,
+      client,
+      workspaceId: WORKSPACE_ID,
+      serverUrl: SERVER_URL,
+      nowMs: fakeNow,
+      logger,
+    });
+    assert.equal(result.appliedTotal, 0);
+    assert.equal(result.skippedTotal, 1);
+    assert.ok(readFolder(sqlite, 'f-keep'), 'row preserved');
+    assert.ok(
+      logger.lines.some((l) => l.includes('apply folder f-keep delete') && l.includes('skipped')),
+      `expected delete-skip log, got: ${logger.lines.join('\n')}`,
+    );
+  });
+
+  it('LWW tie → local wins (skipped)', async () => {
+    sqlite
+      .prepare(
+        'INSERT INTO folders (id, name, parent_id, position, created_at, updated_at, local_device_uuid) VALUES (?, ?, ?, 0, 0, 1000, ?)',
+      )
+      .run('f-t', 'Local', null, 'dev-local');
+
+    const client = new FakeSkybridgeClient();
+    client.enqueuePull({
+      changes: [
+        makeFolderChange({
+          serverSeq: 1,
+          entityId: 'f-t',
+          op: 'update',
+          payload: { updated_at_ms: 1000, name: 'Remote' },
+        }),
+      ],
+      hasMore: false,
+    });
+    const result = await runSync({
+      db,
+      sqlite,
+      client,
+      workspaceId: WORKSPACE_ID,
+      serverUrl: SERVER_URL,
+      nowMs: fakeNow,
+    });
+    assert.equal(result.skippedTotal, 1);
+    assert.equal(readFolder(sqlite, 'f-t')?.name, 'Local');
+  });
+});
+
+// ─── P5-b §4.6: conversation apply ───────────────────────────────────
+
+interface ConversationRow {
+  id: string;
+  title: string;
+  created_at: number;
+  updated_at: number;
+}
+
+interface MessageRow {
+  id: string;
+  conversation_id: string;
+  role: string;
+  content: string;
+  seq: number;
+}
+
+function makeConvoChange(input: {
+  serverSeq: number;
+  cid?: string;
+  deviceId?: string;
+  entityId: string;
+  op: 'append' | 'delete' | string;
+  payload: Record<string, unknown>;
+}): ServerChangeLike {
+  return {
+    serverSeq: input.serverSeq,
+    clientChangeId: input.cid ?? `cid-${input.serverSeq}`,
+    deviceId: input.deviceId ?? REMOTE_DEVICE,
+    entityType: 'conversation',
+    entityId: input.entityId,
+    op: input.op,
+    payload: input.payload,
+  };
+}
+
+const baseMsg = {
+  tool_calls: null,
+  tool_call_id: null,
+  is_error: null,
+  reasoning_content: null,
+  reasoning_signature: null,
+};
+
+describe('runSync — pull apply conversation (P5-b §4.6)', () => {
+  it('first append creates conversation + appends messages', async () => {
+    const client = new FakeSkybridgeClient();
+    client.enqueuePull({
+      changes: [
+        makeConvoChange({
+          serverSeq: 1,
+          entityId: 'conv-1',
+          op: 'append',
+          payload: {
+            messages: [
+              { role: 'user', content: 'hi', ...baseMsg },
+              { role: 'assistant', content: 'hello', ...baseMsg },
+            ],
+            applied_at_ms: 5_000,
+            title: 'Greeting',
+            created_at_ms: 4_000,
+          },
+        }),
+      ],
+      hasMore: false,
+    });
+    const result = await runSync({
+      db,
+      sqlite,
+      client,
+      workspaceId: WORKSPACE_ID,
+      serverUrl: SERVER_URL,
+      nowMs: fakeNow,
+    });
+    assert.equal(result.appliedTotal, 1);
+    const convo = sqlite.prepare('SELECT * FROM ai_conversations WHERE id = ?').get('conv-1') as
+      | ConversationRow
+      | undefined;
+    assert.ok(convo);
+    assert.equal(convo.title, 'Greeting');
+    assert.equal(convo.created_at, 4_000);
+    assert.equal(convo.updated_at, 5_000);
+
+    const msgs = sqlite
+      .prepare('SELECT * FROM ai_messages WHERE conversation_id = ? ORDER BY seq')
+      .all('conv-1') as MessageRow[];
+    assert.equal(msgs.length, 2);
+    assert.equal(msgs[0]?.role, 'user');
+    assert.equal(msgs[0]?.seq, 1);
+    assert.equal(msgs[1]?.role, 'assistant');
+    assert.equal(msgs[1]?.seq, 2);
+  });
+
+  it('subsequent append continues seq from local max', async () => {
+    // first append
+    const c1 = new FakeSkybridgeClient();
+    c1.enqueuePull({
+      changes: [
+        makeConvoChange({
+          serverSeq: 1,
+          entityId: 'conv-x',
+          op: 'append',
+          payload: {
+            messages: [{ role: 'user', content: 'a', ...baseMsg }],
+            applied_at_ms: 1_000,
+            title: 'T',
+            created_at_ms: 0,
+          },
+        }),
+      ],
+      hasMore: false,
+    });
+    await runSync({
+      db,
+      sqlite,
+      client: c1,
+      workspaceId: WORKSPACE_ID,
+      serverUrl: SERVER_URL,
+      nowMs: fakeNow,
+    });
+
+    // second append (no title)
+    const c2 = new FakeSkybridgeClient();
+    c2.enqueuePull({
+      changes: [
+        makeConvoChange({
+          serverSeq: 2,
+          entityId: 'conv-x',
+          op: 'append',
+          payload: {
+            messages: [
+              { role: 'assistant', content: 'b', ...baseMsg },
+              { role: 'user', content: 'c', ...baseMsg },
+            ],
+            applied_at_ms: 2_000,
+          },
+        }),
+      ],
+      hasMore: false,
+    });
+    await runSync({
+      db,
+      sqlite,
+      client: c2,
+      workspaceId: WORKSPACE_ID,
+      serverUrl: SERVER_URL,
+      nowMs: fakeNow,
+    });
+
+    const msgs = sqlite
+      .prepare('SELECT seq, role, content FROM ai_messages WHERE conversation_id = ? ORDER BY seq')
+      .all('conv-x') as Array<{ seq: number; role: string; content: string }>;
+    assert.equal(msgs.length, 3);
+    assert.deepEqual(
+      msgs.map((m) => m.seq),
+      [1, 2, 3],
+    );
+    assert.equal(msgs[2]?.content, 'c');
+
+    const convo = sqlite
+      .prepare('SELECT title, updated_at FROM ai_conversations WHERE id = ?')
+      .get('conv-x') as { title: string; updated_at: number };
+    assert.equal(convo.title, 'T', 'title preserved on subsequent append');
+    assert.equal(convo.updated_at, 2_000);
+  });
+
+  it('delete cascades messages via FK', async () => {
+    // seed via append
+    const c1 = new FakeSkybridgeClient();
+    c1.enqueuePull({
+      changes: [
+        makeConvoChange({
+          serverSeq: 1,
+          entityId: 'conv-d',
+          op: 'append',
+          payload: {
+            messages: [{ role: 'user', content: 'a', ...baseMsg }],
+            applied_at_ms: 1_000,
+            title: 'T',
+            created_at_ms: 0,
+          },
+        }),
+      ],
+      hasMore: false,
+    });
+    await runSync({
+      db,
+      sqlite,
+      client: c1,
+      workspaceId: WORKSPACE_ID,
+      serverUrl: SERVER_URL,
+      nowMs: fakeNow,
+    });
+
+    const c2 = new FakeSkybridgeClient();
+    c2.enqueuePull({
+      changes: [
+        makeConvoChange({
+          serverSeq: 2,
+          entityId: 'conv-d',
+          op: 'delete',
+          payload: {},
+        }),
+      ],
+      hasMore: false,
+    });
+    const result = await runSync({
+      db,
+      sqlite,
+      client: c2,
+      workspaceId: WORKSPACE_ID,
+      serverUrl: SERVER_URL,
+      nowMs: fakeNow,
+    });
+    assert.equal(result.appliedTotal, 1);
+
+    const convo = sqlite.prepare('SELECT 1 FROM ai_conversations WHERE id = ?').get('conv-d');
+    assert.equal(convo, undefined);
+    const msgs = sqlite
+      .prepare('SELECT count(*) AS n FROM ai_messages WHERE conversation_id = ?')
+      .get('conv-d') as { n: number };
+    assert.equal(msgs.n, 0, 'FK cascade clears messages');
+  });
+});
+
+// ─── router (unknown entity type) ────────────────────────────────────
+
+describe('runSync — router (P5-b §4.7)', () => {
+  it('unknown entity_type → skipped + log + cursor advances', async () => {
+    const client = new FakeSkybridgeClient();
+    client.enqueuePull({
+      changes: [
+        {
+          serverSeq: 1,
+          clientChangeId: 'cid-unk',
+          deviceId: REMOTE_DEVICE,
+          entityType: 'tag',
+          entityId: 't-1',
+          op: 'create',
+          payload: { updated_at_ms: 1_000 },
+        },
+      ],
+      hasMore: false,
+    });
+    const logger = collectingLogger();
+    const result = await runSync({
+      db,
+      sqlite,
+      client,
+      workspaceId: WORKSPACE_ID,
+      serverUrl: SERVER_URL,
+      nowMs: fakeNow,
+      logger,
+    });
+    assert.equal(result.skippedTotal, 1);
+    assert.equal(result.cursorAfter, 1);
+    assert.ok(
+      logger.lines.some((l) => l.includes('unknown entity') && l.includes('type=tag')),
+      `expected unknown-entity log, got: ${logger.lines.join('\n')}`,
+    );
   });
 });

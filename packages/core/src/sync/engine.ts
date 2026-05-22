@@ -24,11 +24,26 @@
  */
 
 import type Database from 'better-sqlite3';
+import type { OwlDatabase } from '../db/index.js';
 import { contentHash } from '../notes/hash.js';
+import { syncNoteTags } from '../notes/tags.js';
+import { syncReminders } from '../reminders/index.js';
+import type { ParsedTag } from '../tags/parser.js';
 import { readLocalDeviceUuid } from './changes.js';
+import {
+  type ConversationApplyPayload,
+  ConversationPayloadInvalidError,
+  parseConversationPayload,
+} from './payloads/conversation.js';
+import {
+  type FolderApplyPayload,
+  FolderPayloadInvalidError,
+  parseFolderPayload,
+} from './payloads/folder.js';
 import {
   type NoteApplyPayload,
   NotePayloadInvalidError,
+  type NoteTag,
   parseNotePayload,
 } from './payloads/note.js';
 
@@ -90,6 +105,8 @@ export interface RunSyncLogger {
 }
 
 export interface RunSyncDeps {
+  /** P5-b §5.2: drizzle wrapper needed by syncNoteTags / syncReminders during note apply. */
+  db: OwlDatabase;
   sqlite: Database.Database;
   client: SkybridgeClientLike;
   workspaceId: string;
@@ -179,11 +196,22 @@ function readLocalUpdatedAt(sqlite: Database.Database, id: string): number | nul
   return row ? row.updated_at : null;
 }
 
+/**
+ * Map a payload `NoteTag[]` (snake_case wire shape, P5-b validated against
+ * the parser.ts enum) into the `ParsedTag[]` shape `syncNoteTags` consumes.
+ * `tag_value: null` collapses to `''` to satisfy ParsedTag's non-null
+ * field; downstream `notes_fts.tags_text` already filters by tag_type so
+ * empty values for `/alarm` etc. don't pollute search.
+ */
+function payloadTagsToParsed(tags: readonly NoteTag[]): ParsedTag[] {
+  return tags.map((t) => ({ tagType: t.tag_type, tagValue: t.tag_value ?? '' }));
+}
+
 function applyNoteCreate(
+  db: OwlDatabase,
   sqlite: Database.Database,
   c: ServerChangeLike,
   body: Extract<NoteApplyPayload, { op: 'create' }>['body'],
-  logger: RunSyncLogger,
 ): ApplyOutcome {
   // content_hash + device_id 全部由 apply 端派生（remote payload 不带 device，
   // 见 notes/index.ts:387 注释）。
@@ -214,19 +242,17 @@ function applyNoteCreate(
       c.deviceId,
       localUuid,
     );
-  if (Array.isArray(body.tags) && body.tags.length > 0) {
-    logger.info(
-      `[sync] apply note ${c.entityId} create — tags field present in payload (size ${body.tags.length}), skipped (P5-a)`,
-    );
-  }
+  // P5-b §5.3: tags / FTS / reminder_status apply for real now.
+  syncNoteTags(db, sqlite, c.entityId, payloadTagsToParsed(body.tags));
+  syncReminders(db, sqlite, c.entityId);
   return 'applied';
 }
 
 function applyNoteUpdate(
+  db: OwlDatabase,
   sqlite: Database.Database,
   c: ServerChangeLike,
   body: Extract<NoteApplyPayload, { op: 'update' }>['body'],
-  logger: RunSyncLogger,
 ): ApplyOutcome {
   // P5-b: apply 行 local_device_uuid 永远绑本机；device_id 写远端来源。
   const sets: string[] = ['updated_at = ?', 'device_id = ?', 'local_device_uuid = ?'];
@@ -245,11 +271,10 @@ function applyNoteUpdate(
   const r = sqlite
     .prepare(`UPDATE notes SET ${sets.join(', ')} WHERE id = ?`)
     .run(...(vals as never[]));
-  if (body.tags !== undefined) {
-    const size = Array.isArray(body.tags) ? body.tags.length : 0;
-    logger.info(
-      `[sync] apply note ${c.entityId} update — tags field present in payload (size ${size}), skipped (P5-a)`,
-    );
+  // P5-b §5.3: sparse update — only touch tag relations when payload carries `tags`.
+  if (body.tags !== undefined && r.changes > 0) {
+    syncNoteTags(db, sqlite, c.entityId, payloadTagsToParsed(body.tags));
+    syncReminders(db, sqlite, c.entityId);
   }
   return r.changes > 0 ? 'applied' : 'skipped';
 }
@@ -300,6 +325,7 @@ function applyNoteDelete(
 }
 
 function applyNoteChange(
+  db: OwlDatabase,
   sqlite: Database.Database,
   c: ServerChangeLike,
   payload: NoteApplyPayload,
@@ -334,9 +360,215 @@ function applyNoteChange(
     return 'skipped';
   }
 
-  if (payload.op === 'create') return applyNoteCreate(sqlite, c, payload.body, logger);
-  if (payload.op === 'update') return applyNoteUpdate(sqlite, c, payload.body, logger);
+  if (payload.op === 'create') return applyNoteCreate(db, sqlite, c, payload.body);
+  if (payload.op === 'update') return applyNoteUpdate(db, sqlite, c, payload.body);
   return applyNoteTrashOrRestore(sqlite, c, payload.body);
+}
+
+// ─── folder apply (P5-b §4.4) ───────────────────────────────────────
+
+function readLocalFolderUpdatedAt(sqlite: Database.Database, id: string): number | null {
+  const row = sqlite.prepare('SELECT updated_at FROM folders WHERE id = ?').get(id) as
+    | { updated_at: number }
+    | undefined;
+  return row ? row.updated_at : null;
+}
+
+function applyFolderCreate(
+  sqlite: Database.Database,
+  c: ServerChangeLike,
+  body: Extract<FolderApplyPayload, { op: 'create' }>['body'],
+): ApplyOutcome {
+  const localUuid = readLocalDeviceUuid(sqlite);
+  sqlite
+    .prepare(
+      `INSERT INTO folders (id, name, parent_id, position, created_at, updated_at,
+                            device_id, local_device_uuid)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET
+         name              = excluded.name,
+         parent_id         = excluded.parent_id,
+         position          = excluded.position,
+         updated_at        = excluded.updated_at,
+         device_id         = excluded.device_id,
+         local_device_uuid = excluded.local_device_uuid`,
+    )
+    .run(
+      c.entityId,
+      body.name,
+      body.parent_id,
+      body.position,
+      body.created_at_ms,
+      body.updated_at_ms,
+      c.deviceId,
+      localUuid,
+    );
+  return 'applied';
+}
+
+function applyFolderUpdate(
+  sqlite: Database.Database,
+  c: ServerChangeLike,
+  body: Extract<FolderApplyPayload, { op: 'update' }>['body'],
+): ApplyOutcome {
+  // P5-b §4.4: sparse update — only touch the columns the caller asked to
+  // change, otherwise an absent `parent_id` would clobber the existing
+  // parent with NULL via an integer-style upsert.
+  const sets: string[] = ['updated_at = ?', 'device_id = ?', 'local_device_uuid = ?'];
+  const vals: unknown[] = [body.updated_at_ms, c.deviceId, readLocalDeviceUuid(sqlite)];
+  if (body.name !== undefined) {
+    sets.push('name = ?');
+    vals.push(body.name);
+  }
+  if (body.parent_id !== undefined) {
+    sets.push('parent_id = ?');
+    vals.push(body.parent_id);
+  }
+  if (body.position !== undefined) {
+    sets.push('position = ?');
+    vals.push(body.position);
+  }
+  vals.push(c.entityId);
+  const r = sqlite
+    .prepare(`UPDATE folders SET ${sets.join(', ')} WHERE id = ?`)
+    .run(...(vals as never[]));
+  return r.changes > 0 ? 'applied' : 'skipped';
+}
+
+function applyFolderDelete(
+  sqlite: Database.Database,
+  c: ServerChangeLike,
+  body: Extract<FolderApplyPayload, { op: 'delete' }>['body'],
+  localTs: number,
+  logger: RunSyncLogger,
+): ApplyOutcome {
+  if (localTs > body.updated_at_ms) {
+    logger.info(
+      `[sync] apply folder ${c.entityId} delete — local newer (${localTs} > ${body.updated_at_ms}), skipped`,
+    );
+    return 'skipped';
+  }
+  const r = sqlite.prepare('DELETE FROM folders WHERE id = ?').run(c.entityId);
+  return r.changes > 0 ? 'applied' : 'skipped';
+}
+
+function applyFolderChange(
+  sqlite: Database.Database,
+  c: ServerChangeLike,
+  payload: FolderApplyPayload,
+  logger: RunSyncLogger,
+): ApplyOutcome {
+  if (isSelfReplay(sqlite, c.clientChangeId)) return 'skipped';
+
+  const localTsRaw = readLocalFolderUpdatedAt(sqlite, c.entityId);
+  const localExists = localTsRaw !== null;
+  const localTs = localTsRaw ?? 0;
+  const remoteTs = payload.body.updated_at_ms;
+
+  if (payload.op === 'delete') {
+    if (!localExists) return 'skipped';
+    return applyFolderDelete(sqlite, c, payload.body, localTs, logger);
+  }
+
+  if (!localExists && payload.op !== 'create') {
+    logger.info(`[sync] apply folder ${c.entityId} ${payload.op} — local row missing, skipped`);
+    return 'skipped';
+  }
+
+  if (localExists && localTs >= remoteTs) {
+    logger.info(
+      `[sync] apply folder ${c.entityId} ${payload.op} — LWW skip (local=${localTs} >= remote=${remoteTs})`,
+    );
+    return 'skipped';
+  }
+
+  if (payload.op === 'create') return applyFolderCreate(sqlite, c, payload.body);
+  return applyFolderUpdate(sqlite, c, payload.body);
+}
+
+// ─── conversation apply (P5-b §4.6) ─────────────────────────────────
+
+function applyConversationAppend(
+  sqlite: Database.Database,
+  c: ServerChangeLike,
+  body: Extract<ConversationApplyPayload, { op: 'append' }>['body'],
+): ApplyOutcome {
+  // First append carries title + created_at_ms; subsequent appends don't.
+  // ai_conversations: insert if missing, otherwise just bump updated_at.
+  const existing = sqlite
+    .prepare('SELECT 1 AS one FROM ai_conversations WHERE id = ?')
+    .get(c.entityId) as { one: number } | undefined;
+  if (!existing) {
+    const title = body.title ?? '新对话';
+    const createdAt = body.created_at_ms ?? body.applied_at_ms;
+    sqlite
+      .prepare(
+        'INSERT INTO ai_conversations (id, title, created_at, updated_at) VALUES (?, ?, ?, ?)',
+      )
+      .run(c.entityId, title, createdAt, body.applied_at_ms);
+  } else {
+    sqlite
+      .prepare('UPDATE ai_conversations SET updated_at = ? WHERE id = ?')
+      .run(body.applied_at_ms, c.entityId);
+  }
+
+  // Append the messages at the tail. seq continues from the local max so
+  // mixed origins from multiple devices keep their server_seq ordering;
+  // P5-b §4.6 explicitly does not deduplicate message rows.
+  const seqRow = sqlite
+    .prepare('SELECT COALESCE(MAX(seq), 0) AS m FROM ai_messages WHERE conversation_id = ?')
+    .get(c.entityId) as { m: number };
+  let seq = seqRow.m;
+  const insert = sqlite.prepare(
+    `INSERT INTO ai_messages
+        (id, conversation_id, role, content, tool_calls, tool_call_id,
+         is_error, reasoning_content, reasoning_signature, created_at, seq)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  );
+  for (const m of body.messages) {
+    seq += 1;
+    insert.run(
+      cryptoRandomId(),
+      c.entityId,
+      m.role,
+      m.content,
+      m.tool_calls,
+      m.tool_call_id,
+      m.is_error,
+      m.reasoning_content,
+      m.reasoning_signature,
+      body.applied_at_ms,
+      seq,
+    );
+  }
+  return 'applied';
+}
+
+function applyConversationDelete(sqlite: Database.Database, c: ServerChangeLike): ApplyOutcome {
+  const r = sqlite.prepare('DELETE FROM ai_conversations WHERE id = ?').run(c.entityId);
+  return r.changes > 0 ? 'applied' : 'skipped';
+}
+
+function applyConversationChange(
+  sqlite: Database.Database,
+  c: ServerChangeLike,
+  payload: ConversationApplyPayload,
+): ApplyOutcome {
+  if (isSelfReplay(sqlite, c.clientChangeId)) return 'skipped';
+  if (payload.op === 'delete') return applyConversationDelete(sqlite, c);
+  return applyConversationAppend(sqlite, c, payload.body);
+}
+
+/**
+ * Crypto-random 32-char hex id for `ai_messages.id`. Lazy import so the
+ * core build doesn't pull node:crypto into bundlers that flag it.
+ */
+function cryptoRandomId(): string {
+  const bytes = new Uint8Array(16);
+  globalThis.crypto.getRandomValues(bytes);
+  let out = '';
+  for (const b of bytes) out += b.toString(16).padStart(2, '0');
+  return out;
 }
 
 // ─── outbox row shape (read-only) ───────────────────────────────────
@@ -363,18 +595,37 @@ function hasUpdatedAtMs(payload: unknown): payload is Record<string, unknown> {
 }
 
 function applyOneChange(
+  db: OwlDatabase,
   sqlite: Database.Database,
   change: ServerChangeLike,
   logger: RunSyncLogger,
 ): ApplyOutcome {
-  if (change.entityType !== 'note') {
-    logger.info(
-      `[sync] pull skip non-note entity type=${change.entityType} id=${change.entityId} seq=${change.serverSeq}`,
-    );
-    return 'skipped';
+  switch (change.entityType) {
+    case 'note':
+      return applyOneNoteChange(db, sqlite, change, logger);
+    case 'folder':
+      return applyOneFolderChange(sqlite, change, logger);
+    case 'conversation':
+      // conversation/delete carries no updated_at_ms (intentionally — append-only
+      // entity, ordering is by server_seq). conversation/append carries
+      // `applied_at_ms` instead. Both are fine; we don't gate on updated_at_ms here.
+      return applyOneConversationChange(sqlite, change);
+    default:
+      logger.info(
+        `[sync] pull skip unknown entity type=${change.entityType} id=${change.entityId} seq=${change.serverSeq}`,
+      );
+      return 'skipped';
   }
+}
+
+function applyOneNoteChange(
+  db: OwlDatabase,
+  sqlite: Database.Database,
+  change: ServerChangeLike,
+  logger: RunSyncLogger,
+): ApplyOutcome {
   if (!hasUpdatedAtMs(change.payload)) {
-    // metadata op (pin / reorder) — apply is out of P5-a scope
+    // metadata op (pin / reorder) — apply is out of P5-b scope
     logger.info(
       `[sync] pull skip note metadata op (no updated_at_ms) id=${change.entityId} op=${change.op} seq=${change.serverSeq}`,
     );
@@ -382,7 +633,34 @@ function applyOneChange(
   }
   // Validator throws NotePayloadInvalidError → rolls back the batch
   const parsed = parseNotePayload(change.op, change.payload);
-  return applyNoteChange(sqlite, change, parsed, logger);
+  return applyNoteChange(db, sqlite, change, parsed, logger);
+}
+
+function applyOneFolderChange(
+  sqlite: Database.Database,
+  change: ServerChangeLike,
+  logger: RunSyncLogger,
+): ApplyOutcome {
+  if (!hasUpdatedAtMs(change.payload)) {
+    // Folder reorder rows go through op='update' but don't include
+    // updated_at_ms in some legacy paths; defensive skip mirrors note path.
+    logger.info(
+      `[sync] pull skip folder metadata op (no updated_at_ms) id=${change.entityId} op=${change.op} seq=${change.serverSeq}`,
+    );
+    return 'skipped';
+  }
+  // Validator throws FolderPayloadInvalidError → rolls back the batch
+  const parsed = parseFolderPayload(change.op, change.payload);
+  return applyFolderChange(sqlite, change, parsed, logger);
+}
+
+function applyOneConversationChange(
+  sqlite: Database.Database,
+  change: ServerChangeLike,
+): ApplyOutcome {
+  // Validator throws ConversationPayloadInvalidError → rolls back the batch
+  const parsed = parseConversationPayload(change.op, change.payload);
+  return applyConversationChange(sqlite, change, parsed);
 }
 
 // ─── runSync ────────────────────────────────────────────────────────
@@ -405,7 +683,7 @@ const NOOP_LOGGER: RunSyncLogger = {
  * fire two rounds in parallel — see design §7.5.
  */
 export async function runSync(deps: RunSyncDeps): Promise<RunSyncResult> {
-  const { sqlite, client, workspaceId, serverUrl } = deps;
+  const { db, sqlite, client, workspaceId, serverUrl } = deps;
   const now = deps.nowMs ?? Date.now;
   const logger = deps.logger ?? NOOP_LOGGER;
 
@@ -443,7 +721,7 @@ export async function runSync(deps: RunSyncDeps): Promise<RunSyncResult> {
 
     const runBatch = sqlite.transaction(() => {
       for (const change of pulled.changes) {
-        const outcome = applyOneChange(sqlite, change, logger);
+        const outcome = applyOneChange(db, sqlite, change, logger);
         if (outcome === 'applied') batchApplied += 1;
         else batchSkipped += 1;
       }
@@ -522,4 +800,4 @@ export async function runSync(deps: RunSyncDeps): Promise<RunSyncResult> {
   };
 }
 
-export { NotePayloadInvalidError };
+export { ConversationPayloadInvalidError, FolderPayloadInvalidError, NotePayloadInvalidError };
