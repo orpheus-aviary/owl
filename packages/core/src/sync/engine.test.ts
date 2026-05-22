@@ -471,7 +471,7 @@ describe('runSync — pull apply note create', () => {
             trash_level: 0,
             created_at_ms: 1_000,
             updated_at_ms: 1_000,
-            tags: [{ tag_type: 'hashtag', tag_value: 'foo' }],
+            tags: [{ tag_type: '#', tag_value: 'foo' }],
           },
         }),
       ],

@@ -15,7 +15,7 @@ describe('parseNotePayload — create (5 fields + tags)', () => {
       updated_at_ms: 1_700_000_000_000,
       tags: [
         { tag_type: '#', tag_value: 'important' },
-        { tag_type: '/time:', tag_value: '2026-01-01' },
+        { tag_type: '/time', tag_value: '2026-01-01' },
       ],
     };
     const parsed = parseNotePayload('create', raw);
@@ -144,6 +144,37 @@ describe('parseNotePayload — create (5 fields + tags)', () => {
         }),
       /tag_type must be a string/,
     );
+  });
+
+  it('rejects tag_type not in TAG_TYPES (P5-b §4.2)', () => {
+    assert.throws(
+      () =>
+        parseNotePayload('create', {
+          content: 'x',
+          folder_id: null,
+          trash_level: 0,
+          created_at_ms: 1,
+          updated_at_ms: 1,
+          tags: [{ tag_type: '@todo', tag_value: 'bogus' }],
+        }),
+      /tag_type "@todo" not in TAG_TYPES/,
+    );
+  });
+
+  it('accepts each TAG_TYPES enum value', () => {
+    const ok = ['#', '/time', '/alarm', '/daily', '/weekly', '/monthly', '/yearly'] as const;
+    for (const tt of ok) {
+      const parsed = parseNotePayload('create', {
+        content: 'x',
+        folder_id: null,
+        trash_level: 0,
+        created_at_ms: 1,
+        updated_at_ms: 1,
+        tags: [{ tag_type: tt, tag_value: 'v' }],
+      });
+      if (parsed.op !== 'create') throw new Error('narrowing failed');
+      assert.equal(parsed.body.tags[0]?.tag_type, tt);
+    }
   });
 });
 

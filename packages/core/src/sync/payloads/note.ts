@@ -19,8 +19,11 @@
  * `packages/core/src/notes/index.ts` — see design doc §3.3 / §6.4.
  */
 
+import { TAG_TYPES, type TagType } from '../../tags/parser.js';
+
 export interface NoteTag {
-  tag_type: string;
+  /** P5-b §4.2: collapse to the parser's enum so apply path can call syncNoteTags directly. */
+  tag_type: TagType;
   tag_value: string | null;
 }
 
@@ -155,9 +158,12 @@ function requireTagsArray(
 
 function parseTag(op: string, raw: unknown, t: unknown, path: string): NoteTag {
   if (!isObject(t)) fail(op, `${path} must be an object`, raw);
-  const tag_type = requireString(op, raw, t, 'tag_type');
+  const tag_type_raw = requireString(op, raw, t, 'tag_type');
+  if (!(TAG_TYPES as readonly string[]).includes(tag_type_raw)) {
+    fail(op, `${path}.tag_type ${JSON.stringify(tag_type_raw)} not in TAG_TYPES`, raw);
+  }
   const tag_value = requireNullableString(op, raw, t, 'tag_value');
-  return { tag_type, tag_value };
+  return { tag_type: tag_type_raw as TagType, tag_value };
 }
 
 // ─── per-op parsers ──────────────────────────────────────────────────────
