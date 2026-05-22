@@ -1,7 +1,6 @@
 import type Database from 'better-sqlite3';
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import { v4 as uuidv4 } from 'uuid';
-import { updateFtsTagsText } from '../db/fts.js';
 import type { OwlDatabase } from '../db/index.js';
 import { noteTags, notes, tags } from '../db/schema.js';
 import { SPECIAL_NOTES } from '../db/special-notes.js';
@@ -10,6 +9,7 @@ import { emitSyncChange, readLocalDeviceUuid } from '../sync/changes.js';
 import type { ParsedTag } from '../tags/parser.js';
 import { AlreadyTrashedError, VersionMismatchError } from './errors.js';
 import { contentHash } from './hash.js';
+import { syncNoteTags } from './tags.js';
 
 const SPECIAL_NOTE_IDS: ReadonlySet<string> = new Set(Object.values(SPECIAL_NOTES));
 
@@ -608,46 +608,10 @@ export function batchPermanentDeleteNotes(
   return count;
 }
 
-// ─── Tag Sync ──────────────────────────────────────────
-
-function syncNoteTags(
-  db: OwlDatabase,
-  sqlite: Database.Database,
-  noteId: string,
-  parsedTags: ParsedTag[],
-): void {
-  // Remove existing associations
-  db.delete(noteTags).where(eq(noteTags.noteId, noteId)).run();
-
-  // Upsert tags and create associations
-  for (const pt of parsedTags) {
-    // Find or create tag
-    let tag = db
-      .select()
-      .from(tags)
-      .where(and(eq(tags.tagType, pt.tagType), eq(tags.tagValue, pt.tagValue)))
-      .get();
-
-    if (!tag) {
-      const tagId = uuidv4();
-      db.insert(tags).values({ id: tagId, tagType: pt.tagType, tagValue: pt.tagValue }).run();
-      tag = { id: tagId, tagType: pt.tagType, tagValue: pt.tagValue };
-    }
-
-    db.insert(noteTags).values({ noteId, tagId: tag.id }).onConflictDoNothing().run();
-  }
-
-  // Update FTS tags_text
-  const noteRow = sqlite.prepare('SELECT rowid FROM notes WHERE id = ?').get(noteId) as
-    | { rowid: number }
-    | undefined;
-  if (noteRow) {
-    const hashTags = parsedTags.filter((t) => t.tagType === '#').map((t) => t.tagValue);
-    updateFtsTagsText(sqlite, noteRow.rowid, hashTags.join(' '));
-  }
-}
+// `syncNoteTags` lives in ./tags.ts (P5-b §5.1) so the sync apply path can reuse it.
 
 export { contentHash } from './hash.js';
+export { syncNoteTags } from './tags.js';
 
 // ─── P3.4-a: pin / reorder helpers ─────────────────────
 
