@@ -224,11 +224,15 @@ export function deleteFolder(db: OwlDatabase, sqlite: Database.Database, id: str
       const result = db.delete(folders).where(eq(folders.id, id)).run();
       if (result.changes === 0) return false;
 
+      // P5-b §4.3: folder/delete payload carries updated_at_ms as the LWW
+      // anchor — apply side compares this against local folders.updated_at to
+      // decide whether to honour the delete or defer (mirrors note/delete
+      // which got the same treatment in P5-a Step 0b).
       emitSyncChange(sqlite, {
         entityType: 'folder',
         entityId: id,
         op: 'delete',
-        payload: {},
+        payload: { updated_at_ms: nowMs },
         nowMs,
       });
 

@@ -360,6 +360,10 @@ describe('sync_changes emission — folders', () => {
     assert.equal(updates.length, 2);
     assert.equal(deletes.length, 1);
     assert.equal(deletes[0].entity_id, mid.id);
+    // P5-b §4.3: folder/delete payload now carries updated_at_ms as LWW anchor.
+    const deletePayload = JSON.parse(deletes[0].payload) as Record<string, unknown>;
+    assert.deepEqual(Object.keys(deletePayload).sort(), ['updated_at_ms']);
+    assert.equal(typeof deletePayload.updated_at_ms, 'number');
     for (const u of updates) {
       const p = JSON.parse(u.payload) as Record<string, unknown>;
       assert.equal(p.parent_id, root.id, 'children re-parented to grandparent');
