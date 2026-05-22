@@ -25,6 +25,7 @@
 
 import type Database from 'better-sqlite3';
 import { contentHash } from '../notes/hash.js';
+import { readLocalDeviceUuid } from './changes.js';
 import {
   type NoteApplyPayload,
   NotePayloadInvalidError,
@@ -186,17 +187,21 @@ function applyNoteCreate(
 ): ApplyOutcome {
   // content_hash + device_id 全部由 apply 端派生（remote payload 不带 device，
   // 见 notes/index.ts:387 注释）。
+  // P5-b: local_device_uuid 永远绑本机；device_id 写 ServerChange.deviceId（远端来源）。
+  const localUuid = readLocalDeviceUuid(sqlite);
   sqlite
     .prepare(
-      `INSERT INTO notes (id, folder_id, trash_level, created_at, updated_at, content, content_hash, device_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO notes (id, folder_id, trash_level, created_at, updated_at,
+                          content, content_hash, device_id, local_device_uuid)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET
-         folder_id    = excluded.folder_id,
-         trash_level  = excluded.trash_level,
-         updated_at   = excluded.updated_at,
-         content      = excluded.content,
-         content_hash = excluded.content_hash,
-         device_id    = excluded.device_id`,
+         folder_id         = excluded.folder_id,
+         trash_level       = excluded.trash_level,
+         updated_at        = excluded.updated_at,
+         content           = excluded.content,
+         content_hash      = excluded.content_hash,
+         device_id         = excluded.device_id,
+         local_device_uuid = excluded.local_device_uuid`,
     )
     .run(
       c.entityId,
@@ -207,6 +212,7 @@ function applyNoteCreate(
       body.content,
       contentHash(body.content),
       c.deviceId,
+      localUuid,
     );
   if (Array.isArray(body.tags) && body.tags.length > 0) {
     logger.info(
@@ -222,8 +228,9 @@ function applyNoteUpdate(
   body: Extract<NoteApplyPayload, { op: 'update' }>['body'],
   logger: RunSyncLogger,
 ): ApplyOutcome {
-  const sets: string[] = ['updated_at = ?', 'device_id = ?'];
-  const vals: unknown[] = [body.updated_at_ms, c.deviceId];
+  // P5-b: apply 行 local_device_uuid 永远绑本机；device_id 写远端来源。
+  const sets: string[] = ['updated_at = ?', 'device_id = ?', 'local_device_uuid = ?'];
+  const vals: unknown[] = [body.updated_at_ms, c.deviceId, readLocalDeviceUuid(sqlite)];
   if (body.content !== undefined) {
     sets.push('content = ?');
     vals.push(body.content);

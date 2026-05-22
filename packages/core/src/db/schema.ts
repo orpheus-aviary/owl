@@ -13,6 +13,9 @@ export const folders = sqliteTable('folders', {
   createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
   updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull(),
   deviceId: text('device_id'),
+  // P5-b §3.5: 本机视角的"行在哪台 owl 装着"。SQL 端 NOT NULL 由
+  // 0006 的 BEFORE INSERT / UPDATE 触发器兜底。
+  localDeviceUuid: text('local_device_uuid').notNull(),
 });
 
 // ─── Notes ─────────────────────────────────────────────
@@ -39,6 +42,9 @@ export const notes = sqliteTable('notes', {
   // Per-folder manual sort key. NULL until the user reorders notes in that
   // folder; first reorder materialises positions as 1000, 2000, 3000, ...
   position: real('position'),
+  // P5-b §3.5: 本机视角的"行在哪台 owl 装着"。SQL 端 NOT NULL 由
+  // 0006 的 BEFORE INSERT / UPDATE 触发器兜底。
+  localDeviceUuid: text('local_device_uuid').notNull(),
 });
 
 // ─── Tags ──────────────────────────────────────────────

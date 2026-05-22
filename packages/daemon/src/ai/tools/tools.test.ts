@@ -200,7 +200,7 @@ describe('AI tools (P2-7b)', () => {
       // Insert a folder via raw SQL (avoids needing the folders module here).
       sqlite
         .prepare(
-          'INSERT INTO folders (id, name, parent_id, position, created_at, updated_at) VALUES (?, ?, NULL, 0, ?, ?)',
+          "INSERT INTO folders (id, name, parent_id, position, created_at, updated_at, local_device_uuid) VALUES (?, ?, NULL, 0, ?, ?, 'test-dev')",
         )
         .run('folder-test-1', 'Test Folder', Date.now(), Date.now());
 

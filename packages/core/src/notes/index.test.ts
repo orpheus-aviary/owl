@@ -465,7 +465,7 @@ describe('listNotes — pin + position (P3.4-a)', () => {
   }): void {
     sqlite
       .prepare(
-        'INSERT INTO notes (id, folder_id, trash_level, created_at, updated_at, content, pinned_at, position) VALUES (?, ?, 0, ?, ?, ?, ?, ?)',
+        "INSERT INTO notes (id, folder_id, trash_level, created_at, updated_at, content, pinned_at, position, local_device_uuid) VALUES (?, ?, 0, ?, ?, ?, ?, ?, 'test-dev')",
       )
       .run(
         opts.id,
@@ -639,7 +639,7 @@ describe('reorderNotesInFolder (P3.4-a)', () => {
   function seedAt(id: string, folderId: string | null, updatedAt: number): void {
     sqlite
       .prepare(
-        'INSERT INTO notes (id, folder_id, trash_level, created_at, updated_at, content) VALUES (?, ?, 0, ?, ?, ?)',
+        "INSERT INTO notes (id, folder_id, trash_level, created_at, updated_at, content, local_device_uuid) VALUES (?, ?, 0, ?, ?, ?, 'test-dev')",
       )
       .run(id, folderId, updatedAt, updatedAt, `# ${id}`);
   }
@@ -681,7 +681,7 @@ describe('reorderNotesInFolder (P3.4-a)', () => {
     reset();
     sqlite
       .prepare(
-        "INSERT INTO folders (id, name, parent_id, position, created_at, updated_at) VALUES ('f1', 'F1', NULL, 0, 0, 0)",
+        "INSERT INTO folders (id, name, parent_id, position, created_at, updated_at, local_device_uuid) VALUES ('f1', 'F1', NULL, 0, 0, 0, 'test-dev')",
       )
       .run();
     seedAt('x', 'f1', 100);
@@ -726,7 +726,7 @@ describe('reorderNotesInFolder (P3.4-a)', () => {
     reset();
     sqlite
       .prepare(
-        "INSERT INTO folders (id, name, parent_id, position, created_at, updated_at) VALUES ('f1', 'F1', NULL, 0, 0, 0)",
+        "INSERT INTO folders (id, name, parent_id, position, created_at, updated_at, local_device_uuid) VALUES ('f1', 'F1', NULL, 0, 0, 0, 'test-dev')",
       )
       .run();
     seedAt('x', 'f1', 100);

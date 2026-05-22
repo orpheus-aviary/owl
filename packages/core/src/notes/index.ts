@@ -6,7 +6,7 @@ import type { OwlDatabase } from '../db/index.js';
 import { noteTags, notes, tags } from '../db/schema.js';
 import { SPECIAL_NOTES } from '../db/special-notes.js';
 import { getFolderSubtreeIds } from '../folders/index.js';
-import { emitSyncChange } from '../sync/changes.js';
+import { emitSyncChange, readLocalDeviceUuid } from '../sync/changes.js';
 import type { ParsedTag } from '../tags/parser.js';
 import { AlreadyTrashedError, VersionMismatchError } from './errors.js';
 import { contentHash } from './hash.js';
@@ -135,6 +135,7 @@ export function createNote(
           trashLevel: 0,
           deviceId: input.deviceId ?? null,
           contentHash: hash,
+          localDeviceUuid: readLocalDeviceUuid(sqlite),
         })
         .run();
 

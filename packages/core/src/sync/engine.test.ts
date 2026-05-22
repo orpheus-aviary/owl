@@ -96,8 +96,8 @@ function seedNote(
   sqlite
     .prepare(
       `INSERT INTO notes
-         (id, folder_id, trash_level, created_at, updated_at, content, content_hash, device_id)
-       VALUES (?, ?, ?, ?, ?, ?, NULL, ?)`,
+         (id, folder_id, trash_level, created_at, updated_at, content, content_hash, device_id, local_device_uuid)
+       VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?)`,
     )
     .run(
       id,
@@ -107,6 +107,7 @@ function seedNote(
       fields.updatedAt ?? 1_000,
       fields.content ?? 'seed',
       fields.deviceId ?? 'dev-local',
+      'dev-local',
     );
 }
 

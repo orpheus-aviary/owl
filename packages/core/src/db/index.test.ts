@@ -63,7 +63,13 @@ describe('FTS5 triggers', () => {
     const id = uuidv4();
     const now = new Date();
     db.insert(notes)
-      .values({ id, content: 'hello world test note', createdAt: now, updatedAt: now })
+      .values({
+        id,
+        content: 'hello world test note',
+        createdAt: now,
+        updatedAt: now,
+        localDeviceUuid: 'test-dev',
+      })
       .run();
 
     const results = sqlite
@@ -76,7 +82,13 @@ describe('FTS5 triggers', () => {
     const id = uuidv4();
     const now = new Date();
     db.insert(notes)
-      .values({ id, content: 'original content', createdAt: now, updatedAt: now })
+      .values({
+        id,
+        content: 'original content',
+        createdAt: now,
+        updatedAt: now,
+        localDeviceUuid: 'test-dev',
+      })
       .run();
 
     db.update(notes).set({ content: 'updated unique keyword' }).where(eq(notes.id, id)).run();
@@ -96,7 +108,13 @@ describe('FTS5 triggers', () => {
     const id = uuidv4();
     const now = new Date();
     db.insert(notes)
-      .values({ id, content: 'deletable searchterm', createdAt: now, updatedAt: now })
+      .values({
+        id,
+        content: 'deletable searchterm',
+        createdAt: now,
+        updatedAt: now,
+        localDeviceUuid: 'test-dev',
+      })
       .run();
 
     db.delete(notes).where(eq(notes.id, id)).run();
@@ -210,9 +228,24 @@ describe('foreign keys', () => {
     const noteId = uuidv4();
     const now = new Date();
 
-    db.insert(folders).values({ id: folderId, name: 'test', createdAt: now, updatedAt: now }).run();
+    db.insert(folders)
+      .values({
+        id: folderId,
+        name: 'test',
+        createdAt: now,
+        updatedAt: now,
+        localDeviceUuid: 'test-dev',
+      })
+      .run();
     db.insert(notes)
-      .values({ id: noteId, content: 'in folder', folderId, createdAt: now, updatedAt: now })
+      .values({
+        id: noteId,
+        content: 'in folder',
+        folderId,
+        createdAt: now,
+        updatedAt: now,
+        localDeviceUuid: 'test-dev',
+      })
       .run();
 
     db.delete(folders).where(eq(folders.id, folderId)).run();
@@ -228,7 +261,13 @@ describe('foreign keys', () => {
     const now = new Date();
 
     db.insert(notes)
-      .values({ id: noteId, content: 'tagged note', createdAt: now, updatedAt: now })
+      .values({
+        id: noteId,
+        content: 'tagged note',
+        createdAt: now,
+        updatedAt: now,
+        localDeviceUuid: 'test-dev',
+      })
       .run();
     db.insert(tags).values({ id: tagId, tagType: '#', tagValue: 'test' }).run();
     db.insert(noteTags).values({ noteId, tagId }).run();

@@ -3,7 +3,7 @@ import { asc, eq, sql } from 'drizzle-orm';
 import { v4 as uuidv4 } from 'uuid';
 import type { OwlDatabase } from '../db/index.js';
 import { folders } from '../db/schema.js';
-import { emitSyncChange } from '../sync/changes.js';
+import { emitSyncChange, readLocalDeviceUuid } from '../sync/changes.js';
 
 // ─── Types ─────────────────────────────────────────────
 
@@ -73,6 +73,7 @@ export function createFolder(
           createdAt: now,
           updatedAt: now,
           deviceId: input.deviceId ?? null,
+          localDeviceUuid: readLocalDeviceUuid(sqlite),
         })
         .run();
 

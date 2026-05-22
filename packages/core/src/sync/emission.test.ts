@@ -99,8 +99,8 @@ describe('sync_changes emission — notes', () => {
     // re-seed the same note row so subsequent calls see it
     sqlite
       .prepare(
-        `INSERT INTO notes (id, content, folder_id, trash_level, created_at, updated_at, content_hash)
-         VALUES (?, ?, NULL, 0, ?, ?, '')`,
+        `INSERT INTO notes (id, content, folder_id, trash_level, created_at, updated_at, content_hash, local_device_uuid)
+         VALUES (?, ?, NULL, 0, ?, ?, '', 'test-dev')`,
       )
       .run(note.id, 'orig', Date.now(), Date.now());
 
@@ -119,8 +119,8 @@ describe('sync_changes emission — notes', () => {
     clearAll(sqlite);
     sqlite
       .prepare(
-        `INSERT INTO notes (id, content, folder_id, trash_level, created_at, updated_at, content_hash)
-         VALUES (?, ?, NULL, 0, ?, ?, '')`,
+        `INSERT INTO notes (id, content, folder_id, trash_level, created_at, updated_at, content_hash, local_device_uuid)
+         VALUES (?, ?, NULL, 0, ?, ?, '', 'test-dev')`,
       )
       .run(note.id, 'doomed', Date.now(), Date.now());
 
@@ -179,8 +179,8 @@ describe('sync_changes emission — notes', () => {
     clearAll(sqlite);
     sqlite
       .prepare(
-        `INSERT INTO notes (id, content, folder_id, trash_level, created_at, updated_at, content_hash)
-         VALUES (?, ?, NULL, 0, ?, ?, ''), (?, ?, NULL, 0, ?, ?, '')`,
+        `INSERT INTO notes (id, content, folder_id, trash_level, created_at, updated_at, content_hash, local_device_uuid)
+         VALUES (?, ?, NULL, 0, ?, ?, '', 'test-dev'), (?, ?, NULL, 0, ?, ?, '', 'test-dev')`,
       )
       .run(a.id, 'a', Date.now(), Date.now(), b.id, 'b', Date.now(), Date.now());
 
@@ -202,8 +202,8 @@ describe('sync_changes emission — notes', () => {
     clearAll(sqlite);
     sqlite
       .prepare(
-        `INSERT INTO notes (id, content, folder_id, trash_level, created_at, updated_at, content_hash)
-         VALUES (?, ?, NULL, 0, ?, ?, '')`,
+        `INSERT INTO notes (id, content, folder_id, trash_level, created_at, updated_at, content_hash, local_device_uuid)
+         VALUES (?, ?, NULL, 0, ?, ?, '', 'test-dev')`,
       )
       .run(note.id, 'pinme', Date.now(), Date.now());
 
@@ -227,8 +227,8 @@ describe('sync_changes emission — notes', () => {
     const now = Date.now();
     sqlite
       .prepare(
-        `INSERT INTO notes (id, content, folder_id, trash_level, created_at, updated_at, content_hash)
-         VALUES (?, ?, NULL, 0, ?, ?, ''), (?, ?, NULL, 0, ?, ?, ''), (?, ?, NULL, 0, ?, ?, '')`,
+        `INSERT INTO notes (id, content, folder_id, trash_level, created_at, updated_at, content_hash, local_device_uuid)
+         VALUES (?, ?, NULL, 0, ?, ?, '', 'test-dev'), (?, ?, NULL, 0, ?, ?, '', 'test-dev'), (?, ?, NULL, 0, ?, ?, '', 'test-dev')`,
       )
       .run(a.id, 'a', now, now, b.id, 'b', now, now, c.id, 'c', now, now);
 
@@ -299,9 +299,9 @@ describe('sync_changes emission — folders', () => {
     clearAll(sqlite);
     sqlite
       .prepare(
-        'INSERT INTO folders (id, name, position, created_at, updated_at) VALUES (?, ?, 0, ?, ?)',
+        'INSERT INTO folders (id, name, position, created_at, updated_at, local_device_uuid) VALUES (?, ?, 0, ?, ?, ?)',
       )
-      .run(f.id, 'X', Date.now(), Date.now());
+      .run(f.id, 'X', Date.now(), Date.now(), 'test-dev');
 
     updateFolder(db, sqlite, f.id, { name: 'Y' });
     const row = lastChange(sqlite);
@@ -319,30 +319,35 @@ describe('sync_changes emission — folders', () => {
     const c2 = createFolder(db, sqlite, { name: 'C2', parentId: mid.id });
     clearAll(sqlite);
     const now = Date.now();
+    const dev = 'test-dev';
     sqlite
       .prepare(
-        'INSERT INTO folders (id, name, parent_id, position, created_at, updated_at) VALUES (?, ?, NULL, 0, ?, ?), (?, ?, ?, 0, ?, ?), (?, ?, ?, 0, ?, ?), (?, ?, ?, 0, ?, ?)',
+        'INSERT INTO folders (id, name, parent_id, position, created_at, updated_at, local_device_uuid) VALUES (?, ?, NULL, 0, ?, ?, ?), (?, ?, ?, 0, ?, ?, ?), (?, ?, ?, 0, ?, ?, ?), (?, ?, ?, 0, ?, ?, ?)',
       )
       .run(
         root.id,
         'Root',
         now,
         now,
+        dev,
         mid.id,
         'Mid',
         root.id,
         now,
         now,
+        dev,
         c1.id,
         'C1',
         mid.id,
         now,
         now,
+        dev,
         c2.id,
         'C2',
         mid.id,
         now,
         now,
+        dev,
       );
 
     deleteFolder(db, sqlite, mid.id);

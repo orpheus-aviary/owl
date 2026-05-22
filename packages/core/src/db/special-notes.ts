@@ -22,6 +22,13 @@ const SPECIAL_NOTE_DEFAULTS: Record<string, { content: string }> = {
  */
 export function ensureSpecialNotes(db: OwlDatabase): void {
   const now = new Date();
+  // P5-b: read local_device_uuid here rather than thread sqlite through —
+  // ensureDeviceId must have run by now (call order in daemon/cli.ts:80-81).
+  const meta = db.select().from(localMetadata).where(eq(localMetadata.key, 'device_uuid')).get();
+  const localDeviceUuid = meta?.value;
+  if (!localDeviceUuid) {
+    throw new Error('ensureSpecialNotes: call ensureDeviceId first');
+  }
   for (const [, id] of Object.entries(SPECIAL_NOTES)) {
     const existing = db.select().from(notes).where(eq(notes.id, id)).get();
     if (!existing) {
@@ -34,6 +41,7 @@ export function ensureSpecialNotes(db: OwlDatabase): void {
             createdAt: now,
             updatedAt: now,
             trashLevel: 0,
+            localDeviceUuid,
           })
           .run();
       }

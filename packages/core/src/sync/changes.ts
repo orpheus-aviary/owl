@@ -77,6 +77,16 @@ export function emitSyncChange(sqlite: Database.Database, args: EmitSyncChangeAr
   return clientChangeId;
 }
 
+/**
+ * Public form of {@link readOrInitDeviceId}, for mutation code paths that
+ * need to stamp `notes.local_device_uuid` / `folders.local_device_uuid`
+ * (P5-b §3.3). Always returns a non-empty UUID; safe-net inserts a fresh
+ * one if `local_metadata.device_uuid` is missing.
+ */
+export function readLocalDeviceUuid(sqlite: Database.Database): string {
+  return readOrInitDeviceId(sqlite);
+}
+
 function readOrInitDeviceId(sqlite: Database.Database): string {
   const row = sqlite.prepare("SELECT value FROM local_metadata WHERE key = 'device_uuid'").get() as
     | { value: string | null }

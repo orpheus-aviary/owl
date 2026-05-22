@@ -44,7 +44,7 @@ import { fileURLToPath } from 'node:url';
 import BetterSqlite3 from 'better-sqlite3';
 import { backupDatabase } from './backup.js';
 
-export const LATEST_KNOWN_VERSION = 5;
+export const LATEST_KNOWN_VERSION = 6;
 
 // ----- Errors ---------------------------------------------------------------
 
@@ -391,12 +391,15 @@ async function emitPhase(opts: MigrateOptions | undefined, phase: MigratePhase):
  * Statement order is FK-safe (parents before children).
  */
 const COPY_TEMPLATE = [
-  'INSERT INTO dest.folders (id, name, parent_id, position, created_at, updated_at, device_id) SELECT id, name, parent_id, position, created_at, updated_at, device_id FROM main.folders',
+  // P5-b: local_metadata first so notes/folders COPY can subquery dest.local_metadata
+  // for local_device_uuid. INSERT OR REPLACE so main's device_uuid (the user's real one)
+  // overrides the dummy that 0006_device_id_split.sql seeded as a safety net.
+  'INSERT OR REPLACE INTO dest.local_metadata (key, value) SELECT key, value FROM main.local_metadata',
+  "INSERT INTO dest.folders (id, name, parent_id, position, created_at, updated_at, device_id, local_device_uuid) SELECT id, name, parent_id, position, created_at, updated_at, device_id, (SELECT value FROM dest.local_metadata WHERE key='device_uuid') FROM main.folders",
   'INSERT INTO dest.tags (id, tag_type, tag_value) SELECT id, tag_type, tag_value FROM main.tags',
-  'INSERT INTO dest.notes (id, folder_id, trash_level, created_at, updated_at, trashed_at, device_id, content_hash, content, auto_delete_at) SELECT id, folder_id, trash_level, created_at, updated_at, trashed_at, device_id, content_hash, content, $AUTO FROM main.notes',
+  "INSERT INTO dest.notes (id, folder_id, trash_level, created_at, updated_at, trashed_at, device_id, content_hash, content, auto_delete_at, local_device_uuid) SELECT id, folder_id, trash_level, created_at, updated_at, trashed_at, device_id, content_hash, content, $AUTO, (SELECT value FROM dest.local_metadata WHERE key='device_uuid') FROM main.notes",
   'INSERT INTO dest.note_tags (note_id, tag_id) SELECT note_id, tag_id FROM main.note_tags',
   'INSERT INTO dest.reminder_status (note_id, tag_id, fire_at, status, fired_at) SELECT note_id, tag_id, fire_at, status, fired_at FROM main.reminder_status',
-  'INSERT INTO dest.local_metadata (key, value) SELECT key, value FROM main.local_metadata',
 ];
 
 const FTS_DELETE_ALL = "INSERT INTO dest.notes_fts(notes_fts) VALUES('delete-all')";
