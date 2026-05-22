@@ -180,6 +180,21 @@ export class ReminderScheduler {
     this.scheduleNextTrashCleanup();
   }
 
+  /**
+   * Rescan reminder_status + trash deadlines after a sync apply pass.
+   * Called directly by `runManualSync` (P5-b §5.4 / §6.3) once the pull
+   * round finishes; remote-applied tag/alarm changes already wrote to
+   * reminder_status via `syncReminders` in the engine, but the in-memory
+   * scheduler still has the pre-sync next-fire timestamp queued. A
+   * fresh `scheduleNext` + `scheduleNextTrashCleanup` snaps it back to
+   * the post-apply truth.
+   */
+  reload(): void {
+    this.scanOverdue();
+    this.scheduleNext();
+    this.scheduleNextTrashCleanup();
+  }
+
   private handleFrequency(fired: ReminderRecord): void {
     const noteFreqs = this.db
       .select({ tagType: schema.tags.tagType })

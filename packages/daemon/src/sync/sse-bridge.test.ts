@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { afterEach, beforeEach, describe, it } from 'node:test';
-import type { Logger } from '@owl/core';
+import { type Logger, createDatabase, ensureDeviceId } from '@owl/core';
+import type { AppContext } from '../context.js';
+import { EventsBus } from '../events/bus.js';
 import { backoffFor, createSseBridge } from './sse-bridge.js';
 
 // ─── Test doubles ────────────────────────────────────────────────────
@@ -82,13 +84,20 @@ function silentLogger(): Logger & { lines: string[] } {
   } as Logger & { lines: string[] };
 }
 
-// `runManualSync` reads global `ctx.skybridgeSession` etc.; for these
-// unit tests we don't want the bridge to actually invoke it. We stub
-// out the AppContext-shaped object to the minimum the bridge touches.
-// Bridge calls runManualSync(ctx) but those throws/rejections are
-// caught (.catch); we just need ctx to be the same object reference.
-// biome-ignore lint/suspicious/noExplicitAny: minimal stub
-const STUB_CTX = { __stub: true } as any;
+/**
+ * Make a minimal-but-real AppContext stub. The broadcaster touches
+ * `ctx.sqlite` (pending-count query in readSyncStatus) and
+ * `ctx.eventsBus.emit`, so we need real instances for those even though
+ * the bridge mainly cares about ctx identity for the WeakMap lookup.
+ * runManualSync(ctx) is still expected to reject (no session); the
+ * bridge's .catch swallows it.
+ */
+function makeCtx(): AppContext {
+  const { db, sqlite } = createDatabase({ dbPath: ':memory:' });
+  ensureDeviceId(db);
+  // biome-ignore lint/suspicious/noExplicitAny: minimal stub
+  return { db, sqlite, eventsBus: new EventsBus() } as any;
+}
 
 // ─── tests ───────────────────────────────────────────────────────────
 
@@ -126,7 +135,7 @@ describe('createSseBridge — start / stop lifecycle', () => {
     const bridge = createSseBridge({
       realClient: client as never,
       workspaceId: 'ws-1',
-      ctx: STUB_CTX,
+      ctx: makeCtx(),
       logger,
       schedule: sched.schedule,
       jitter: (b) => b,
@@ -141,7 +150,7 @@ describe('createSseBridge — start / stop lifecycle', () => {
     const bridge = createSseBridge({
       realClient: client as never,
       workspaceId: 'ws-1',
-      ctx: STUB_CTX,
+      ctx: makeCtx(),
       logger,
       schedule: sched.schedule,
       jitter: (b) => b,
@@ -167,7 +176,7 @@ describe('createSseBridge — reconnect with backoff (P5-b §6.2)', () => {
     const bridge = createSseBridge({
       realClient: client as never,
       workspaceId: 'ws-1',
-      ctx: STUB_CTX,
+      ctx: makeCtx(),
       logger,
       schedule: sched.schedule,
       jitter: (b) => b, // strip jitter for determinism
@@ -207,7 +216,7 @@ describe('createSseBridge — reconnect with backoff (P5-b §6.2)', () => {
     const bridge = createSseBridge({
       realClient: client as never,
       workspaceId: 'ws-1',
-      ctx: STUB_CTX,
+      ctx: makeCtx(),
       logger,
       schedule: sched.schedule,
       jitter: (b) => b,
@@ -233,7 +242,7 @@ describe('createSseBridge — reconnect with backoff (P5-b §6.2)', () => {
     const bridge = createSseBridge({
       realClient: client as never,
       workspaceId: 'ws-1',
-      ctx: STUB_CTX,
+      ctx: makeCtx(),
       logger,
       schedule: sched.schedule,
       jitter: (b) => b,
@@ -250,7 +259,7 @@ describe('createSseBridge — reconnect with backoff (P5-b §6.2)', () => {
     const bridge = createSseBridge({
       realClient: throwing as never,
       workspaceId: 'ws-1',
-      ctx: STUB_CTX,
+      ctx: makeCtx(),
       logger,
       schedule: sched.schedule,
       jitter: (b) => b,

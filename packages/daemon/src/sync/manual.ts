@@ -46,6 +46,7 @@ import {
   invalidateSkybridgeSession,
   loadSkybridgeClient,
 } from './session.js';
+import { getSyncStatusBroadcaster } from './status-broadcaster.js';
 
 export { SkybridgeNotInstalledError };
 export type { RealSkybridgeClient };
@@ -180,9 +181,11 @@ export function runManualSync(ctx: AppContext): Promise<RunSyncResult> {
 
 async function doRunManualSync(ctx: AppContext): Promise<RunSyncResult> {
   const cfgPath = skybridgeConfigPath();
+  const broadcaster = getSyncStatusBroadcaster(ctx);
+  broadcaster.markSyncing();
   try {
     const session = await ensureSkybridgeSession(ctx);
-    return await runSync({
+    const result = await runSync({
       db: ctx.db,
       sqlite: ctx.sqlite,
       client: adaptClient(session.realClient),
@@ -193,6 +196,15 @@ async function doRunManualSync(ctx: AppContext): Promise<RunSyncResult> {
         warn: (...a) => ctx.logger.warn({ kind: 'sync' }, a.map(String).join(' ')),
       },
     });
+    // P5-b §6.3: success path emits status + reloads the in-memory
+    // reminder scheduler from the post-apply reminder_status truth.
+    broadcaster.markSuccess({
+      pulled_seq: result.cursorAfter,
+      pushed_seq: result.serverSeqHigh || undefined,
+      last_sync_at: Date.now(),
+    });
+    if (result.appliedTotal > 0) ctx.scheduler.reload();
+    return result;
   } catch (err) {
     // 401 / SkybridgeAuthRequired invalidates the cached session so the
     // next call re-bootstraps against the post-login toml.
@@ -201,7 +213,9 @@ async function doRunManualSync(ctx: AppContext): Promise<RunSyncResult> {
     } else if (err instanceof SkybridgeAuthRequiredError) {
       invalidateSkybridgeSession(ctx);
     }
-    throw translateSkybridgeError(err, cfgPath);
+    const translated = translateSkybridgeError(err, cfgPath);
+    broadcaster.markError(translated);
+    throw translated;
   }
 }
 

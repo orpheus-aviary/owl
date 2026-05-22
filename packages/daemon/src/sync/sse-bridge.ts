@@ -21,6 +21,7 @@ import type { Logger } from '@owl/core';
 import type { AppContext } from '../context.js';
 import { runManualSync } from './manual.js';
 import type { RealSkybridgeClient } from './session.js';
+import { getSyncStatusBroadcaster } from './status-broadcaster.js';
 
 export interface SseBridge {
   start(): void;
@@ -66,6 +67,8 @@ export function createSseBridge(opts: SseBridgeOptions): SseBridge {
   let retryAttempt = 0;
   let stopped = false;
 
+  const broadcaster = getSyncStatusBroadcaster(opts.ctx);
+
   function connect(): void {
     if (stopped) return;
     try {
@@ -82,6 +85,7 @@ export function createSseBridge(opts: SseBridgeOptions): SseBridge {
         onOpen: () => {
           retryAttempt = 0;
           opts.logger.info({ kind: 'sse' }, 'connected');
+          broadcaster.markConnected();
           // Catch-up: server SSE does not replay history. Pull anything
           // accumulated while we were disconnected.
           runManualSync(opts.ctx).catch((err) => {
@@ -93,6 +97,7 @@ export function createSseBridge(opts: SseBridgeOptions): SseBridge {
         },
         onError: (err) => {
           opts.logger.warn({ kind: 'sse', err: errorMessage(err) }, 'SSE error');
+          broadcaster.markOffline(err);
           scheduleReconnect();
         },
       });
@@ -101,6 +106,7 @@ export function createSseBridge(opts: SseBridgeOptions): SseBridge {
         { kind: 'sse', err: errorMessage(err) },
         'subscribeEvents threw; will retry',
       );
+      broadcaster.markOffline(err);
       scheduleReconnect();
     }
   }
