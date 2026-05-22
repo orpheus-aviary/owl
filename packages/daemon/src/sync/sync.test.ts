@@ -79,6 +79,7 @@ describe('sync routes (P5-a Step 7)', () => {
       conversationStore,
       previewStore,
       eventsBus: new EventsBus(),
+      skybridgeSession: null,
     });
     await app.ready();
   });

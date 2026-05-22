@@ -100,6 +100,7 @@ describe('events routes', () => {
       conversationStore: new ConversationStore(sqlite),
       previewStore: new PreviewStore(),
       eventsBus,
+      skybridgeSession: null,
     });
     await app.ready();
 
@@ -198,6 +199,7 @@ describe('events routes', () => {
       conversationStore: new ConversationStore(sqlite),
       previewStore: new PreviewStore(),
       eventsBus: localBus,
+      skybridgeSession: null,
     });
     await localApp.listen({ host: '127.0.0.1', port: 0 });
     const addr = localApp.server.address();
@@ -272,6 +274,7 @@ describe('events routes', () => {
       conversationStore: new ConversationStore(sqlite),
       previewStore: new PreviewStore(),
       eventsBus: localBus,
+      skybridgeSession: null,
     });
     await localApp.listen({ host: '127.0.0.1', port: 0 });
     const port = (localApp.server.address() as { port: number }).port;

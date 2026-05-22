@@ -54,7 +54,9 @@ ALLOWLIST=(
 
 is_allowlisted() {
   local file="$1"
-  for entry in "${ALLOWLIST[@]}"; do
+  # ${ALLOWLIST[@]+...} expands only when the array has elements,
+  # avoiding "unbound variable" under `set -u` for an empty array.
+  for entry in ${ALLOWLIST[@]+"${ALLOWLIST[@]}"}; do
     if [[ "${file}" == *"${entry}" ]]; then
       return 0
     fi

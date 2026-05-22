@@ -96,6 +96,7 @@ program
       conversationStore,
       previewStore,
       eventsBus,
+      skybridgeSession: null,
     });
 
     // Graceful shutdown

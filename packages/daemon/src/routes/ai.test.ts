@@ -103,6 +103,7 @@ describe('AI routes (P2-7d)', () => {
       conversationStore,
       previewStore,
       eventsBus: new EventsBus(),
+      skybridgeSession: null,
       llmClientFactory: (_cfg: LlmConfig): LlmClient => {
         if (!nextLlm) throw new Error('test forgot to set nextLlm');
         const client = nextLlm;

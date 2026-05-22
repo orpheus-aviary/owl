@@ -54,6 +54,7 @@ describe('daemon API', () => {
       conversationStore: new ConversationStore(sqlite),
       previewStore: new PreviewStore(),
       eventsBus: new EventsBus(),
+      skybridgeSession: null,
     });
     await app.ready();
   });

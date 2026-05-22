@@ -24,43 +24,35 @@
  * scheduled triggers all share one round.
  */
 
-import { hostname } from 'node:os';
 import {
-  type LocalChangeLike,
-  type PullResultLike,
-  type PushResultLike,
   type RunSyncResult,
-  type ServerChangeLike,
   SkybridgeAuthRequiredError,
-  type SkybridgeClientLike,
+  type SkybridgeConfig,
   SkybridgeNotConfiguredError,
   SkybridgeServerUrlMissingError,
   clearSkybridgeAuth,
   readSkybridgeConfig,
-  requireAuth,
   runSync,
   skybridgeConfigPath,
   writeSkybridgeConfig,
 } from '@owl/core';
-import type { SkybridgeConfig } from '@owl/core';
 import type { AppContext } from '../context.js';
 import { createCoalescer } from './coalesce.js';
+import {
+  type RealSkybridgeClient,
+  SkybridgeNotInstalledError,
+  adaptClient,
+  ensureSkybridgeSession,
+  invalidateSkybridgeSession,
+  loadSkybridgeClient,
+} from './session.js';
 
-// ─── App version (sent on registerDevice) ─────────────────────────────
-
-const OWL_APP_VERSION = '0.5.0-dev';
+export { SkybridgeNotInstalledError };
+export type { RealSkybridgeClient };
 
 // ─── Daemon-only error subclasses ─────────────────────────────────────
 
-export class SkybridgeNotInstalledError extends Error {
-  readonly code = 'SKYBRIDGE_NOT_INSTALLED';
-  constructor(readonly cause: unknown) {
-    super(
-      'skybridge client module not found — run `just skybridge-install` in the owl repo before using sync',
-    );
-    this.name = 'SkybridgeNotInstalledError';
-  }
-}
+// SkybridgeNotInstalledError now lives in `./session.js` (re-exported above).
 
 export class SkybridgeServerUnreachableError extends Error {
   readonly code = 'SKYBRIDGE_SERVER_UNREACHABLE';
@@ -96,112 +88,7 @@ export class SkybridgeSyncFailedError extends Error {
   }
 }
 
-// ─── Structural shape of @skybridge/client (NOT imported as a type) ───
-//
-// The real `@skybridge/client` package may be absent on a clean checkout,
-// so we never name it in an `import` / `import type` statement. The
-// shape below is what `runManualSync` actually calls — anything beyond
-// these methods is invisible to us. If skybridge changes its public
-// surface in a breaking way, this is the single seam to update.
-
-interface SkybridgeAuthContext {
-  serverUrl: string;
-  token: string;
-  user: { id: string; email: string };
-}
-
-interface RealSkybridgeClient {
-  registerDevice(input: {
-    name: string;
-    appVersion: string;
-    clientVersion: string;
-  }): Promise<{ id: string; name: string }>;
-  ensureWorkspace(tool: string, name: string): Promise<{ id: string; slug?: string }>;
-  pushChanges(
-    workspaceId: string,
-    changes: LocalChangeLike[],
-  ): Promise<{
-    accepted: { clientChangeId: string; serverSeq: number }[];
-    duplicates: { clientChangeId: string; serverSeq: number }[];
-    latestSeq: number;
-  }>;
-  pullChanges(
-    workspaceId: string,
-    sinceSeq: number,
-    limit?: number,
-  ): Promise<{ changes: ServerChangeLike[]; hasMore: boolean; latestSeq: number }>;
-}
-
-interface SkybridgeClientModule {
-  CLIENT_VERSION: string;
-  login(
-    serverUrl: string,
-    email: string,
-    password: string,
-  ): Promise<{
-    serverUrl: string;
-    token: string;
-    user: { id: string; email: string };
-  }>;
-  createSkybridgeClient(opts: {
-    authContext: SkybridgeAuthContext;
-    deviceId?: string;
-  }): RealSkybridgeClient;
-}
-
-async function loadSkybridgeClient(): Promise<SkybridgeClientModule> {
-  // Non-literal specifier: TS sees `import(string)` and skips module
-  // resolution, so `tsc -b` on a clean checkout (no skybridge installed)
-  // still types. Production daemon at first sync attempts the load and
-  // surfaces a typed error if the package isn't present.
-  const spec: string = '@skybridge/client';
-  try {
-    const mod = (await import(spec)) as SkybridgeClientModule;
-    return mod;
-  } catch (err) {
-    throw new SkybridgeNotInstalledError(err);
-  }
-}
-
-// ─── Default device name ──────────────────────────────────────────────
-
-function defaultDeviceName(): string {
-  // hostname() can return empty string in containers; fall back to a
-  // generic label so registerDevice always sees a non-empty value.
-  const host = hostname();
-  return host ? `${host} (owl)` : 'owl device';
-}
-
-// ─── Adapter: RealSkybridgeClient → SkybridgeClientLike ───────────────
-
-function adaptClient(client: RealSkybridgeClient): SkybridgeClientLike {
-  return {
-    async pullChanges(workspaceId, sinceServerSeq): Promise<PullResultLike> {
-      const r = await client.pullChanges(workspaceId, sinceServerSeq);
-      return { changes: r.changes, hasMore: r.hasMore };
-    },
-    async pushChanges(workspaceId, changes): Promise<PushResultLike> {
-      const r = await client.pushChanges(workspaceId, changes);
-      return { accepted: r.accepted, duplicates: r.duplicates };
-    },
-  };
-}
-
-// ─── Build a fresh client for a config ───────────────────────────────
-
-function buildClient(
-  sb: SkybridgeClientModule,
-  config: SkybridgeConfig & { auth: { user_id: string; token: string; email: string } },
-): RealSkybridgeClient {
-  return sb.createSkybridgeClient({
-    authContext: {
-      serverUrl: config.server.url,
-      token: config.auth.token,
-      user: { id: config.auth.user_id, email: config.auth.email },
-    },
-    deviceId: config.device?.id,
-  });
-}
+// ─── Structural client + adapter + loadSkybridgeClient live in ./session.js.
 
 // ─── Error translation from skybridge client / fetch failures ─────────
 //
@@ -294,67 +181,26 @@ export function runManualSync(ctx: AppContext): Promise<RunSyncResult> {
 async function doRunManualSync(ctx: AppContext): Promise<RunSyncResult> {
   const cfgPath = skybridgeConfigPath();
   try {
-    let config = readSkybridgeConfig(cfgPath); // throws if missing / server.url missing
-    requireAuth(config); // throws if [auth] missing
-
-    const sb = await loadSkybridgeClient();
-    let client = buildClient(
-      sb,
-      config as SkybridgeConfig & { auth: { user_id: string; token: string; email: string } },
-    );
-
-    // Lazy device registration on first sync
-    if (!config.device?.id) {
-      const device = await client.registerDevice({
-        name: defaultDeviceName(),
-        appVersion: `owl ${OWL_APP_VERSION}`,
-        clientVersion: sb.CLIENT_VERSION,
-      });
-      config = {
-        ...config,
-        device: {
-          id: device.id,
-          name: device.name,
-          app_version: `owl ${OWL_APP_VERSION}`,
-          client_version: sb.CLIENT_VERSION,
-        },
-      };
-      writeSkybridgeConfig(config, cfgPath);
-      // Re-create client so subsequent calls carry the new deviceId
-      client = buildClient(
-        sb,
-        config as SkybridgeConfig & { auth: { user_id: string; token: string; email: string } },
-      );
-    }
-
-    // Lazy workspace bootstrap
-    if (!config.workspace?.id) {
-      const ws = await client.ensureWorkspace('owl', 'default');
-      config = {
-        ...config,
-        workspace: { id: ws.id, slug: ws.slug ?? 'owl/default' },
-      };
-      writeSkybridgeConfig(config, cfgPath);
-    }
-    // At this point `config.workspace` is guaranteed populated (either
-    // already on disk or just registered above); the non-null assertion
-    // captures that invariant for TS without an extra runtime branch.
-    const workspaceId = config.workspace?.id;
-    if (!workspaceId)
-      throw new SkybridgeSyncFailedError('workspace registration did not yield an id');
-
+    const session = await ensureSkybridgeSession(ctx);
     return await runSync({
       db: ctx.db,
       sqlite: ctx.sqlite,
-      client: adaptClient(client),
-      workspaceId,
-      serverUrl: config.server.url,
+      client: adaptClient(session.realClient),
+      workspaceId: session.workspaceId,
+      serverUrl: session.serverUrl,
       logger: {
         info: (...a) => ctx.logger.info({ kind: 'sync' }, a.map(String).join(' ')),
         warn: (...a) => ctx.logger.warn({ kind: 'sync' }, a.map(String).join(' ')),
       },
     });
   } catch (err) {
+    // 401 / SkybridgeAuthRequired invalidates the cached session so the
+    // next call re-bootstraps against the post-login toml.
+    if (isApiError(err) && err.status === 401) {
+      invalidateSkybridgeSession(ctx);
+    } else if (err instanceof SkybridgeAuthRequiredError) {
+      invalidateSkybridgeSession(ctx);
+    }
     throw translateSkybridgeError(err, cfgPath);
   }
 }

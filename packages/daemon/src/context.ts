@@ -6,6 +6,7 @@ import type { PreviewStore } from './ai/preview-store.js';
 import type { ToolRegistry } from './ai/tool-registry.js';
 import type { EventsBus } from './events/bus.js';
 import type { ReminderScheduler } from './scheduler.js';
+import type { SkybridgeSession } from './sync/session.js';
 
 /** Shared application context passed to all route handlers. */
 export interface AppContext {
@@ -31,4 +32,11 @@ export interface AppContext {
    * loop with canned chunk streams.
    */
   llmClientFactory?: (config: LlmConfig) => LlmClient;
+  /**
+   * P5-b §6.1: cached skybridge session — populated by
+   * `ensureSkybridgeSession(ctx)` on first sync, dropped to `null` by
+   * `invalidateSkybridgeSession(ctx)` on 401. Scoped to AppContext (not
+   * module-level) so the dual-profile e2e suite stays isolated.
+   */
+  skybridgeSession: SkybridgeSession | null;
 }

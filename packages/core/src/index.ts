@@ -140,6 +140,7 @@ export type {
   SkybridgeServerSection,
   SkybridgeWorkspaceSection,
 } from './skybridge/config.js';
+export { persistSkybridgeIds } from './skybridge/identity.js';
 
 // Conversations (AI chat persistence)
 export {
