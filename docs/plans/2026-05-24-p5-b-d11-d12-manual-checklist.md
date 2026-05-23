@@ -68,14 +68,16 @@ OWL_NEST_DIR=$HOME/orpheus-aviary-nest-B OWL_DAEMON_PORT=47011 just dev
 #### D11 — B offline → A pushes → B reconnects → catch-up sync
 
 1. Profile A: GUI sidebar SyncStatusBar shows **已同步**
-2. Profile B: kill the skybridge server (`pkill -INT skybridge` or stop
-   the docker container). B's SyncStatusBar should flip to **离线** within
-   ~30s (next failed reconnect attempt)
+2. Profile B: kill the skybridge server with **`kill -9 <pid>`**
+   (see SIGTERM caveat in Watch-outs). B's SyncStatusBar should flip to
+   **离线** within ~2s
 3. Profile A: create one note, observe GUI updates locally; SyncStatusBar
    stays **已同步**
 4. Restart skybridge server
 5. Profile B: SyncStatusBar should briefly flash **同步中** then return
-   to **已同步** within `≤ backoffFor(currentAttempt) + 1s` (≤ 31s)
+   to **已同步** within `≤ backoffFor(currentAttempt) + 1s` (≤ 31s after
+   the last failed retry — so possibly ~30s after server restart in the
+   worst-case backoff bucket)
 6. Open the note list on B — A's new note is visible
 
 #### D11b — B online → A pushes → B applies within 100ms
@@ -92,6 +94,29 @@ OWL_NEST_DIR=$HOME/orpheus-aviary-nest-B OWL_DAEMON_PORT=47011 just dev
   has `[auth] + [device.id] + [workspace.id]` at boot (see
   `bridge-lifecycle.ts`). Half-bootstrapped configs require one
   `owl sync run` then a daemon restart.
+- **`kill -9` the skybridge server, not plain `kill`** — see follow-up
+  G2 in `docs/history/P5-b-shipped.md`. SIGTERM lets fastify
+  gracefully close the SSE response, which surfaces to
+  `@skybridge/client/sse.js` as `reader.read() → { done: true }`. That
+  path silently exits the read loop **without** calling `onError`, so
+  the bridge sits in zombie state forever and the GUI keeps showing
+  **已同步** despite the connection being dead. SIGKILL forces a TCP
+  RST, which becomes `NetworkError` → `onError` → `markOffline` as
+  expected. Until skybridge client is fixed (P5-c G2), the manual test
+  MUST use SIGKILL.
+- **ABI ping-pong during manual test**: if you start `just dev-fast`
+  for the GUI between launching the daemons, `ensure-electron-abi`
+  rebuilds `better-sqlite3` to Electron's NODE_MODULE_VERSION. Any
+  daemon started AFTER that point must run under Electron-as-Node:
+  `ELECTRON_RUN_AS_NODE=1 ./node_modules/.bin/electron
+   packages/daemon/dist/cli.js daemon`. Daemons started before the
+  rebuild keep their cached binding and continue to work as plain
+  `node ... cli.js daemon`.
+- **GUI is hardcoded to port 47010** — see follow-up G1. The user-facing
+  GUI window will be talking to whichever daemon happens to live on
+  47010, not the one you exported `OWL_DAEMON_PORT` for. During the
+  manual test, treat the GUI as a **single-profile observer** and drive
+  the other profile via `curl` against its `47011` daemon.
 - "100ms" in design §6.2 is the **server → daemon** dispatch budget; the
   full GUI repaint roundtrip is typically 200-500ms depending on the
   status broadcaster → events bus → SSE → React render path.

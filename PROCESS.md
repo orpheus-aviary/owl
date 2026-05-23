@@ -1,51 +1,57 @@
 # 开发进度
 
-## 当前阶段：P5-a shipped (内部) — 单机双 profile 手动验收 2026-05-22 通过；不发版，下一步 P5-b
+## 当前阶段：P5-b shipped (内部) — 自动化 D1-D10 + 手动 D11/D11b 验收 2026-05-24 通过；不发版，下一步 P5-c
 
-**P5-a 设计文档**（v6 锁定）：`docs/plans/2026-05-21-p5-a-skybridge-sync-engine-design.md`
-**实施记录**：`docs/history/P5-a-shipped.md`
+**P5-b 设计文档**（v5 锁定）：`docs/plans/2026-05-22-p5-b-multi-entity-realtime-design.md`
+**D11/D11b 手动 checklist**：`docs/plans/2026-05-24-p5-b-d11-d12-manual-checklist.md`
+**实施记录**：`docs/history/P5-b-shipped.md`
 
-11-commit P5-a 切片（截至 2026-05-22）：
+### P5-b 切片（10 commit 主线 + 3 仓 docs 收尾）
 
 | Step | 仓 | Commit | 内容 |
 |---|---|---|---|
-| design | owl | `4f9b9ba` | P5-a design doc v6 |
-| 0a | owl | `b384f2e` | `OWL_NEST_DIR` env override（profile B 隔离先决条件） |
-| 0b | owl | `23fcf6e` | delete emit 加 `updated_at_ms`（LWW 锚点必需） |
-| 1 | skybridge | `668b13b` | `tsconfig.build.json` 拆生产 build |
-| 2 | skybridge | `8afc7d2` | 三 package gen-publishable-manifest + just pack-* |
-| 3 | skybridge | `d127997` | README 加本地分发章节 |
-| 4a | owl | `694d81b` | schema v5（sync_changes 加 cid/server_seq/synced_at + UNIQUE 索引 + v4 backfill） + emitSyncChange 返回 cid |
-| 4b | owl | `3c8e09d` | `packages/core/src/sync/payloads/note.ts` apply-side validator + 28 测试 |
-| 5 | owl | `f3d1fe3` | `packages/core/src/sync/engine.ts` — `runSync()` + 结构化接口 + LWW apply + cursor upsert + Fake client 23 测试 |
-| 6 | owl | `34e398f` | `packages/core/src/skybridge/config.ts` — skybridge_config.toml read/write + 3 错误码 + 13 测试 |
-| 7 | owl | `c73a2de` | daemon `sync/manual.ts` 非字面量 dynamic import + `routes/sync.ts` + `sync.e2e.ts` 双层 gate + 10 unit tests |
-| 8 | owl | `77921ed` | CLI `owl sync run / status / login / config show` + 15 vitest tests + 7 个 SKYBRIDGE_* 错误码 |
-| 9 | owl | `14ba0da` | 5 个本地 dev 脚本 + daemon `test:e2e` script |
-| 10 | owl | `a327ce0` | justfile `[skybridge]` group + `just check` 链接入守卫 |
-| 11 | owl | `8432fa8` | `docs/history/P5-a-shipped.md` 实施记录 |
-| 12 | — | n/a | 单机双 profile 手动验收 8/8 通过（详见 `docs/history/P5-a-shipped.md` § 手动验收记录） |
+| 1+2 | owl | `d70b8fc` | schema v6 `0006_device_id_split.sql`（ADD COLUMN `local_device_uuid` + NOT NULL trigger，不重建表）+ mutation 写两列；F4 device_id 双命名空间分手 |
+| 3 | owl | `9505910` | `deleteFolder` emit payload 加 `updated_at_ms`（LWW 锚点对齐 note/delete） |
+| 4 | owl | `79c47fd` | 抽 `syncNoteTags` → `notes/tags.ts` 给 apply 路径复用 |
+| 5 | owl | `ce95c3f` | folder + conversation apply-side validator；note tag_type 收紧为 `TagType` enum |
+| 6 | owl | `e75ce86` | engine 路由按 entity_type 分发；folder sparse update / conversation append-merge / note apply 调 `syncNoteTags + syncReminders` |
+| 7 | owl | `0af56c4` | session helper（`ensureSkybridgeSession` + ctx 缓存）+ SSE bridge（永久重连 + onOpen catch-up）+ `persistSkybridgeIds` 进 core |
+| 8 | owl | `a6db4b7` | `sync:status_changed` OwlEvent + `SyncStatusSnapshot` + status-broadcaster + `manual.ts` 包 markSyncing/markSuccess/markError + `scheduler.reload()` |
+| 9 | owl | `321e308` | GUI `<SyncStatusBar />` 挂 sidebar 最下 + 四态徽章 + popover；`events-subscriber-core` 加 sync 分支；冷启动 fetch 兜底 |
+| 10a | owl | `a1a8f16` | `bridge-lifecycle.ts` daemon-boot SSE 接入（只在 toml 完全 bootstrapped 时 auto-start）+ DI 单测 |
+| 10b | owl | `94972f2` | `sync.dual.e2e.ts` 自动化 D1-D10（core-only + in-process skybridge）+ D11/D11b/D12 处置矩阵 |
+| 11-owl | owl | `10e98d0` | `docs/history/P5-b-shipped.md` + `CLAUDE.md` skybridge debug 章节 |
+| 11-aviary | aviary | `ea3e312` | ROADMAP P5-a/b/c 三段拆 + SKYBRIDGE_ARCH Phase 4-a/b/c 拆 |
+| 11-skybridge | skybridge | `177de0b` | PROCESS.md 记 owl P5-a/b 集成验收 |
+| 12 | — | n/a | 自动化 + 手动验收全过（见 `docs/history/P5-b-shipped.md` § 自动化验收 + § 手动验收） |
 
-测试基线：**owl 702/702**（core 264 + cli 134 + daemon 148 + gui 156），skybridge **78/78** vitest。
+测试基线：**owl 802/802 干净 checkout**（core 314 + cli 134 + daemon 177 + gui 177），**813/813** 含 `SKYBRIDGE_E2E=1` gated dual e2e。`just check` 全绿。skybridge / aviary 仓不动 server 端测试基线。
 
-owl `main` 比 origin 多 11 commits（未 push）；skybridge `main` 多 3 commits（未 push）；本地**不发版**、不 npm publish、不 push tag。
+owl `main` 比 origin 多 32 commits（未 push）；本地**不发版**、不 npm publish、不 push tag。
 
-### P5-a 验收过程中发现的 follow-ups（留 P5-b）
+### P5-b 手动验收期间新发现 3 个 P5-c 待办（2026-05-24）
 
-| 编号 | 现象 | 影响 | 备注 |
+| 编号 | 现象 | 触发条件 | 处置方向 |
 |---|---|---|---|
-| F1 | dev-mode Electron 在 `@electron/rebuild` 后崩溃（`SIGKILL (Code Signature Invalid)`） | macOS Sequoia / 26 跑 `just dev` 后第一次启 GUI 失败 | 临时解：`codesign --force --deep --sign -` 所有 `.node` 文件 + `Electron.app`。长期：把这一步加进 `ensure-electron-abi` 后置钩子 |
-| F2 | GUI dev 模式硬编码 `DAEMON_PORT = 47010` (`packages/gui/src/main/daemon.ts:6`) | 多 profile 测试时无法用非默认端口跑 GUI；只能把 profile A 配成 47010 | P5-b 加 `process.env.OWL_DAEMON_PORT` override，或读 `OWL_NEST_DIR/owl/owl_config.toml` |
-| F3 | PATCH→sync 紧邻调用偶发 `pushedTotal=0`（pending 行在 DB 已 commit，sync 看不到） | 用户重试一次就好；可能是 inflight Promise 残留或事务可见性时序 | 需查 `runManualSync` inflight 重置 + better-sqlite3 隔离级别 |
-| F4 | `notes.device_id` 两个命名空间（local_metadata 的 uuid vs skybridge `[device].id`） | 同一设备在本地行/远端行用不同 UUID，向用户呈现易混淆 | P5-b 统一为 skybridge-registered id，或者新增 `local_device_uuid` 字段拆开语义 |
-| F5 | 编辑页面笔记预览栏不应显示创建/修改时间（P3.4-e tab preview UI 副作用） | 与 P5-a 无关，但顺手记录 | UI 调整，不影响 sync 引擎 |
+| **G1** | GUI `preload/index.ts:46` 硬编码 `daemonUrl: 'http://127.0.0.1:47010'`，没读 `OWL_DAEMON_PORT` | `OWL_DAEMON_PORT=47011 just dev-fast` 启 GUI 时，渲染进程仍连 47010；F2 fix 只覆盖了 main 进程 spawn 端口 | P5-c 修：preload 通过 env-injected constant 或 IPC 拿到端口 |
+| **G2** | skybridge server SIGTERM 优雅关闭时，`@skybridge/client/sse.js` 的 `reader.read()` 收到 `{ done: true }` **静默退出 read loop**，不触发 `onError`；bridge 卡 zombie 永不重连，GUI 永远显示"已同步" | 服务器优雅 shutdown（不是 crash）+ 不重启时永久卡 zombie，必须 daemon 重启才能恢复。SIGKILL 路径正常 | P5-c 修：在 skybridge 仓的 `pumpStream` 里给 `done: true` 路径补 fire `onError(new NetworkError('SSE stream ended'))` |
+| **G3** | SyncStatusBar 的 `syncing` 蓝色旋转动画 < 100ms，肉眼看不见 | runSync 本地同进程对 in-memory skybridge 跑得太快，markSyncing → markSuccess 几乎没可视化时间 | P5-c 修：UI 加 minimum-display-duration（e.g. `syncing` 至少展示 300-500ms，即使 runSync 已返回） |
 
-### 下一阶段 P5-b（未排期）
+P5-b Step 10b 期间还从代码里发现两个**设计 §3.3 没完成实施**的 gap，一并记 P5-c：
 
-- folder / conversation entity 的 apply 端
-- tags + FTS5 同步（把 `syncNoteTags` 抽出来给 apply 复用，含 `notes_fts.tags_text` 维护）
-- 后台触发（定时 / SSE / 网络恢复）
-- 上述 F1–F4 follow-ups
+| 编号 | 现象 | 来源 |
+|---|---|---|
+| **G4** | `createNote` / `updateNote` 没从 `local_metadata.skybridge_device_id` 读 → 本地新建 note 的 `notes.device_id` 落 NULL（apply 路径正常） | dual.e2e D2 assertion 翻车暴露；与设计 §3.3 不符 |
+| **G5** | `createNote` / `updateNote` 不触发 `syncReminders` → /alarm note 本地不立刻生成 reminder_status；现在依赖 daemon `ReminderScheduler` 轮询补 | dual.e2e D10 显式调 syncReminders 模拟 scheduler tick |
+
+### 下一阶段 P5-c（未排期）→ 完成后发 0.5.0
+
+- 后台 sync 触发：定时（可配置间隔）+ 网络恢复 + 应用启动（SSE event 触发 P5-b 已完成）
+- 429 / 5xx retry 策略 + jitter（与 SSE bridge 重连退避独立）
+- `conflict_record` 写入语义 + 冲突 UI
+- 真实双机 + 远程 server soak
+- keychain 替换明文 token
+- 上述 G1-G5 follow-up 一并修
 
 ## 历史：0.4.x 发版状态
 
@@ -88,6 +94,8 @@ P3.4 UX 完善 ✅ + P4 skybridge Phase 1+2 ✅ → 0.4.0 发版完成
 | P3.2.5 release polish | `docs/plans/2026-05-03-p3-2-5-design.md` § Implementation record |
 | P3.3 0.3.0 发版 | `docs/history/P3-3-shipped.md` |
 | P3.4 UX 完善 + P4 skybridge Phase 1+2 + 0.4.0 发版 + 0.4.1 hotfix | `docs/history/P3-4-P4-shipped.md` |
+| P5-a skybridge sync engine 单机版（内部 2026-05-22） | `docs/history/P5-a-shipped.md` |
+| P5-b 多 entity apply + SSE 实时 + GUI 状态栏（内部 2026-05-24） | `docs/history/P5-b-shipped.md` |
 
 P2-8 / P2-9 手动测试清单分别在 `docs/plans/2026-04-17-p2-8-ai-page.md` 和 `docs/plans/2026-04-20-p2-9-resizable-panels.md` 的附录段。
 

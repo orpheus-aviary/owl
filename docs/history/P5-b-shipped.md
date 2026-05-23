@@ -117,7 +117,24 @@ just check                              # 守卫不报 = 干净
 | D9 | A+B 各 append 同一 conv，互 sync 两轮 → 两侧 ai_messages 都包含两条 | ✅ |
 | D10 | A `/alarm` tag → B `reminder_status` pending row，`fire_at` 与 A 一致 | ✅ |
 
-D11/D11b 是 manual checklist，verified per release per `docs/plans/2026-05-24-p5-b-d11-d12-manual-checklist.md`。D12 已被 `sse-bridge.test.ts` reconnect/backoff suite 自动覆盖。
+## 手动验收（2026-05-24）
+
+两个 daemon（test-A on :47010, test-B on :47011，独立 nest 目录）+ 1 个 in-process skybridge server + 1 个 GUI（cached connect 到 :47010 = A 端）：
+
+| 用例 | 验证 | 结果 |
+|---|---|---|
+| D11b | B 创建 note + push → A SSE bridge `change event` 100ms 内触发 catch-up runManualSync → A 的 `已拉取 seq` 推进、popover "最近同步" 刷新 | ✅（visual spinner 太快，靠 seq 推进 + 时间戳确认） |
+| D11 离线 | SIGKILL skybridge → A 的 SSE bridge `onError` → `markOffline` → GUI 橙色 "离线" + popover "≤30s 自动重试" 文案 | ✅ |
+| D11 catch-up | 重启 skybridge → A 经过 `[2,4,8,16,30]s + jitter` 退避重连 → `onOpen` 跑 catch-up sync → GUI 回 "已同步"，`已拉取 seq` 推进到 B 离线期间累积的新 server_seq | ✅（30 几秒后看到，符合最后一次失败 retry 后的下一次 backoff 等待） |
+| D12 | reconnect backoff 数列 + onOpen 重置计数 + stop() 取消 pending timer | ✅ 自动单测 `sse-bridge.test.ts` 6 个 reconnect 用例覆盖 |
+
+### 手动验收期间新发现 3 个 P5-c 待办
+
+| # | 现象 | 触发条件 | 处置方向 |
+|---|---|---|---|
+| **G1** | GUI `preload/index.ts:46` 硬编码 `daemonUrl: 'http://127.0.0.1:47010'`，没读 `OWL_DAEMON_PORT` | `OWL_DAEMON_PORT=47011 just dev-fast` 启 GUI 时，渲染进程仍连 47010 | P5-a F2 修了 main 进程的 daemon spawn 端口，preload 没跟着改。让 preload 通过 IPC 或 env-injected constant 拿到端口 |
+| **G2** | skybridge server SIGTERM 优雅关闭时，`@skybridge/client/sse.js` 的 `reader.read()` 收到 `{ done: true }` 静默退出 read loop，**不触发 `onError`**，bridge 卡 zombie 状态永不重连，GUI 状态栏永远显示"已同步" | 服务器优雅 shutdown（不是 crash）+ 不重启时不可恢复 | skybridge client 端的 `pumpStream` 应该在 `done: true` 路径上 fire `onError(new NetworkError('SSE stream ended unexpectedly'))`。改在 skybridge 仓 |
+| **G3** | SyncStatusBar 的 `syncing` 蓝色旋转动画太短肉眼看不见（< 100ms） | runSync 本地同进程对 in-memory skybridge 跑得太快，markSyncing → markSuccess 之间几乎没有可视化时间 | UI 加 minimum-display-duration（e.g. `state==='syncing'` 至少展示 300-500ms，即使 runSync 已经返回） |
 
 ## 设计文档 & 后续
 
