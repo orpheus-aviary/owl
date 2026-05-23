@@ -21,6 +21,7 @@ import { EventsBus } from './events/bus.js';
 import { isDaemonRunning, readPid, removePid, writePid } from './pid.js';
 import { ReminderScheduler } from './scheduler.js';
 import { buildServer } from './server.js';
+import { type BridgeHandle, startSseBridgeIfBootstrapped } from './sync/bridge-lifecycle.js';
 
 const program = new Command();
 
@@ -85,7 +86,7 @@ program
     const previewStore = new PreviewStore();
     const eventsBus = new EventsBus();
 
-    const server = buildServer({
+    const ctx = {
       db,
       sqlite,
       config,
@@ -97,12 +98,21 @@ program
       previewStore,
       eventsBus,
       skybridgeSession: null,
-    });
+    };
+    const server = buildServer(ctx);
+
+    // SSE bridge lifecycle (P5-b Step 10a). Assigned after server.listen so
+    // an unreachable skybridge server can't delay daemon boot. The handle
+    // stays null until the post-listen startSseBridgeIfBootstrapped() call
+    // below — shutdown() reads it lazily so SIGTERM in the early-boot
+    // window still cleanly tears down everything else.
+    let bridgeHandle: BridgeHandle | null = null;
 
     // Graceful shutdown
     const shutdown = async () => {
       logger.info('Daemon shutting down...');
       scheduler.stop();
+      bridgeHandle?.stop();
       removePid();
       // server.close() triggers fastify's preClose → onClose chain. The
       // /events route registers a preClose hook that ends live SSE streams
@@ -140,6 +150,10 @@ program
       );
       console.log(`Owl daemon running at ${address} (PID: ${process.pid})`);
       scheduler.start();
+
+      // Best-effort: start the SSE bridge if skybridge config is fully
+      // bootstrapped. Never throws — sync is opt-in. See bridge-lifecycle.ts.
+      bridgeHandle = await startSseBridgeIfBootstrapped(ctx, logger);
     } catch (err) {
       logger.error({ err }, 'Failed to start daemon');
       console.error('Failed to start daemon:', err);
