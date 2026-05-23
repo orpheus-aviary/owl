@@ -35,6 +35,7 @@ just dev-daemon   # 启动 daemon dev
 - **统一响应格式**：`{"success": bool, "data": {}, "message": "..."}`
 - **数据目录**：`~/orpheus-aviary-nest/owl/`
 - **skybridge 对接**：P4 起在 `owl.db` 加 `sync_changes` / `sync_cursor` / `conflict_record` 表，架构见 `aviary/docs/SKYBRIDGE_ARCH.md`。旧 `owl.sync.db` 文件为 rclone bisync 方案遗留，skybridge 路线下不再使用
+- **skybridge SSE bridge（P5-b Step 10a 起）**：daemon 启动后只有 `skybridge_config.toml` 同时有 `[auth] + [device.id] + [workspace.id]` 才会 auto-start bridge（见 `packages/daemon/src/sync/bridge-lifecycle.ts`）。半启动状态（login 完但还没跑过 `owl sync run`）silent skip 等下次 daemon 重启。debug 时盯 `daemon.log` 关键字 `sse-bridge`：`started` / `skipped` / `connected` / `SSE error`。手动逐发 `change`：`POST /sync/run` 触发 markSyncing → markSuccess/markError 推送 `sync:status_changed`。彻底重启 bridge：`just stop-daemon && just dev-daemon`。SSE 重连永久退避 `[2,4,8,16,30]s + 0-1s jitter`，cap 30s 不放弃 —— offline 是信息态，**没有手动 reconnect 按钮**（GUI sidebar SyncStatusBar 只显示状态）
 
 ## Commit 规范
 遵循上级 `orpheus-aviary/.claude/CLAUDE.md` 中的 Conventional Commits 规范。
