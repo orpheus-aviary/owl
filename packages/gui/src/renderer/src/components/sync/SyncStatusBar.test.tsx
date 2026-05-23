@@ -1,0 +1,170 @@
+import { render, screen, within } from '@testing-library/react';
+import type { ComponentProps, ReactNode } from 'react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+import type { SyncStatusSnapshot } from '@/lib/api';
+
+// Radix Popover drags Portal + dispatcher gymnastics into jsdom that
+// breaks the React 19 hook dispatcher in vitest (`useState null` panic).
+// Replace the primitives with passthrough wrappers; popover content sits
+// inside `data-testid="popover-content"` so tests can scope queries to
+// either the trigger button or the (normally hidden) content. The mock
+// renders content unconditionally — open/close isn't what we're testing,
+// we just want to verify snapshot fields surface when the popover opens.
+vi.mock('@/components/ui/popover', () => {
+  function Passthrough({ children }: { children?: ReactNode }) {
+    return <>{children}</>;
+  }
+  function Trigger({ children }: { children?: ReactNode; asChild?: boolean }) {
+    return <>{children}</>;
+  }
+  return {
+    Popover: Passthrough,
+    PopoverTrigger: Trigger,
+    PopoverContent: ({ children, ...rest }: ComponentProps<'div'>) => (
+      <div data-testid="popover-content" {...rest}>
+        {children}
+      </div>
+    ),
+    PopoverHeader: (props: ComponentProps<'div'>) => <div {...props} />,
+    PopoverTitle: (props: ComponentProps<'div'>) => <div {...props} />,
+    PopoverDescription: (props: ComponentProps<'p'>) => <p {...props} />,
+  };
+});
+
+// zustand under pnpm resolves to its own `react` copy and trips the
+// React 19 dup-instance check inside vitest. Replace `useSyncStatus`
+// with a stub backed by a mutable holder so each test can set the
+// snapshot before render.
+const snapshotHolder: { value: SyncStatusSnapshot | null } = { value: null };
+vi.mock('@/stores/sync-status', () => ({
+  useSyncStatus: <T,>(selector: (s: { snapshot: SyncStatusSnapshot | null }) => T) =>
+    selector({ snapshot: snapshotHolder.value }),
+}));
+
+import { SyncStatusBar, formatRelativeTime } from './SyncStatusBar';
+
+function makeSnapshot(overrides: Partial<SyncStatusSnapshot> = {}): SyncStatusSnapshot {
+  return {
+    state: 'idle',
+    server_url: 'http://localhost:48080',
+    device_id: '1f2a3b4c-aaaa-bbbb-cccc-dddddddddddd',
+    workspace_id: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+    pending_count: 0,
+    pulled_seq: 5,
+    pushed_seq: 5,
+    last_sync_at: 1_700_000_000_000,
+    last_error: null,
+    ...overrides,
+  };
+}
+
+afterEach(() => {
+  snapshotHolder.value = null;
+});
+
+describe('SyncStatusBar trigger button', () => {
+  it('renders 已同步 for idle state', () => {
+    snapshotHolder.value = makeSnapshot({ state: 'idle' });
+    render(<SyncStatusBar />);
+    const button = screen.getByRole('button', { name: /同步状态：已同步/ });
+    expect(within(button).getByText('已同步')).toBeTruthy();
+  });
+
+  it('renders 同步中 for syncing state with a spinner', () => {
+    snapshotHolder.value = makeSnapshot({ state: 'syncing' });
+    render(<SyncStatusBar />);
+    const button = screen.getByRole('button', { name: /同步状态：同步中/ });
+    expect(within(button).getByText('同步中')).toBeTruthy();
+    expect(button.querySelector('.animate-spin')).toBeTruthy();
+  });
+
+  it('renders 出错 for error state', () => {
+    snapshotHolder.value = makeSnapshot({ state: 'error', last_error: 'auth rejected' });
+    render(<SyncStatusBar />);
+    expect(screen.getByRole('button', { name: /同步状态：出错/ })).toBeTruthy();
+  });
+
+  it('renders 离线 for offline state', () => {
+    snapshotHolder.value = makeSnapshot({ state: 'offline' });
+    render(<SyncStatusBar />);
+    expect(screen.getByRole('button', { name: /同步状态：离线/ })).toBeTruthy();
+  });
+
+  it('falls back to idle when snapshot is null', () => {
+    snapshotHolder.value = null;
+    render(<SyncStatusBar />);
+    // Cold-start fallback: paint idle so we don't flash a red dot before
+    // the SSE channel comes up.
+    expect(screen.getByRole('button', { name: /同步状态：已同步/ })).toBeTruthy();
+  });
+});
+
+describe('SyncStatusBar popover content', () => {
+  it('surfaces last_error in the popover for error state', () => {
+    snapshotHolder.value = makeSnapshot({ state: 'error', last_error: 'token rejected (401)' });
+    render(<SyncStatusBar />);
+    const popover = screen.getByTestId('popover-content');
+    expect(within(popover).getByText('token rejected (401)')).toBeTruthy();
+  });
+
+  it('shows auto-retry reassurance for offline state', () => {
+    snapshotHolder.value = makeSnapshot({ state: 'offline' });
+    render(<SyncStatusBar />);
+    const popover = screen.getByTestId('popover-content');
+    expect(within(popover).getByText(/自动重试/)).toBeTruthy();
+  });
+
+  it('renders the cold-start explainer when snapshot is null', () => {
+    snapshotHolder.value = null;
+    render(<SyncStatusBar />);
+    const popover = screen.getByTestId('popover-content');
+    expect(within(popover).getByText(/daemon 尚未上报同步状态/)).toBeTruthy();
+  });
+
+  it('shortens long ids to a leading segment', () => {
+    snapshotHolder.value = makeSnapshot({
+      device_id: '1f2a3b4c-aaaa-bbbb-cccc-dddddddddddd',
+      workspace_id: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+    });
+    render(<SyncStatusBar />);
+    const popover = screen.getByTestId('popover-content');
+    expect(within(popover).getByText('1f2a3b4c…')).toBeTruthy();
+    expect(within(popover).getByText('aaaaaaaa…')).toBeTruthy();
+  });
+});
+
+describe('formatRelativeTime', () => {
+  const NOW = 1_700_000_000_000;
+
+  it('returns 从未 for null', () => {
+    expect(formatRelativeTime(null, NOW)).toBe('从未');
+  });
+
+  it('returns 刚刚 within 5s', () => {
+    expect(formatRelativeTime(NOW - 1_000, NOW)).toBe('刚刚');
+    expect(formatRelativeTime(NOW - 4_999, NOW)).toBe('刚刚');
+  });
+
+  it('returns 秒前 for 5s–60s', () => {
+    expect(formatRelativeTime(NOW - 30_000, NOW)).toBe('30 秒前');
+  });
+
+  it('returns 分钟前 for 1m–1h', () => {
+    expect(formatRelativeTime(NOW - 5 * 60_000, NOW)).toBe('5 分钟前');
+  });
+
+  it('returns 小时前 for 1h–24h', () => {
+    expect(formatRelativeTime(NOW - 3 * 3_600_000, NOW)).toBe('3 小时前');
+  });
+
+  it('returns 天前 for >= 24h', () => {
+    expect(formatRelativeTime(NOW - 2 * 86_400_000, NOW)).toBe('2 天前');
+  });
+
+  it('clamps negative diffs to 刚刚', () => {
+    // Daemon clock skew could give us a future timestamp — don't render
+    // garbage like "-3 秒前".
+    expect(formatRelativeTime(NOW + 1_000, NOW)).toBe('刚刚');
+  });
+});

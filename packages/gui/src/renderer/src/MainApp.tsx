@@ -5,6 +5,7 @@ import { extractTitle } from '@/components/NoteListItem';
 import { UnsavedTabsDialog } from '@/components/UnsavedTabsDialog';
 import { ConflictDialog } from '@/components/ai/ConflictDialog';
 import { NoteAppliedToast } from '@/components/ai/NoteAppliedToast';
+import { SyncStatusBar } from '@/components/sync/SyncStatusBar';
 import { ResizeHandle } from '@/components/ui/resize-handle';
 import { useOwlLayout } from '@/hooks/useOwlLayout';
 import * as api from '@/lib/api';
@@ -329,6 +330,14 @@ export function MainApp() {
                 {item.label}
               </NavLink>
             ))}
+
+            {/* P5-b §6.3 — daemon sync indicator pinned to the bottom of
+             * the sidebar. The button must be a direct flex child of <nav>
+             * so it stretches to the 64px column width; a wrapping div
+             * would shrink it to content width and push the dot off-centre.
+             * `mt-auto` on the button pushes it past Settings, gap between
+             * scales with window height. */}
+            <SyncStatusBar className="mt-auto" />
           </nav>
 
           <Group

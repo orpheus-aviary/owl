@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { baseUrl } from '../lib/api';
 import { openNoteById } from '../stores/editor-store';
+import { useSyncStatus } from '../stores/sync-status';
 import { handleDaemonEvent } from './events-subscriber-core';
 
 /**
@@ -20,9 +21,19 @@ import { handleDaemonEvent } from './events-subscriber-core';
  * The 'hello' event is informational (connection-live signal); 'error'
  * events fire during the browser's auto-reconnect loop and are safe to
  * ignore.
+ *
+ * On mount we also fire one `GET /sync/status` to seed the status bar
+ * for the cold-start case (daemon has been running before the renderer
+ * opened, so no `sync:status_changed` has fired yet).
  */
 export function EventsSubscriber(): null {
   const navigate = useNavigate();
+  const setSyncStatus = useSyncStatus((s) => s.setSnapshot);
+  const fetchSyncStatus = useSyncStatus((s) => s.fetch);
+
+  useEffect(() => {
+    void fetchSyncStatus();
+  }, [fetchSyncStatus]);
 
   useEffect(() => {
     const es = new EventSource(`${baseUrl()}/events`);
@@ -31,11 +42,20 @@ export function EventsSubscriber(): null {
       void handleDaemonEvent('open_note', ev.data, {
         openNoteById,
         navigate: (path) => navigate(path),
+        setSyncStatus,
+      });
+    });
+
+    es.addEventListener('sync:status_changed', (ev: MessageEvent<string>) => {
+      void handleDaemonEvent('sync:status_changed', ev.data, {
+        openNoteById,
+        navigate: (path) => navigate(path),
+        setSyncStatus,
       });
     });
 
     return () => es.close();
-  }, [navigate]);
+  }, [navigate, setSyncStatus]);
 
   return null;
 }

@@ -403,6 +403,50 @@ export const applyAiPreview = (previewId: string) =>
 // Note: POST /ai/chat is SSE-streamed and lives in `lib/sse-client.ts`,
 // invoked with `${baseUrl()}/ai/chat`.
 
+// ─── Skybridge sync ────────────────────────────────────
+
+export type SyncState = 'idle' | 'syncing' | 'error' | 'offline';
+
+/**
+ * Wire shape returned by `GET /sync/status`. Daemon source of truth is
+ * `SyncStatusResult` in `packages/daemon/src/sync/manual.ts`. The
+ * endpoint reflects configured-ness and cursor truth from sqlite; it
+ * does NOT carry the live `state` / `last_error` overlay (those are
+ * broadcaster-only and only show up on SSE).
+ */
+export interface SyncStatusResult {
+  configured: boolean;
+  authenticated: boolean;
+  server_url: string | null;
+  device_id: string | null;
+  workspace_id: string | null;
+  pending_count: number;
+  pulled_seq: number;
+  pushed_seq: number;
+  last_sync_at: number | null;
+}
+
+/**
+ * Wire shape pushed on SSE `sync:status_changed`. Daemon source of truth
+ * is `SyncStatusSnapshot` in `packages/daemon/src/events/types.ts`. The
+ * GET endpoint does not return `state` / `last_error` (only the
+ * broadcaster knows those), so the renderer derives an initial state of
+ * 'idle' from a fresh GET and lets subsequent SSE events overwrite it.
+ */
+export interface SyncStatusSnapshot {
+  state: SyncState;
+  server_url: string | null;
+  device_id: string | null;
+  workspace_id: string | null;
+  pending_count: number;
+  pulled_seq: number;
+  pushed_seq: number;
+  last_sync_at: number | null;
+  last_error: string | null;
+}
+
+export const getSyncStatus = () => request<SyncStatusResult>('GET', '/sync/status');
+
 // Tag editing helpers
 
 /** Serialize a note's tags array back to raw tag strings for API submission. */
