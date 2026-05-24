@@ -217,7 +217,7 @@ export async function createDirectBackend(options: DirectBackendOptions): Promis
     },
 
     async listHashtagTags(opts?: ListHashtagTagsOptions): Promise<CliHashtagTag[]> {
-      const rows = coreListHashtagTags(db, sqlite, opts);
+      const rows = coreListHashtagTags(sqlite, opts);
       return rows.map((r) => {
         const out: CliHashtagTag = { value: r.value };
         if (r.count !== undefined) out.count = r.count;
