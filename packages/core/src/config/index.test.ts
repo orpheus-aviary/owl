@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, before, describe, it } from 'node:test';
-import { DEFAULT_CONFIG, loadConfig, saveConfig } from './index.js';
+import { DEFAULT_CONFIG, effectiveSyncIntervalMin, loadConfig, saveConfig } from './index.js';
 
 const TEST_DIR = join(tmpdir(), `owl-config-test-${Date.now()}`);
 const TEST_CONFIG_PATH = join(TEST_DIR, 'owl_config.toml');
@@ -56,5 +56,38 @@ width = 1200
 
     const loaded = loadConfig(savePath);
     assert.equal(loaded.daemon.port, 12345);
+  });
+});
+
+// P5-c §3.5 — interval clamp rules for [sync].interval_min.
+// loadConfig stays a pure read (no logger); the helper centralises the
+// fallback / clamp / disable semantics so daemon scheduler + tests
+// share a single source.
+describe('effectiveSyncIntervalMin (P5-c §3.5)', () => {
+  it('returns the raw value when it is a finite minute >= 1', () => {
+    assert.equal(effectiveSyncIntervalMin({ interval_min: 5 }), 5);
+    assert.equal(effectiveSyncIntervalMin({ interval_min: 60 }), 60);
+    assert.equal(effectiveSyncIntervalMin({ interval_min: 1 }), 1);
+    assert.equal(effectiveSyncIntervalMin({ interval_min: 2.5 }), 2.5);
+  });
+
+  it('returns 0 (disabled) when raw is <= 0', () => {
+    assert.equal(effectiveSyncIntervalMin({ interval_min: 0 }), 0);
+    assert.equal(effectiveSyncIntervalMin({ interval_min: -1 }), 0);
+    assert.equal(effectiveSyncIntervalMin({ interval_min: -999 }), 0);
+  });
+
+  it('clamps to 1 when raw is in (0, 1)', () => {
+    assert.equal(effectiveSyncIntervalMin({ interval_min: 0.5 }), 1);
+    assert.equal(effectiveSyncIntervalMin({ interval_min: 0.001 }), 1);
+  });
+
+  it('silently falls back to 5 for non-finite or wrong-type values', () => {
+    assert.equal(effectiveSyncIntervalMin({ interval_min: Number.NaN }), 5);
+    assert.equal(effectiveSyncIntervalMin({ interval_min: Number.POSITIVE_INFINITY }), 5);
+    // biome-ignore lint/suspicious/noExplicitAny: testing runtime-only bad types
+    assert.equal(effectiveSyncIntervalMin({ interval_min: 'five' as any }), 5);
+    // biome-ignore lint/suspicious/noExplicitAny: testing runtime-only bad types
+    assert.equal(effectiveSyncIntervalMin({ interval_min: undefined as any }), 5);
   });
 });

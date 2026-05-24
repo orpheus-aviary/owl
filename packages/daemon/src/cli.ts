@@ -22,6 +22,7 @@ import { isDaemonRunning, readPid, removePid, writePid } from './pid.js';
 import { ReminderScheduler } from './scheduler.js';
 import { buildServer } from './server.js';
 import { type BridgeHandle, startSseBridgeIfBootstrapped } from './sync/bridge-lifecycle.js';
+import { type SyncSchedulerHandle, createSyncScheduler } from './sync/scheduler.js';
 
 const program = new Command();
 
@@ -107,12 +108,18 @@ program
     // below — shutdown() reads it lazily so SIGTERM in the early-boot
     // window still cleanly tears down everything else.
     let bridgeHandle: BridgeHandle | null = null;
+    // P5-c Step 9: background sync timer. Same lifecycle invariant as
+    // bridgeHandle — start post-listen, stop on shutdown. Created
+    // unconditionally; the scheduler itself decides to no-op when
+    // `[sync].interval_min <= 0`.
+    let syncSchedulerHandle: SyncSchedulerHandle | null = null;
 
     // Graceful shutdown
     const shutdown = async () => {
       logger.info('Daemon shutting down...');
       scheduler.stop();
       bridgeHandle?.stop();
+      syncSchedulerHandle?.stop();
       removePid();
       // server.close() triggers fastify's preClose → onClose chain. The
       // /events route registers a preClose hook that ends live SSE streams
@@ -154,6 +161,11 @@ program
       // Best-effort: start the SSE bridge if skybridge config is fully
       // bootstrapped. Never throws — sync is opt-in. See bridge-lifecycle.ts.
       bridgeHandle = await startSseBridgeIfBootstrapped(ctx, logger);
+
+      // P5-c Step 9: kick off the background sync timer. Always created
+      // (disabled inside the scheduler when interval_min <= 0); failing
+      // sync rounds are logged at warn but never crash the daemon.
+      syncSchedulerHandle = createSyncScheduler({ ctx, logger });
     } catch (err) {
       logger.error({ err }, 'Failed to start daemon');
       console.error('Failed to start daemon:', err);

@@ -47,6 +47,24 @@ export interface DaemonConfig {
   port: number;
 }
 
+/**
+ * P5-c §3.5 — background sync trigger (skybridge). Independent from
+ * `[daemon].poll_interval_min` (which drives the reminder scheduler).
+ *
+ *   `interval_min`  default 5
+ *                  `<= 0`  → disabled (daemon does NOT start a timer)
+ *                  `< 1`   → clamped up to 1 (avoid 100ms hammering the server)
+ *                  invalid (NaN / non-number) → silently falls back to default 5
+ *                  (loadConfig is a pure read; no logger here. daemon
+ *                  scheduler info-logs the effective value at startup.)
+ *
+ * Read via `effectiveSyncIntervalMin(config.sync)` rather than the raw
+ * field — the rules live in one place that way.
+ */
+export interface SyncConfig {
+  interval_min: number;
+}
+
 export interface AiConfig {
   context_rounds: number;
   max_recent_notes: number;
@@ -102,6 +120,7 @@ export interface OwlConfig {
   font: FontConfig;
   navigation: NavigationConfig;
   daemon: DaemonConfig;
+  sync: SyncConfig;
   ai: AiConfig;
   trash: TrashConfig;
   log: LogConfig;
@@ -118,6 +137,7 @@ export const DEFAULT_CONFIG: OwlConfig = {
   font: { global_offset: 0, editor_font_size: 14, editor_line_height: 1.6 },
   navigation: { order: ['editor', 'browser', 'trash', 'reminders', 'ai', 'todo', 'settings'] },
   daemon: { poll_interval_min: 1, port: 47010 },
+  sync: { interval_min: 5 },
   ai: { context_rounds: 3, max_recent_notes: 5, max_context_chars: 30000 },
   trash: { auto_delete_days: 30 },
   log: { max_size_mb: 10, max_backups: 5, max_age_days: 30, level: 'info' },
@@ -210,6 +230,23 @@ export function resolveLlmConfig(config: OwlConfig): LlmConfig {
 }
 
 // ─── Helpers ───────────────────────────────────────────
+
+/**
+ * Resolve the effective sync interval per P5-c §3.5 rules:
+ *   - <= 0       → 0 (disabled; daemon scheduler skips setInterval)
+ *   - 0 < x < 1  → 1 (clamp up to one minute)
+ *   - NaN / non-number → 5 (silent fallback to default; no log from core)
+ *   - otherwise → raw value in minutes
+ *
+ * Returned units are minutes; daemon multiplies by 60_000 for setInterval.
+ */
+export function effectiveSyncIntervalMin(syncConfig: SyncConfig): number {
+  const raw = syncConfig.interval_min;
+  if (typeof raw !== 'number' || !Number.isFinite(raw)) return 5;
+  if (raw <= 0) return 0;
+  if (raw < 1) return 1;
+  return raw;
+}
 
 function deepMerge(
   defaults: Record<string, unknown>,

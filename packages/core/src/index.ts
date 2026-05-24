@@ -23,13 +23,20 @@ export { probeStartupState } from './db/probe.js';
 export type { StartupProbeResult } from './db/probe.js';
 
 // Config
-export { loadConfig, saveConfig, resolveLlmConfig, DEFAULT_CONFIG } from './config/index.js';
+export {
+  loadConfig,
+  saveConfig,
+  resolveLlmConfig,
+  effectiveSyncIntervalMin,
+  DEFAULT_CONFIG,
+} from './config/index.js';
 export type {
   OwlConfig,
   LlmConfig,
   LlmApiFormat,
   AiConfig,
   DaemonConfig,
+  SyncConfig,
   LogConfig,
   EditorConfig,
   BrowserConfig,
