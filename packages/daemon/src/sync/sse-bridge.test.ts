@@ -254,6 +254,83 @@ describe('createSseBridge — reconnect with backoff (P5-b §6.2)', () => {
     assert.equal(sched.pending.length, 0);
   });
 
+  // P5-c Step 10: health-probe success calls bridge.triggerReconnect()
+  // to short-circuit the current backoff window.
+  it('triggerReconnect cancels the pending retry timer and connects immediately', () => {
+    const bridge = createSseBridge({
+      realClient: client as never,
+      workspaceId: 'ws-1',
+      ctx: makeCtx(),
+      logger,
+      schedule: sched.schedule,
+      jitter: (b) => b,
+    });
+    bridge.start();
+    client.fireError('disconnect'); // arms a retry timer at 2s
+    assert.equal(sched.pending.length, 1);
+
+    bridge.triggerReconnect();
+    assert.equal(sched.pending.length, 0, 'pending retry cancelled');
+    assert.equal(client.subscribeCalls, 2, 'connect() invoked synchronously');
+
+    bridge.stop();
+  });
+
+  it('triggerReconnect is a no-op when no retry is pending (already connected)', () => {
+    const bridge = createSseBridge({
+      realClient: client as never,
+      workspaceId: 'ws-1',
+      ctx: makeCtx(),
+      logger,
+      schedule: sched.schedule,
+      jitter: (b) => b,
+    });
+    bridge.start();
+    // No onError fired yet → we're "connected" from the bridge's POV.
+    bridge.triggerReconnect();
+    assert.equal(client.subscribeCalls, 1, 'no extra connect when no retry pending');
+    bridge.stop();
+  });
+
+  it('triggerReconnect is a no-op after stop()', () => {
+    const bridge = createSseBridge({
+      realClient: client as never,
+      workspaceId: 'ws-1',
+      ctx: makeCtx(),
+      logger,
+      schedule: sched.schedule,
+      jitter: (b) => b,
+    });
+    bridge.start();
+    client.fireError('e');
+    bridge.stop();
+    bridge.triggerReconnect();
+    // bridge.stop already cancelled the retry; triggerReconnect must not
+    // resurrect the bridge.
+    assert.equal(client.subscribeCalls, 1, 'stopped bridge stays stopped');
+  });
+
+  it('onErrorHook fires before scheduleReconnect; onOpenHook fires on (re)connect', () => {
+    const calls: string[] = [];
+    const bridge = createSseBridge({
+      realClient: client as never,
+      workspaceId: 'ws-1',
+      ctx: makeCtx(),
+      logger,
+      schedule: sched.schedule,
+      jitter: (b) => b,
+      onErrorHook: () => calls.push('onError'),
+      onOpenHook: () => calls.push('onOpen'),
+    });
+    bridge.start();
+    client.fireOpen();
+    client.fireError('e1');
+    sched.fireNext();
+    client.fireOpen();
+    assert.deepEqual(calls, ['onOpen', 'onError', 'onOpen']);
+    bridge.stop();
+  });
+
   it('subscribeEvents throwing → schedule reconnect rather than crashing start()', () => {
     const throwing = new FakeRealClient({ throwOnSubscribe: true });
     const bridge = createSseBridge({

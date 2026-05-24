@@ -34,6 +34,7 @@
 import type { Logger } from '@owl/core';
 import { type SkybridgeConfig, readSkybridgeConfig as defaultReadSkybridgeConfig } from '@owl/core';
 import type { AppContext } from '../context.js';
+import { type HealthProbe, createHealthProbe as defaultCreateHealthProbe } from './health-probe.js';
 import {
   type SkybridgeSession,
   ensureSkybridgeSession as defaultEnsureSkybridgeSession,
@@ -41,7 +42,7 @@ import {
 import { type SseBridge, createSseBridge as defaultCreateSseBridge } from './sse-bridge.js';
 
 export interface BridgeHandle {
-  /** Stop the underlying bridge. Idempotent; safe to call when bridge never started. */
+  /** Stop the underlying bridge AND its health probe. Idempotent. */
   stop(): void;
 }
 
@@ -49,6 +50,8 @@ export interface BridgeLifecycleDeps {
   readSkybridgeConfig?: () => SkybridgeConfig;
   ensureSkybridgeSession?: (ctx: AppContext) => Promise<SkybridgeSession>;
   createSseBridge?: typeof defaultCreateSseBridge;
+  /** Override health-probe factory for tests. P5-c Step 10. */
+  createHealthProbe?: typeof defaultCreateHealthProbe;
 }
 
 /**
@@ -64,6 +67,7 @@ export async function startSseBridgeIfBootstrapped(
   const readConfig = deps.readSkybridgeConfig ?? defaultReadSkybridgeConfig;
   const ensureSession = deps.ensureSkybridgeSession ?? defaultEnsureSkybridgeSession;
   const buildBridge = deps.createSseBridge ?? defaultCreateSseBridge;
+  const buildHealthProbe = deps.createHealthProbe ?? defaultCreateHealthProbe;
 
   let config: SkybridgeConfig;
   try {
@@ -100,11 +104,23 @@ export async function startSseBridgeIfBootstrapped(
     return null;
   }
 
+  // P5-c Step 10: compose bridge + health probe. The cycle (probe needs
+  // bridge.triggerReconnect; bridge needs probe.start/stop) is broken with
+  // a forward `let probe` that gets assigned before the bridge could
+  // possibly emit an event (start() is called synchronously below).
+  let probe: HealthProbe | null = null;
   const bridge: SseBridge = buildBridge({
     realClient: session.realClient,
     workspaceId: session.workspaceId,
     ctx,
     logger,
+    onErrorHook: () => probe?.start(),
+    onOpenHook: () => probe?.stop(),
+  });
+  probe = buildHealthProbe({
+    serverUrl: session.serverUrl,
+    logger,
+    onRecover: () => bridge.triggerReconnect(),
   });
 
   try {
@@ -117,11 +133,17 @@ export async function startSseBridgeIfBootstrapped(
       { kind: 'sse-bridge', err: errorMessage(err) },
       'sse-bridge start threw, bridge will NOT retry from here',
     );
+    probe.stop();
     return null;
   }
 
   logger.info({ kind: 'sse-bridge', workspaceId: session.workspaceId }, 'sse-bridge started');
-  return { stop: () => bridge.stop() };
+  return {
+    stop: () => {
+      bridge.stop();
+      probe?.stop();
+    },
+  };
 }
 
 function errorMessage(err: unknown): string {

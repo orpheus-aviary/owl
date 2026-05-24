@@ -49,17 +49,22 @@ function fakeSession(): SkybridgeSession {
 interface FakeBridge extends SseBridge {
   startCalls: number;
   stopCalls: number;
+  triggerReconnectCalls: number;
 }
 
 function makeFakeBridge(): FakeBridge {
   const b = {
     startCalls: 0,
     stopCalls: 0,
+    triggerReconnectCalls: 0,
     start() {
       this.startCalls += 1;
     },
     stop() {
       this.stopCalls += 1;
+    },
+    triggerReconnect() {
+      this.triggerReconnectCalls += 1;
     },
   };
   return b;
@@ -209,6 +214,9 @@ describe('startSseBridgeIfBootstrapped', () => {
       stop() {
         // no-op
       },
+      triggerReconnect() {
+        // no-op; throwing bridge never reaches the backoff state
+      },
     };
 
     const handle = await startSseBridgeIfBootstrapped(fakeCtx, logger, {
@@ -221,5 +229,59 @@ describe('startSseBridgeIfBootstrapped', () => {
     assert.ok(
       logger.lines.some((l) => l.startsWith('warn') && l.includes('sse-bridge start threw')),
     );
+  });
+
+  // P5-c Step 10: probe lifecycle composition.
+  it('composes health-probe with the bridge — onErrorHook→probe.start, onOpenHook→probe.stop', async () => {
+    const bridge = makeFakeBridge();
+    const logger = silentLogger();
+    const probeCalls: string[] = [];
+    let capturedHooks: { onErrorHook?: () => void; onOpenHook?: () => void } = {};
+
+    const handle = await startSseBridgeIfBootstrapped(fakeCtx, logger, {
+      readSkybridgeConfig: () => fullyBootstrappedConfig(),
+      ensureSkybridgeSession: async () => fakeSession(),
+      createSseBridge: (opts) => {
+        capturedHooks = { onErrorHook: opts.onErrorHook, onOpenHook: opts.onOpenHook };
+        return bridge;
+      },
+      createHealthProbe: () => ({
+        start: () => probeCalls.push('start'),
+        stop: () => probeCalls.push('stop'),
+      }),
+    });
+    assert.ok(handle);
+
+    // Trigger the hooks the bridge would have called from onError / onOpen.
+    capturedHooks.onErrorHook?.();
+    capturedHooks.onErrorHook?.(); // start() idempotent in real probe; multiple calls allowed
+    capturedHooks.onOpenHook?.();
+    assert.deepEqual(probeCalls, ['start', 'start', 'stop']);
+
+    handle.stop();
+    // handle.stop should also stop the probe (belt + suspenders for cli.ts
+    // shutdown after a crashed session leaves the probe alive).
+    assert.deepEqual(probeCalls.at(-1), 'stop');
+  });
+
+  it('probe onRecover → bridge.triggerReconnect (full feedback loop)', async () => {
+    const bridge = makeFakeBridge();
+    const logger = silentLogger();
+    const captured: { onRecover: (() => void) | null } = { onRecover: null };
+
+    const handle = await startSseBridgeIfBootstrapped(fakeCtx, logger, {
+      readSkybridgeConfig: () => fullyBootstrappedConfig(),
+      ensureSkybridgeSession: async () => fakeSession(),
+      createSseBridge: () => bridge,
+      createHealthProbe: (opts) => {
+        captured.onRecover = opts.onRecover;
+        return { start: () => {}, stop: () => {} };
+      },
+    });
+    assert.ok(handle);
+    assert.ok(captured.onRecover, 'probe captured onRecover callback from lifecycle');
+
+    captured.onRecover?.();
+    assert.equal(bridge.triggerReconnectCalls, 1, 'probe success forces bridge reconnect');
   });
 });

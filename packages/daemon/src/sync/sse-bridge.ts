@@ -26,9 +26,23 @@ import { getSyncStatusBroadcaster } from './status-broadcaster.js';
 export interface SseBridge {
   start(): void;
   stop(): void;
+  /**
+   * P5-c §3.2 — short-circuit the current backoff window and reconnect now.
+   * Called by `health-probe.ts` when /health returns 200 inside the
+   * onError → backoff window. No-op when the bridge is not currently
+   * waiting on a retry (already connected, never started, or stopped).
+   */
+  triggerReconnect(): void;
 }
 
-export interface SseBridgeOptions {
+export interface SseBridgeHooks {
+  /** Called on every onError before scheduleReconnect. P5-c Step 10 wires this to health-probe.start(). */
+  onErrorHook?: () => void;
+  /** Called on every onOpen before runManualSync. P5-c Step 10 wires this to health-probe.stop(). */
+  onOpenHook?: () => void;
+}
+
+export interface SseBridgeOptions extends SseBridgeHooks {
   realClient: RealSkybridgeClient;
   workspaceId: string;
   ctx: AppContext;
@@ -86,6 +100,10 @@ export function createSseBridge(opts: SseBridgeOptions): SseBridge {
           retryAttempt = 0;
           opts.logger.info({ kind: 'sse' }, 'connected');
           broadcaster.markConnected();
+          // P5-c §3.2: stop the health probe as soon as we're back online.
+          // Probe.stop() is idempotent so a probe that already self-stopped
+          // after triggering this reconnect is harmless.
+          opts.onOpenHook?.();
           // Catch-up: server SSE does not replay history. Pull anything
           // accumulated while we were disconnected.
           runManualSync(opts.ctx).catch((err) => {
@@ -98,6 +116,10 @@ export function createSseBridge(opts: SseBridgeOptions): SseBridge {
         onError: (err) => {
           opts.logger.warn({ kind: 'sse', err: errorMessage(err) }, 'SSE error');
           broadcaster.markOffline(err);
+          // P5-c §3.2: kick off the health probe so a transient disconnect
+          // can recover faster than the SSE retry cap (30s). Bridge still
+          // schedules its own reconnect — whichever lands first wins.
+          opts.onErrorHook?.();
           scheduleReconnect();
         },
       });
@@ -135,6 +157,17 @@ export function createSseBridge(opts: SseBridgeOptions): SseBridge {
       unsubscribe = null;
       retryHandle?.cancel();
       retryHandle = null;
+    },
+    triggerReconnect: () => {
+      // P5-c §3.2: short-circuit the current backoff window. Only acts
+      // when we're actually waiting on a retry — never re-subscribes
+      // while already connected, never resurrects a stopped bridge.
+      if (stopped) return;
+      if (!retryHandle) return;
+      retryHandle.cancel();
+      retryHandle = null;
+      opts.logger.info({ kind: 'sse' }, 'triggerReconnect: short-circuit backoff');
+      connect();
     },
   };
 }
