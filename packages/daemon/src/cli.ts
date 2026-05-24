@@ -17,12 +17,12 @@ import { Command } from 'commander';
 import { ConversationStore } from './ai/conversations.js';
 import { PreviewStore } from './ai/preview-store.js';
 import { createBuiltinRegistry } from './ai/tools/index.js';
+import type { AppContext } from './context.js';
 import { EventsBus } from './events/bus.js';
 import { isDaemonRunning, readPid, removePid, writePid } from './pid.js';
 import { ReminderScheduler } from './scheduler.js';
 import { buildServer } from './server.js';
-import { type BridgeHandle, startSseBridgeIfBootstrapped } from './sync/bridge-lifecycle.js';
-import { type SyncSchedulerHandle, createSyncScheduler } from './sync/scheduler.js';
+import { ensureBackgroundHandles, stopBackgroundHandles } from './sync/bridge-lifecycle.js';
 
 const program = new Command();
 
@@ -87,7 +87,7 @@ program
     const previewStore = new PreviewStore();
     const eventsBus = new EventsBus();
 
-    const ctx = {
+    const ctx: AppContext = {
       db,
       sqlite,
       config,
@@ -99,27 +99,21 @@ program
       previewStore,
       eventsBus,
       skybridgeSession: null,
+      // P5-c §2.2-bis — populated by ensureBackgroundHandles below (and
+      // re-populated mid-session from manual.ts:doRunManualSync after a
+      // post-boot login). Shutdown reads from ctx.
+      sseBridge: null,
+      syncScheduler: null,
     };
     const server = buildServer(ctx);
-
-    // SSE bridge lifecycle (P5-b Step 10a). Assigned after server.listen so
-    // an unreachable skybridge server can't delay daemon boot. The handle
-    // stays null until the post-listen startSseBridgeIfBootstrapped() call
-    // below — shutdown() reads it lazily so SIGTERM in the early-boot
-    // window still cleanly tears down everything else.
-    let bridgeHandle: BridgeHandle | null = null;
-    // P5-c Step 9: background sync timer. Same lifecycle invariant as
-    // bridgeHandle — start post-listen, stop on shutdown. Created
-    // unconditionally; the scheduler itself decides to no-op when
-    // `[sync].interval_min <= 0`.
-    let syncSchedulerHandle: SyncSchedulerHandle | null = null;
 
     // Graceful shutdown
     const shutdown = async () => {
       logger.info('Daemon shutting down...');
       scheduler.stop();
-      bridgeHandle?.stop();
-      syncSchedulerHandle?.stop();
+      // P5-c §2.2-bis: bridge + sync scheduler live on ctx so mid-session
+      // restart can swap them; stopBackgroundHandles reads + clears both.
+      stopBackgroundHandles(ctx);
       removePid();
       // server.close() triggers fastify's preClose → onClose chain. The
       // /events route registers a preClose hook that ends live SSE streams
@@ -158,14 +152,12 @@ program
       console.log(`Owl daemon running at ${address} (PID: ${process.pid})`);
       scheduler.start();
 
-      // Best-effort: start the SSE bridge if skybridge config is fully
-      // bootstrapped. Never throws — sync is opt-in. See bridge-lifecycle.ts.
-      bridgeHandle = await startSseBridgeIfBootstrapped(ctx, logger);
-
-      // P5-c Step 9: kick off the background sync timer. Always created
-      // (disabled inside the scheduler when interval_min <= 0); failing
-      // sync rounds are logged at warn but never crash the daemon.
-      syncSchedulerHandle = createSyncScheduler({ ctx, logger });
+      // P5-c §2.2-bis: kick off background handles (SSE bridge if toml
+      // fully bootstrapped, plus the sync scheduler — disabled inside
+      // when interval_min <= 0). Both populated on ctx; idempotent so
+      // manual.ts:doRunManualSync can call again mid-session after a
+      // post-boot login transitions toml to bootstrapped.
+      await ensureBackgroundHandles(ctx, logger);
     } catch (err) {
       logger.error({ err }, 'Failed to start daemon');
       console.error('Failed to start daemon:', err);

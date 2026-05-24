@@ -6,6 +6,8 @@ import type { PreviewStore } from './ai/preview-store.js';
 import type { ToolRegistry } from './ai/tool-registry.js';
 import type { EventsBus } from './events/bus.js';
 import type { ReminderScheduler } from './scheduler.js';
+import type { BridgeHandle } from './sync/bridge-lifecycle.js';
+import type { SyncSchedulerHandle } from './sync/scheduler.js';
 import type { SkybridgeSession } from './sync/session.js';
 
 /** Shared application context passed to all route handlers. */
@@ -39,4 +41,20 @@ export interface AppContext {
    * module-level) so the dual-profile e2e suite stays isolated.
    */
   skybridgeSession: SkybridgeSession | null;
+  /**
+   * P5-c §2.2-bis: live SSE bridge handle. Populated by
+   * `ensureBackgroundHandles(ctx, logger)` once toml is fully bootstrapped;
+   * stays null when daemon booted with an incomplete toml and the user
+   * hasn't run `owl sync login` + `owl sync run` yet. cli.ts shutdown
+   * reads this lazily so the bridge stops if it started, but a clean
+   * shutdown still works when the bridge never started.
+   */
+  sseBridge?: BridgeHandle | null;
+  /**
+   * P5-c §2.2: background sync timer handle. Always created at daemon
+   * boot — the scheduler itself decides to no-op when interval_min <= 0.
+   * Stored on ctx so mid-session restart (P5-c §2.2-bis) can read+stop
+   * before re-creating.
+   */
+  syncScheduler?: SyncSchedulerHandle | null;
 }

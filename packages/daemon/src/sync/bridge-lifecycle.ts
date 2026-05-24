@@ -36,6 +36,10 @@ import { type SkybridgeConfig, readSkybridgeConfig as defaultReadSkybridgeConfig
 import type { AppContext } from '../context.js';
 import { type HealthProbe, createHealthProbe as defaultCreateHealthProbe } from './health-probe.js';
 import {
+  type SyncSchedulerHandle,
+  createSyncScheduler as defaultCreateSyncScheduler,
+} from './scheduler.js';
+import {
   type SkybridgeSession,
   ensureSkybridgeSession as defaultEnsureSkybridgeSession,
 } from './session.js';
@@ -146,7 +150,71 @@ export async function startSseBridgeIfBootstrapped(
   };
 }
 
+/**
+ * P5-c §2.2-bis — idempotent boot-and-mid-session lifecycle entry point
+ * for the SSE bridge + sync scheduler. Called from two places:
+ *
+ *   1. `cli.ts` post-listen, exactly once at daemon boot.
+ *   2. `manual.ts:doRunManualSync` after `ensureSkybridgeSession`
+ *      succeeds. This is what covers the "daemon booted with incomplete
+ *      toml; user just ran `owl sync login` + `owl sync run`" path —
+ *      without it, the bridge would only come up on the next daemon
+ *      restart (P5-b deferred this lifecycle to P5-c by design).
+ *
+ * Idempotency invariants:
+ *   - `ctx.sseBridge` truthy  → skip bridge start (already wired)
+ *   - `ctx.sseBridge` null/undefined → attempt; field stays null when
+ *     toml is still incomplete (covered by `startSseBridgeIfBootstrapped`
+ *     internally returning null). Next call retries — cheap, just a
+ *     file read + cached-session lookup.
+ *   - `ctx.syncScheduler` truthy → skip scheduler start
+ *   - `ctx.syncScheduler` null/undefined → create one (no-ops internally
+ *     when interval_min <= 0).
+ *
+ * Reverse transition (toml goes from complete → incomplete, e.g. user
+ * deletes / logs out): P5-c §1.4 explicitly defers this to P5-d when
+ * logout flow gets designed end-to-end. This function never tears
+ * existing handles down.
+ *
+ * Never throws — sync is opt-in and must not break boot / mutation flow.
+ */
+export interface EnsureBackgroundDeps extends BridgeLifecycleDeps {
+  createSyncScheduler?: typeof defaultCreateSyncScheduler;
+}
+
+export async function ensureBackgroundHandles(
+  ctx: AppContext,
+  logger: Logger,
+  deps: EnsureBackgroundDeps = {},
+): Promise<void> {
+  const buildScheduler = deps.createSyncScheduler ?? defaultCreateSyncScheduler;
+
+  if (!ctx.sseBridge) {
+    const handle = await startSseBridgeIfBootstrapped(ctx, logger, deps);
+    ctx.sseBridge = handle;
+  }
+
+  if (!ctx.syncScheduler) {
+    ctx.syncScheduler = buildScheduler({ ctx, logger });
+  }
+}
+
+/**
+ * Tear-down helper for cli.ts shutdown. Stops whatever is currently on
+ * ctx; idempotent (`stop()` itself is idempotent in both handles).
+ */
+export function stopBackgroundHandles(ctx: AppContext): void {
+  ctx.sseBridge?.stop();
+  ctx.syncScheduler?.stop();
+  ctx.sseBridge = null;
+  ctx.syncScheduler = null;
+}
+
 function errorMessage(err: unknown): string {
   if (err instanceof Error) return err.message;
   return String(err);
 }
+
+// Re-export for type-only convenience to other modules that thread the
+// scheduler handle around.
+export type { SyncSchedulerHandle };

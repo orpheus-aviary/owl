@@ -37,6 +37,7 @@ import {
   writeSkybridgeConfig,
 } from '@owl/core';
 import type { AppContext } from '../context.js';
+import { ensureBackgroundHandles } from './bridge-lifecycle.js';
 import { createCoalescer } from './coalesce.js';
 import {
   type RealSkybridgeClient,
@@ -185,6 +186,18 @@ async function doRunManualSync(ctx: AppContext): Promise<RunSyncResult> {
   broadcaster.markSyncing();
   try {
     const session = await ensureSkybridgeSession(ctx);
+    // P5-c §2.2-bis: if daemon booted with an incomplete toml,
+    // bridge-lifecycle skipped the SSE bridge on boot. Now that a
+    // session has come up cleanly, kick off background handles in
+    // the background — idempotent when already started, never throws.
+    // Fire-and-log so a slow ensureSession path inside doesn't push
+    // sync round latency up.
+    void ensureBackgroundHandles(ctx, ctx.logger).catch((err: unknown) => {
+      ctx.logger.warn(
+        { kind: 'mid-session-bootstrap', err: errorMessageForLog(err) },
+        'ensureBackgroundHandles failed mid-session',
+      );
+    });
     const result = await runSync({
       db: ctx.db,
       sqlite: ctx.sqlite,
@@ -369,6 +382,11 @@ export function codeForError(err: unknown): string {
 export function messageForError(err: unknown): string {
   if (err instanceof Error) return err.message;
   return 'unknown sync failure';
+}
+
+function errorMessageForLog(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  return String(err);
 }
 
 // ─── Test-only reset (inflight Promise leaks across test cases) ───────

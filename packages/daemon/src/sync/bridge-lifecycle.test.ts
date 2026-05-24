@@ -4,7 +4,11 @@ import { describe, it } from 'node:test';
 import type { Logger, SkybridgeConfig } from '@owl/core';
 import { SkybridgeNotConfiguredError } from '@owl/core';
 import type { AppContext } from '../context.js';
-import { startSseBridgeIfBootstrapped } from './bridge-lifecycle.js';
+import {
+  ensureBackgroundHandles,
+  startSseBridgeIfBootstrapped,
+  stopBackgroundHandles,
+} from './bridge-lifecycle.js';
 import type { SkybridgeSession } from './session.js';
 import type { SseBridge } from './sse-bridge.js';
 
@@ -283,5 +287,107 @@ describe('startSseBridgeIfBootstrapped', () => {
 
     captured.onRecover?.();
     assert.equal(bridge.triggerReconnectCalls, 1, 'probe success forces bridge reconnect');
+  });
+});
+
+// P5-c §2.2-bis mid-session lifecycle.
+describe('ensureBackgroundHandles', () => {
+  function emptyCtx(): AppContext {
+    // biome-ignore lint/suspicious/noExplicitAny: minimal stub
+    return { sseBridge: null, syncScheduler: null } as any;
+  }
+
+  it('starts both bridge + scheduler from a clean ctx', async () => {
+    const ctx = emptyCtx();
+    const bridge = makeFakeBridge();
+    let schedulerStartCalls = 0;
+    let schedulerStopCalls = 0;
+
+    await ensureBackgroundHandles(ctx, silentLogger(), {
+      readSkybridgeConfig: () => fullyBootstrappedConfig(),
+      ensureSkybridgeSession: async () => fakeSession(),
+      createSseBridge: () => bridge,
+      createHealthProbe: () => ({ start: () => {}, stop: () => {} }),
+      createSyncScheduler: () => {
+        schedulerStartCalls += 1;
+        return {
+          stop: () => {
+            schedulerStopCalls += 1;
+          },
+        };
+      },
+    });
+
+    assert.ok(ctx.sseBridge, 'bridge handle attached to ctx');
+    assert.ok(ctx.syncScheduler, 'scheduler handle attached to ctx');
+    assert.equal(schedulerStartCalls, 1);
+    // sanity: stop handles tear both down
+    stopBackgroundHandles(ctx);
+    assert.equal(schedulerStopCalls, 1);
+    assert.equal(bridge.stopCalls, 1);
+    assert.equal(ctx.sseBridge, null);
+    assert.equal(ctx.syncScheduler, null);
+  });
+
+  it('idempotent — second call does NOT start a second bridge or scheduler', async () => {
+    const ctx = emptyCtx();
+    let bridgeFactoryCalls = 0;
+    let schedulerFactoryCalls = 0;
+    const deps = {
+      readSkybridgeConfig: () => fullyBootstrappedConfig(),
+      ensureSkybridgeSession: async () => fakeSession(),
+      createSseBridge: () => {
+        bridgeFactoryCalls += 1;
+        return makeFakeBridge();
+      },
+      createHealthProbe: () => ({ start: () => {}, stop: () => {} }),
+      createSyncScheduler: () => {
+        schedulerFactoryCalls += 1;
+        return { stop: () => {} };
+      },
+    };
+
+    await ensureBackgroundHandles(ctx, silentLogger(), deps);
+    await ensureBackgroundHandles(ctx, silentLogger(), deps);
+    await ensureBackgroundHandles(ctx, silentLogger(), deps);
+
+    assert.equal(bridgeFactoryCalls, 1, 'bridge only constructed once');
+    assert.equal(schedulerFactoryCalls, 1, 'scheduler only constructed once');
+  });
+
+  it('mid-session start: boot left ctx.sseBridge=null (incomplete toml), later call attaches bridge', async () => {
+    const ctx = emptyCtx();
+    const logger = silentLogger();
+    let configResolver: () => SkybridgeConfig = () => {
+      // simulate incomplete toml on boot
+      throw new SkybridgeNotConfiguredError('/tmp/sb.toml');
+    };
+    const bridge = makeFakeBridge();
+    const deps = {
+      readSkybridgeConfig: () => configResolver(),
+      ensureSkybridgeSession: async () => fakeSession(),
+      createSseBridge: () => bridge,
+      createHealthProbe: () => ({ start: () => {}, stop: () => {} }),
+      createSyncScheduler: () => ({ stop: () => {} }),
+    };
+
+    // Boot path — toml incomplete; bridge stays null but scheduler still wired.
+    await ensureBackgroundHandles(ctx, logger, deps);
+    assert.equal(ctx.sseBridge, null, 'bridge skipped on incomplete toml');
+    assert.ok(ctx.syncScheduler, 'scheduler still attached');
+    assert.equal(bridge.startCalls, 0);
+
+    // Simulate user running `owl sync login` + `owl sync run`: toml is now fully
+    // bootstrapped. doRunManualSync calls ensureBackgroundHandles again.
+    configResolver = () => fullyBootstrappedConfig();
+    await ensureBackgroundHandles(ctx, logger, deps);
+
+    assert.ok(ctx.sseBridge, 'bridge attached on mid-session retry');
+    assert.equal(bridge.startCalls, 1);
+  });
+
+  it('stopBackgroundHandles tolerates a ctx whose fields are already null', () => {
+    const ctx = emptyCtx();
+    assert.doesNotThrow(() => stopBackgroundHandles(ctx));
   });
 });
