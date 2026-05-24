@@ -36,6 +36,17 @@ just dev-daemon   # 启动 daemon dev
 - **数据目录**：`~/orpheus-aviary-nest/owl/`
 - **skybridge 对接**：P4 起在 `owl.db` 加 `sync_changes` / `sync_cursor` / `conflict_record` 表，架构见 `aviary/docs/SKYBRIDGE_ARCH.md`。旧 `owl.sync.db` 文件为 rclone bisync 方案遗留，skybridge 路线下不再使用
 - **skybridge SSE bridge（P5-b Step 10a 起）**：daemon 启动后只有 `skybridge_config.toml` 同时有 `[auth] + [device.id] + [workspace.id]` 才会 auto-start bridge（见 `packages/daemon/src/sync/bridge-lifecycle.ts`）。半启动状态（login 完但还没跑过 `owl sync run`）silent skip 等下次 daemon 重启。debug 时盯 `daemon.log` 关键字 `sse-bridge`：`started` / `skipped` / `connected` / `SSE error`。手动逐发 `change`：`POST /sync/run` 触发 markSyncing → markSuccess/markError 推送 `sync:status_changed`。彻底重启 bridge：`just stop-daemon && just dev-daemon`。SSE 重连永久退避 `[2,4,8,16,30]s + 0-1s jitter`，cap 30s 不放弃 —— offline 是信息态，**没有手动 reconnect 按钮**（GUI sidebar SyncStatusBar 只显示状态）
+- **skybridge debug 关键字（P5-c）**：daemon.log 里按需 grep：
+  - `kind:'sync'` — `runSync` 主线（push/pull/apply/LWW skip 路径）
+  - `kind:'sync-scheduler'` — 后台定时 sync（`[sync].interval_min`, default 5min, `<=0` 禁用）
+  - `kind:'health-probe'` — onError 退避期 10s `/health` 探针（仅在 SSE bridge 退避时跑，重连成功立即 stop）
+  - `kind:'mid-session-bootstrap'` — `ensureBackgroundHandles` 在首次 login + sync run 后拉起 bridge/scheduler 的幂等记录
+  - `[REDACTED]` — `createLogger` + `createConsoleLogger` 默认 redact 命中 `*.token` / `*.auth.token` / `authorization` / `headers.authorization` / `req.headers.authorization`
+- **skybridge token / 凭证（P5-c §6.27 路 C 安全模型）**：`skybridge_config.toml` 是 **local user secret**（unix 下 `chmod 0600`，见 `packages/core/src/skybridge/config.ts:177`）。token 不准进入：
+  - **log**：pino redact 自动盖结构化字段；字符串模板拼接由 `just token-not-templated`（`scripts/check-token-not-templated.sh`）grep 守卫拦下
+  - **UI**：sidebar `SyncStatusBar` popover 只渲染 `SyncStatusSnapshot`（无 token 字段），单测 `SyncStatusBar.test.tsx` 验证 `text` 不含 `token`/`authorization`/`Bearer`
+  - **字符串拼接 helper**：`redactToken()` 来自 `@owl/core/skybridge/redact.js`，留前 4 + 后 4 字符方便诊断，剩余打 `…`，输入短于 prefix+suffix+2 直接 `[REDACTED]`
+  - safeStorage keychain 加密 **不在 P5-c**，留 P5-d 与 token refresh / device pair 一起重设
 
 ## Commit 规范
 遵循上级 `orpheus-aviary/.claude/CLAUDE.md` 中的 Conventional Commits 规范。

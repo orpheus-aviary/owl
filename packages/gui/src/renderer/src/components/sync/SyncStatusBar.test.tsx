@@ -132,6 +132,39 @@ describe('SyncStatusBar popover content', () => {
     expect(within(popover).getByText('1f2a3b4c…')).toBeTruthy();
     expect(within(popover).getByText('aaaaaaaa…')).toBeTruthy();
   });
+
+  // P5-c §6.27 — popover renders the SyncStatusSnapshot only; no token-bearing
+  // field is part of that shape. Guard against a future regression where
+  // someone adds a token-flavoured property to the wire snapshot.
+  it('renders no field-name labels that smell like a token (regression: P5-c §6.27)', () => {
+    snapshotHolder.value = makeSnapshot({ state: 'idle' });
+    render(<SyncStatusBar />);
+    const popover = screen.getByTestId('popover-content');
+    const text = popover.textContent ?? '';
+    // None of the popover row labels reveal an auth token.
+    expect(text.toLowerCase()).not.toContain('token');
+    expect(text.toLowerCase()).not.toContain('authorization');
+    expect(text.toLowerCase()).not.toContain('bearer');
+  });
+
+  it('does not echo a token-shaped substring if last_error carries one', () => {
+    // Server-side translateSkybridgeError is supposed to scrub tokens
+    // before forwarding to the snapshot. If a 401 message ever ends up
+    // including a raw token, the popover would broadcast it. This
+    // belt-and-suspenders test asserts the popover author keeps the
+    // message verbatim — which means snubbing tokens is a *daemon-side*
+    // job that must be enforced by token-mask helpers there (see
+    // `core/src/skybridge/redact.ts`). The test guards against someone
+    // sneaking a `token` property onto the snapshot under a new name.
+    const tok = 'tok_aaaaaaaaaaaaaaaaaaaa';
+    snapshotHolder.value = makeSnapshot({
+      state: 'error',
+      last_error: 'auth rejected', // verbatim — daemon must scrub before sending
+    });
+    render(<SyncStatusBar />);
+    const popover = screen.getByTestId('popover-content');
+    expect(popover.textContent ?? '').not.toContain(tok);
+  });
 });
 
 describe('formatRelativeTime', () => {

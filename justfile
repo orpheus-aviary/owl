@@ -25,8 +25,15 @@ core-convergence:
 skybridge-not-committed:
     bash scripts/check-skybridge-not-committed.sh
 
+# P5-c §6.27 — skybridge auth tokens must not appear in string templates
+# or concatenation. pino.redact covers structured fields but can't reach
+# into `${tok}`. See scripts/check-token-not-templated.sh header.
 [group('lint')]
-check: lint typecheck core-convergence skybridge-not-committed
+token-not-templated:
+    bash scripts/check-token-not-templated.sh
+
+[group('lint')]
+check: lint typecheck core-convergence skybridge-not-committed token-not-templated
     @echo "All checks passed."
 
 # ─── Test ───────────────────────────────────────────────

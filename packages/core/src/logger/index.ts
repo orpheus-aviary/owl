@@ -15,6 +15,36 @@ export interface LoggerOptions {
 }
 
 /**
+ * P5-c §6.27 — default `pino.redact` paths.
+ *
+ * Both `createLogger` (file-rolling) and `createConsoleLogger` (stdout)
+ * apply these so any structured log line that carries a token field is
+ * automatically masked to `[REDACTED]` before serialization. Raw string
+ * interpolation of token values sidesteps `pino.redact` entirely —
+ * that's the job of the CI grep守卫 in
+ * `scripts/check-token-not-templated.sh`.
+ *
+ * The path globs cover:
+ *   - `*.token`               — any object property named `token`
+ *   - `*.auth.token`          — explicit nested cfg shape
+ *   - `authorization`         — top-level header
+ *   - `headers.authorization` — http req object shape
+ *   - `req.headers.authorization` — fastify req shape
+ */
+export const DEFAULT_LOG_REDACT_PATHS: readonly string[] = [
+  '*.token',
+  '*.auth.token',
+  'authorization',
+  'headers.authorization',
+  'req.headers.authorization',
+];
+
+const DEFAULT_REDACT = {
+  paths: [...DEFAULT_LOG_REDACT_PATHS],
+  censor: '[REDACTED]',
+};
+
+/**
  * Create a pino logger with file rotation via pino-roll.
  */
 export function createLogger(options: LoggerOptions): Logger {
@@ -44,6 +74,7 @@ export function createLogger(options: LoggerOptions): Logger {
       name,
       level: config.level,
       timestamp: pino.stdTimeFunctions.isoTime,
+      redact: DEFAULT_REDACT,
     },
     transport,
   );
@@ -57,6 +88,7 @@ export function createConsoleLogger(name: string, level = 'info'): Logger {
     name,
     level,
     timestamp: pino.stdTimeFunctions.isoTime,
+    redact: DEFAULT_REDACT,
     transport: {
       target: 'pino/file',
       options: { destination: 1 }, // stdout

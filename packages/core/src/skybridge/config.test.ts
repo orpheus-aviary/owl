@@ -197,3 +197,45 @@ describe('clearSkybridgeAuth', () => {
     clearSkybridgeAuth(cfgPath);
   });
 });
+
+describe('writeSkybridgeConfig — file mode (P5-c §6.27 token chmod)', () => {
+  it(
+    'chmods the file to 0600 on unix (regression guard for config.ts:177)',
+    { skip: process.platform === 'win32' },
+    () => {
+      writeSkybridgeConfig(
+        {
+          server: { url: SERVER_URL },
+          auth: { user_id: 'u', token: 'secret-token', email: 'e' },
+        },
+        cfgPath,
+      );
+      const mode = statSync(cfgPath).mode & 0o777;
+      assert.equal(mode, 0o600, `expected mode 0600, got ${mode.toString(8)}`);
+    },
+  );
+
+  it(
+    'overwrite keeps the mode at 0600 (regression — partial write must not loosen perms)',
+    { skip: process.platform === 'win32' },
+    () => {
+      // First write — establish baseline mode.
+      writeSkybridgeConfig({ server: { url: SERVER_URL } }, cfgPath);
+      assert.equal(statSync(cfgPath).mode & 0o777, 0o600);
+
+      // Second full-file rewrite (e.g. login adds [auth] later).
+      writeSkybridgeConfig(
+        {
+          server: { url: SERVER_URL },
+          auth: { user_id: 'u', token: 'fresh-token', email: 'e' },
+        },
+        cfgPath,
+      );
+      assert.equal(
+        statSync(cfgPath).mode & 0o777,
+        0o600,
+        'second writeSkybridgeConfig must re-apply 0600',
+      );
+    },
+  );
+});

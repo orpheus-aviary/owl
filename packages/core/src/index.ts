@@ -44,7 +44,11 @@ export type {
 export * as paths from './config/paths.js';
 
 // Logger
-export { createLogger, createConsoleLogger } from './logger/index.js';
+export {
+  createLogger,
+  createConsoleLogger,
+  DEFAULT_LOG_REDACT_PATHS,
+} from './logger/index.js';
 export type { Logger, LoggerOptions } from './logger/index.js';
 
 // Notes
@@ -172,6 +176,8 @@ export type {
   SkybridgeWorkspaceSection,
 } from './skybridge/config.js';
 export { persistSkybridgeIds } from './skybridge/identity.js';
+export { redactToken } from './skybridge/redact.js';
+export type { RedactTokenOptions } from './skybridge/redact.js';
 
 // Conversations (AI chat persistence)
 export {
