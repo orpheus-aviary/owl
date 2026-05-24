@@ -48,7 +48,6 @@ import {
   ensureDeviceId,
   persistSkybridgeIds,
   runSync,
-  syncReminders,
   updateNote,
 } from '@owl/core';
 import type Database from 'better-sqlite3';
@@ -554,11 +553,9 @@ describe('dual-profile core-only e2e (P5-b §8.3 D1-D10)', { skip: !gate }, () =
       folderId: null,
       tags: [{ tagType: '/alarm', tagValue: '2030-06-01T09:00:00' }],
     });
-    // Local mutation does NOT call syncReminders (that's the daemon's
-    // ReminderScheduler job in production). We invoke it explicitly here
-    // to mirror the post-mutation scheduler tick before the e2e checks
-    // cross-device parity.
-    syncReminders(profileA.db, profileA.sqlite, alarmNote.id);
+    // P5-c G5: createNote now calls syncReminders synchronously when
+    // input.tags includes /alarm. No explicit scheduler-tick simulation
+    // needed — `alarmNote` already has its reminder_status row.
     await runSyncOn(profileA);
     await runSyncOn(profileB);
 
@@ -569,7 +566,7 @@ describe('dual-profile core-only e2e (P5-b §8.3 D1-D10)', { skip: !gate }, () =
       .prepare('SELECT fire_at, status FROM reminder_status WHERE note_id = ?')
       .get(alarmNote.id) as { fire_at: number; status: string } | undefined;
 
-    assert.ok(aFire, 'A has a reminder_status row (post explicit syncReminders)');
+    assert.ok(aFire, 'A has a reminder_status row from createNote → syncReminders (P5-c G5)');
     // Apply path calls syncReminders for B automatically (engine.ts:247).
     assert.ok(bFire, 'B has a reminder_status row populated by apply');
     assert.equal(bFire?.fire_at, aFire?.fire_at, 'fire_at parsed identically on both sides');

@@ -5,6 +5,7 @@ import type { OwlDatabase } from '../db/index.js';
 import { noteTags, notes, tags } from '../db/schema.js';
 import { SPECIAL_NOTES } from '../db/special-notes.js';
 import { getFolderSubtreeIds } from '../folders/index.js';
+import { syncReminders } from '../reminders/index.js';
 import { readSkybridgeDeviceId } from '../skybridge/identity.js';
 import { emitSyncChange, readLocalDeviceUuid } from '../sync/changes.js';
 import type { ParsedTag } from '../tags/parser.js';
@@ -142,6 +143,12 @@ export function createNote(
 
       if (input.tags?.length) {
         syncNoteTags(db, sqlite, id, input.tags);
+        // P5-c G5: stamp reminder_status atomically with the note + tags
+        // write so /alarm tags fire from the next scheduler tick without
+        // needing the daemon ReminderScheduler poll to catch up. Daemon
+        // scheduler.onNoteChanged() still runs syncReminders (idempotent)
+        // + scheduleNext() to refresh the in-memory timer.
+        syncReminders(db, sqlite, id);
       }
 
       emitSyncChange(sqlite, {
@@ -383,6 +390,11 @@ export function updateNote(
 
     if (input.tags !== undefined) {
       syncNoteTags(db, sqlite, id, input.tags);
+      // P5-c G5: stamp reminder_status atomically. Covers /alarm being
+      // added, /alarm fireAt changing, and /alarm being removed (passing
+      // tags=[] clears reminder_status here). Daemon scheduler.onNoteChanged
+      // still re-runs (idempotent) for the in-memory timer refresh.
+      syncReminders(db, sqlite, id);
     }
 
     // Sparse post-state. content_hash + device_id derived server-side from

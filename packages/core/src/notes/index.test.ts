@@ -819,3 +819,81 @@ describe('notes mutation stamps device_id from local_metadata (P5-c G4)', () => 
     assert.equal(getDeviceId(note.id), 'remote-Z');
   });
 });
+
+describe('notes mutation triggers syncReminders (P5-c G5)', () => {
+  let db: OwlDatabase;
+  let sqlite: Database.Database;
+
+  before(() => {
+    const result = createDatabase({ dbPath: ':memory:' });
+    db = result.db;
+    sqlite = result.sqlite;
+  });
+
+  after(() => {
+    sqlite.close();
+  });
+
+  function countReminderStatus(noteId: string): number {
+    const row = sqlite
+      .prepare('SELECT COUNT(*) AS n FROM reminder_status WHERE note_id = ?')
+      .get(noteId) as { n: number };
+    return row.n;
+  }
+
+  function getReminder(
+    noteId: string,
+  ): { fire_at: number; status: string; tag_id: string } | undefined {
+    return sqlite
+      .prepare('SELECT fire_at, status, tag_id FROM reminder_status WHERE note_id = ?')
+      .get(noteId) as { fire_at: number; status: string; tag_id: string } | undefined;
+  }
+
+  it('createNote with /alarm tag immediately writes reminder_status (no scheduler tick)', () => {
+    const note = createNote(db, sqlite, {
+      content: 'g5-create-alarm',
+      tags: [{ tagType: '/alarm', tagValue: '2099-12-31 23:59:59' }],
+    });
+    assert.equal(countReminderStatus(note.id), 1);
+    const r = getReminder(note.id);
+    assert.ok(r);
+    assert.equal(r.status, 'pending');
+  });
+
+  it('updateNote: adding /alarm tag inserts reminder_status; removing it deletes', () => {
+    const note = createNote(db, sqlite, { content: 'g5-update-alarm', tags: [] });
+    assert.equal(countReminderStatus(note.id), 0, 'no reminder before /alarm');
+
+    const u1 = updateNote(db, sqlite, note.id, {
+      tags: [{ tagType: '/alarm', tagValue: '2099-06-15 10:00:00' }],
+    });
+    assert.ok(u1);
+    assert.equal(countReminderStatus(note.id), 1, 'adding /alarm inserts reminder_status');
+
+    const u2 = updateNote(db, sqlite, note.id, { tags: [] });
+    assert.ok(u2);
+    assert.equal(countReminderStatus(note.id), 0, 'removing all tags deletes reminder_status');
+  });
+
+  it('updateNote: changing /alarm fireAt updates reminder_status fire_at and resets to pending', () => {
+    const note = createNote(db, sqlite, {
+      content: 'g5-update-fireat',
+      tags: [{ tagType: '/alarm', tagValue: '2099-06-15 10:00:00' }],
+    });
+    const before = getReminder(note.id);
+    assert.ok(before);
+    // mark as fired so we can verify the reset
+    sqlite
+      .prepare("UPDATE reminder_status SET status='fired', fired_at=1 WHERE note_id=?")
+      .run(note.id);
+
+    const u = updateNote(db, sqlite, note.id, {
+      tags: [{ tagType: '/alarm', tagValue: '2099-06-15 12:00:00' }],
+    });
+    assert.ok(u);
+    const after = getReminder(note.id);
+    assert.ok(after);
+    assert.notEqual(after.fire_at, before.fire_at, 'fire_at moved');
+    assert.equal(after.status, 'pending', 'status reset to pending');
+  });
+});
