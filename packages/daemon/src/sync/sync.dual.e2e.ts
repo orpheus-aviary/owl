@@ -362,14 +362,19 @@ describe('dual-profile core-only e2e (P5-b §8.3 D1-D10)', { skip: !gate }, () =
     assert.equal(new Set(cids.map((r) => r.client_change_id)).size, 3, 'all cids unique');
     assert.equal(pendingChangeCount(profileA.sqlite), 3, 'all 3 still pending push');
 
-    // Local row carries A's local uuid. `notes.device_id` is NULL for
-    // locally-created notes — the production createNote at notes/index.ts
-    // doesn't read `local_metadata.skybridge_device_id`; device_id is
-    // populated only on the apply path (P5-b §3.4), so cross-device
-    // tracking happens in D7 below.
+    // Local row carries A's local uuid. P5-c G4: `createNote` now reads
+    // `local_metadata.skybridge_device_id` (set by `persistSkybridgeIds` at
+    // session setup, see fixture above) and stamps `notes.device_id` with
+    // A's skybridge id. apply path still fills `device_id` directly from
+    // `ServerChange.deviceId` (raw SQL), so cross-device flips in D7 are
+    // unaffected.
     const row = selectNote(profileA.sqlite, noteId);
     assert.equal(row?.local_device_uuid, profileA.localUuid);
-    assert.equal(row?.device_id, null, 'local create leaves device_id null');
+    assert.equal(
+      row?.device_id,
+      profileA.skybridgeDeviceId,
+      'local create stamps device_id from skybridge_device_id (P5-c G4)',
+    );
   });
 
   it('D3 — A first sync pushes all 3 changes; server_seq monotonic', async () => {

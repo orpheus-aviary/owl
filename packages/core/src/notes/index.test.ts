@@ -748,3 +748,74 @@ describe('reorderNotesInFolder (P3.4-a)', () => {
     );
   });
 });
+
+describe('notes mutation stamps device_id from local_metadata (P5-c G4)', () => {
+  let db: OwlDatabase;
+  let sqlite: Database.Database;
+
+  before(() => {
+    const result = createDatabase({ dbPath: ':memory:' });
+    db = result.db;
+    sqlite = result.sqlite;
+  });
+
+  after(() => {
+    sqlite.close();
+  });
+
+  function setSkybridgeDeviceId(value: string | null): void {
+    sqlite.prepare("DELETE FROM local_metadata WHERE key = 'skybridge_device_id'").run();
+    if (value !== null) {
+      sqlite
+        .prepare("INSERT INTO local_metadata (key, value) VALUES ('skybridge_device_id', ?)")
+        .run(value);
+    }
+  }
+
+  function getDeviceId(noteId: string): string | null {
+    const row = sqlite.prepare('SELECT device_id FROM notes WHERE id = ?').get(noteId) as
+      | { device_id: string | null }
+      | undefined;
+    return row?.device_id ?? null;
+  }
+
+  it('createNote stamps skybridge_device_id when input.deviceId is absent', () => {
+    setSkybridgeDeviceId('skybridge-A');
+    const note = createNote(db, sqlite, { content: 'g4-create-from-meta' });
+    assert.equal(getDeviceId(note.id), 'skybridge-A');
+  });
+
+  it('createNote with explicit input.deviceId overrides local_metadata', () => {
+    setSkybridgeDeviceId('skybridge-A');
+    const note = createNote(db, sqlite, {
+      content: 'g4-create-explicit',
+      deviceId: 'apply-from-server-X',
+    });
+    assert.equal(getDeviceId(note.id), 'apply-from-server-X');
+  });
+
+  it('createNote falls back to NULL when neither input.deviceId nor metadata present', () => {
+    setSkybridgeDeviceId(null);
+    const note = createNote(db, sqlite, { content: 'g4-create-no-meta' });
+    assert.equal(getDeviceId(note.id), null);
+  });
+
+  it('updateNote re-stamps device_id from local_metadata even without input.deviceId', () => {
+    setSkybridgeDeviceId('skybridge-A');
+    const note = createNote(db, sqlite, { content: 'g4-update' });
+    assert.equal(getDeviceId(note.id), 'skybridge-A');
+
+    setSkybridgeDeviceId('skybridge-B');
+    const updated = updateNote(db, sqlite, note.id, { content: 'edited' });
+    assert.ok(updated);
+    assert.equal(getDeviceId(note.id), 'skybridge-B');
+  });
+
+  it('updateNote with explicit input.deviceId honors override', () => {
+    setSkybridgeDeviceId('skybridge-A');
+    const note = createNote(db, sqlite, { content: 'g4-update-explicit' });
+    const updated = updateNote(db, sqlite, note.id, { deviceId: 'remote-Z' });
+    assert.ok(updated);
+    assert.equal(getDeviceId(note.id), 'remote-Z');
+  });
+});

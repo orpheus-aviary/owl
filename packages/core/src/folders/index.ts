@@ -3,6 +3,7 @@ import { asc, eq, sql } from 'drizzle-orm';
 import { v4 as uuidv4 } from 'uuid';
 import type { OwlDatabase } from '../db/index.js';
 import { folders } from '../db/schema.js';
+import { readSkybridgeDeviceId } from '../skybridge/identity.js';
 import { emitSyncChange, readLocalDeviceUuid } from '../sync/changes.js';
 
 // ─── Types ─────────────────────────────────────────────
@@ -72,7 +73,7 @@ export function createFolder(
           position,
           createdAt: now,
           updatedAt: now,
-          deviceId: input.deviceId ?? null,
+          deviceId: input.deviceId ?? readSkybridgeDeviceId(sqlite) ?? null,
           localDeviceUuid: readLocalDeviceUuid(sqlite),
         })
         .run();
@@ -153,7 +154,8 @@ export function updateFolder(
       if (input.name !== undefined) updates.name = input.name;
       if (input.parentId !== undefined) updates.parentId = input.parentId;
       if (input.position !== undefined) updates.position = input.position;
-      if (input.deviceId !== undefined) updates.deviceId = input.deviceId;
+      updates.deviceId =
+        input.deviceId !== undefined ? input.deviceId : (readSkybridgeDeviceId(sqlite) ?? null);
 
       db.update(folders).set(updates).where(eq(folders.id, id)).run();
 

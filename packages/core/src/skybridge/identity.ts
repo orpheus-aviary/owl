@@ -28,6 +28,25 @@ interface MetadataRow {
   value: string | null;
 }
 
+/**
+ * P5-c G4 — read the current skybridge device id stamped by
+ * `persistSkybridgeIds`. Used by `createNote` / `updateNote` /
+ * `createFolder` / `updateFolder` so local mutations stamp
+ * `notes.device_id` / `folders.device_id` with the skybridge source
+ * identity instead of leaving it NULL. apply path still fills
+ * `device_id` directly from `ServerChange.deviceId` (raw SQL, not
+ * via mutation API), so it's unaffected by this helper.
+ *
+ * Returns null when toml is half-bootstrapped (login done, sync not
+ * yet run, or row was deleted manually); caller falls back to null.
+ */
+export function readSkybridgeDeviceId(sqlite: Database.Database): string | null {
+  const row = sqlite
+    .prepare("SELECT value FROM local_metadata WHERE key = 'skybridge_device_id'")
+    .get() as MetadataRow | undefined;
+  return row?.value ?? null;
+}
+
 export function persistSkybridgeIds(
   sqlite: Database.Database,
   skybridgeDeviceId: string,

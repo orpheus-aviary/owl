@@ -152,3 +152,58 @@ describe('listNotes with include_descendants', () => {
     assert.ok(res.items.every((n) => n.folderId === null));
   });
 });
+
+describe('folders mutation stamps device_id from local_metadata (P5-c G4)', () => {
+  let db: OwlDatabase;
+  let sqlite: Database.Database;
+
+  before(() => {
+    const result = createDatabase({ dbPath: ':memory:' });
+    db = result.db;
+    sqlite = result.sqlite;
+  });
+
+  after(() => {
+    sqlite.close();
+  });
+
+  function setSkybridgeDeviceId(value: string | null): void {
+    sqlite.prepare("DELETE FROM local_metadata WHERE key = 'skybridge_device_id'").run();
+    if (value !== null) {
+      sqlite
+        .prepare("INSERT INTO local_metadata (key, value) VALUES ('skybridge_device_id', ?)")
+        .run(value);
+    }
+  }
+
+  function getDeviceId(folderId: string): string | null {
+    const row = sqlite.prepare('SELECT device_id FROM folders WHERE id = ?').get(folderId) as
+      | { device_id: string | null }
+      | undefined;
+    return row?.device_id ?? null;
+  }
+
+  it('createFolder stamps skybridge_device_id when input.deviceId is absent', () => {
+    setSkybridgeDeviceId('skybridge-A');
+    const f = createFolder(db, sqlite, { name: 'g4-create-from-meta' });
+    assert.equal(getDeviceId(f.id), 'skybridge-A');
+  });
+
+  it('createFolder with explicit input.deviceId overrides local_metadata', () => {
+    setSkybridgeDeviceId('skybridge-A');
+    const f = createFolder(db, sqlite, {
+      name: 'g4-create-explicit',
+      deviceId: 'apply-from-server-X',
+    });
+    assert.equal(getDeviceId(f.id), 'apply-from-server-X');
+  });
+
+  it('updateFolder re-stamps device_id from local_metadata even without input.deviceId', () => {
+    setSkybridgeDeviceId('skybridge-A');
+    const f = createFolder(db, sqlite, { name: 'g4-update' });
+    setSkybridgeDeviceId('skybridge-B');
+    const updated = updateFolder(db, sqlite, f.id, { name: 'g4-update-renamed' });
+    assert.ok(updated);
+    assert.equal(getDeviceId(f.id), 'skybridge-B');
+  });
+});

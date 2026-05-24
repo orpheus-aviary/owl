@@ -3,7 +3,7 @@ import { after, before, beforeEach, describe, it } from 'node:test';
 import type Database from 'better-sqlite3';
 import { createDatabase } from '../db/index.js';
 import { ensureDeviceId } from '../db/special-notes.js';
-import { persistSkybridgeIds } from './identity.js';
+import { persistSkybridgeIds, readSkybridgeDeviceId } from './identity.js';
 
 const SKYBRIDGE_DEVICE_ID = 'skybridge-dev-abc';
 const SKYBRIDGE_WORKSPACE_ID = 'ws-1';
@@ -117,5 +117,42 @@ describe('persistSkybridgeIds (P5-b §6.1)', () => {
     persistSkybridgeIds(sqlite, 'new-dev-id', 'new-ws');
     assert.equal(readMeta('skybridge_device_id'), 'new-dev-id');
     assert.equal(readMeta('skybridge_workspace_id'), 'new-ws');
+  });
+});
+
+describe('readSkybridgeDeviceId (P5-c G4)', () => {
+  let sqlite: Database.Database;
+  // biome-ignore lint/suspicious/noExplicitAny: drizzle wrapper type irrelevant
+  let db: any;
+
+  before(() => {
+    const created = createDatabase({ dbPath: ':memory:' });
+    sqlite = created.sqlite;
+    db = created.db;
+    ensureDeviceId(db);
+  });
+
+  after(() => {
+    sqlite.close();
+  });
+
+  beforeEach(() => {
+    sqlite.prepare("DELETE FROM local_metadata WHERE key = 'skybridge_device_id'").run();
+  });
+
+  it('returns null when skybridge_device_id row is absent (pre-login)', () => {
+    assert.equal(readSkybridgeDeviceId(sqlite), null);
+  });
+
+  it('returns the persisted id after persistSkybridgeIds runs', () => {
+    persistSkybridgeIds(sqlite, 'skybridge-xyz', 'ws-1');
+    assert.equal(readSkybridgeDeviceId(sqlite), 'skybridge-xyz');
+  });
+
+  it('returns null when the row has explicit NULL value', () => {
+    sqlite
+      .prepare("INSERT INTO local_metadata (key, value) VALUES ('skybridge_device_id', NULL)")
+      .run();
+    assert.equal(readSkybridgeDeviceId(sqlite), null);
   });
 });

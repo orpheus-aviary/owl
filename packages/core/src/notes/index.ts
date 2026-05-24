@@ -5,6 +5,7 @@ import type { OwlDatabase } from '../db/index.js';
 import { noteTags, notes, tags } from '../db/schema.js';
 import { SPECIAL_NOTES } from '../db/special-notes.js';
 import { getFolderSubtreeIds } from '../folders/index.js';
+import { readSkybridgeDeviceId } from '../skybridge/identity.js';
 import { emitSyncChange, readLocalDeviceUuid } from '../sync/changes.js';
 import type { ParsedTag } from '../tags/parser.js';
 import { AlreadyTrashedError, VersionMismatchError } from './errors.js';
@@ -133,7 +134,7 @@ export function createNote(
           createdAt: now,
           updatedAt: now,
           trashLevel: 0,
-          deviceId: input.deviceId ?? null,
+          deviceId: input.deviceId ?? readSkybridgeDeviceId(sqlite) ?? null,
           contentHash: hash,
           localDeviceUuid: readLocalDeviceUuid(sqlite),
         })
@@ -375,9 +376,8 @@ export function updateNote(
     if (input.folderId !== undefined) {
       updates.folderId = input.folderId;
     }
-    if (input.deviceId !== undefined) {
-      updates.deviceId = input.deviceId;
-    }
+    updates.deviceId =
+      input.deviceId !== undefined ? input.deviceId : (readSkybridgeDeviceId(sqlite) ?? null);
 
     db.update(notes).set(updates).where(eq(notes.id, id)).run();
 
