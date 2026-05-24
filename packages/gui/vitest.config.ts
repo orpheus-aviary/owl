@@ -45,7 +45,10 @@ export default defineConfig({
         test: {
           name: 'main',
           environment: 'node',
-          include: ['src/main/**/*.test.ts'],
+          // preload tests share node env + plain argv parsing helpers, no
+          // electron context needed (args.ts factored out of preload/index.ts
+          // for exactly this reason). P5-c G1.
+          include: ['src/main/**/*.test.ts', 'src/preload/**/*.test.ts'],
         },
       },
     ],

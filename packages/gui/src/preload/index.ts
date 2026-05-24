@@ -1,9 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
-
-type StartupMode =
-  | { mode: 'normal' }
-  | { mode: 'migrate-required'; dbPath: string }
-  | { mode: 'incompatible'; dbPath: string; dbVersion: number; maxSupported: number };
+import { daemonUrlFromArgv, parseStartupMode } from './args.js';
 
 type MigratePhase = 'backup' | 'copy' | 'fts-rebuild' | 'swap';
 
@@ -23,28 +19,13 @@ interface CliDetectResult {
   version?: string;
 }
 
-/**
- * Parse --startup-mode=<json> from process.argv. additionalArguments are
- * appended by main/window.ts when the window is constructed in migration
- * mode; absent → renderer boots the main app.
- *
- * Malformed JSON falls through to 'normal' instead of throwing — we don't
- * want a preload-script crash to strand the user in a blank renderer.
- */
-function parseStartupMode(): StartupMode {
-  const prefix = '--startup-mode=';
-  const arg = process.argv.find((a) => a.startsWith(prefix));
-  if (!arg) return { mode: 'normal' };
-  try {
-    return JSON.parse(arg.slice(prefix.length)) as StartupMode;
-  } catch {
-    return { mode: 'normal' };
-  }
-}
-
 contextBridge.exposeInMainWorld('owlAPI', {
-  daemonUrl: 'http://127.0.0.1:47010',
-  startupMode: parseStartupMode(),
+  // P5-c G1: main process injects `--daemon-port=<port>` via BrowserWindow
+  // additionalArguments so OWL_DAEMON_PORT env / multi-profile setups
+  // reach the renderer. Fallback 47010 keeps the prior hard-coded behavior
+  // if main forgot to inject (defensive — should not happen in practice).
+  daemonUrl: daemonUrlFromArgv(process.argv),
+  startupMode: parseStartupMode(process.argv),
 
   migration: {
     start: (): Promise<MigrationStartResult> => ipcRenderer.invoke('migration:start'),

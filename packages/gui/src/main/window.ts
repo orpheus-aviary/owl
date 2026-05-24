@@ -13,6 +13,14 @@ export interface CreateWindowOptions {
    */
   startupMode?: StartupMode;
   /**
+   * P5-c G1: the daemon port the main process is using (resolved from
+   * `OWL_DAEMON_PORT` env or default 47010). Pushed to preload via
+   * `additionalArguments = ['--daemon-port=<port>']` so the renderer's
+   * `window.owlAPI.daemonUrl` tracks main's spawn port. Absent → preload
+   * falls back to 47010 (defensive; main always passes it in practice).
+   */
+  daemonPort?: number;
+  /**
    * Called on every renderer 'close' event. main/index.ts wires this to the
    * shared `isQuitting` state so red-cross hides the window on macOS but
    * Cmd+Q still lets it close.
@@ -34,6 +42,9 @@ export function createWindow(options: CreateWindowOptions = {}): BrowserWindow {
   const additionalArguments: string[] = [];
   if (options.startupMode) {
     additionalArguments.push(`--startup-mode=${JSON.stringify(options.startupMode)}`);
+  }
+  if (options.daemonPort !== undefined) {
+    additionalArguments.push(`--daemon-port=${options.daemonPort}`);
   }
 
   const win = new BrowserWindow({

@@ -1,7 +1,7 @@
 import { paths } from '@owl/core';
 import { BrowserWindow, app, ipcMain } from 'electron';
 import { detectCli } from './cli-detect.js';
-import { ensureDaemonRunning, stopDaemonGracefully } from './daemon.js';
+import { ensureDaemonRunning, getDaemonPort, stopDaemonGracefully } from './daemon.js';
 import { registerMigrationIpc } from './migration-ipc.js';
 import type { StartupMode } from './migration-precheck.js';
 import { runMigrationPrecheck } from './migration-precheck.js';
@@ -82,12 +82,14 @@ app.whenReady().then(async () => {
     pendingQuitResolve?.(proceed);
   });
 
+  const daemonPort = getDaemonPort();
+
   if (precheck.mode === 'normal') {
     await ensureDaemonRunning();
-    createWindow({ onClose: onWindowClose });
+    createWindow({ daemonPort, onClose: onWindowClose });
   } else {
-    const win = createWindow({ startupMode: precheck, onClose: onWindowClose });
-    registerMigrationIpc(win, dbPath, () => createWindow({ onClose: onWindowClose }));
+    const win = createWindow({ startupMode: precheck, daemonPort, onClose: onWindowClose });
+    registerMigrationIpc(win, dbPath, () => createWindow({ daemonPort, onClose: onWindowClose }));
   }
 
   app.on('activate', () => {
@@ -98,7 +100,7 @@ app.whenReady().then(async () => {
       // activate only fires on macOS after the app has a normal window,
       // which in MigrationDialog flow only happens post-migration. So it's
       // always safe to recreate in normal mode here.
-      createWindow({ onClose: onWindowClose });
+      createWindow({ daemonPort, onClose: onWindowClose });
     }
   });
 });

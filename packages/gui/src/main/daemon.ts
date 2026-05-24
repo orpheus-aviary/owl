@@ -116,6 +116,14 @@ export function getDaemonUrl(): string {
 }
 
 /**
+ * Get the resolved daemon port (env override or 47010 default). Exposed
+ * for P5-c G1 so window.ts can hand it to preload via additionalArguments.
+ */
+export function getDaemonPort(): number {
+  return DAEMON_PORT;
+}
+
+/**
  * Stop the daemon IF this GUI owns it. SIGTERM → poll → 3s timeout → SIGKILL.
  * Never touches a daemon we didn't start (external daemon / failed spawn).
  */
