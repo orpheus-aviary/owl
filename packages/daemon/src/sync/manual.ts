@@ -217,6 +217,11 @@ async function doRunManualSync(ctx: AppContext): Promise<RunSyncResult> {
       last_sync_at: Date.now(),
     });
     if (result.appliedTotal > 0) ctx.scheduler.reload();
+    // P5-c §6.19: detection-time poke for the GUI sidebar 红点. Payload-free —
+    // subscribers refetch `/conflicts/count` to learn the new value.
+    if (result.conflictsRecorded > 0) {
+      ctx.eventsBus.emit({ type: 'conflicts:changed' });
+    }
     return result;
   } catch (err) {
     // 401 / SkybridgeAuthRequired invalidates the cached session so the

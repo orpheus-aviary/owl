@@ -138,6 +138,20 @@ export {
 } from './sync/retry.js';
 export type { WithRetryOptions, RetryLogger } from './sync/retry.js';
 
+// Conflict_record helpers (P5-c §2.4)
+export {
+  recordConflict,
+  listUnresolvedConflicts,
+  countUnresolvedConflicts,
+  ignoreConflict,
+} from './sync/conflicts.js';
+export type {
+  ConflictRecord,
+  ConflictLosingSide,
+  ConflictResolution,
+  RecordConflictArgs,
+} from './sync/conflicts.js';
+
 // Skybridge client config (P5-a Step 6 — TOML read/write)
 export {
   clearSkybridgeAuth,

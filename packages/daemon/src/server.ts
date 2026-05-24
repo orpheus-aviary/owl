@@ -3,6 +3,7 @@ import Fastify, { type FastifyError } from 'fastify';
 import type { AppContext } from './context.js';
 import { registerAiRoutes } from './routes/ai.js';
 import { registerConfigRoutes } from './routes/config.js';
+import { registerConflictsRoutes } from './routes/conflicts.js';
 import { registerEventsRoutes } from './routes/events.js';
 import { registerFolderRoutes } from './routes/folders.js';
 import { registerNoteRoutes } from './routes/notes.js';
@@ -54,6 +55,7 @@ export function buildServer(ctx: AppContext) {
   registerSystemRoutes(app);
   registerEventsRoutes(app, ctx);
   registerSyncRoutes(app, ctx);
+  registerConflictsRoutes(app, ctx);
 
   return app;
 }

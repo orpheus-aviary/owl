@@ -14,11 +14,25 @@ import type { SyncStatusSnapshot } from '@/lib/api';
  * listener — anything thrown or rejected would surface as an
  * unhandled rejection. The emit side already surfaces real failures
  * to the CLI; renderer-side we just want to stay silent.
+ *
+ * P5-c §6.30 — `EVENT_TYPES` drives the `addEventListener` loop in
+ * `EventsSubscriber.tsx`. Adding a new daemon event type requires:
+ *   1. Add a branch to `handleDaemonEvent` below.
+ *   2. Append the event name to `EVENT_TYPES`.
+ * The matching `OwlEvent` union lives in
+ * `packages/daemon/src/events/types.ts`.
  */
+export const EVENT_TYPES = ['open_note', 'sync:status_changed', 'conflicts:changed'] as const;
+export type EventName = (typeof EVENT_TYPES)[number];
+
 export interface EventHandlers {
   openNoteById: (id: string) => Promise<void>;
   navigate: (path: string) => void;
   setSyncStatus: (snapshot: SyncStatusSnapshot) => void;
+  /** P5-c §6.19: pulled when daemon signals `conflicts:changed`. */
+  refreshConflicts: () => Promise<void>;
+  /** P5-c §6.19: nudges data-bus subscribers (ConflictsPage list refetch). */
+  bumpConflicts: () => void;
 }
 
 export async function handleDaemonEvent(
@@ -31,6 +45,9 @@ export async function handleDaemonEvent(
   }
   if (eventName === 'sync:status_changed') {
     return handleSyncStatusChanged(rawData, handlers);
+  }
+  if (eventName === 'conflicts:changed') {
+    return handleConflictsChanged(handlers);
   }
 }
 
@@ -88,4 +105,15 @@ function handleSyncStatusChanged(rawData: string, handlers: EventHandlers): void
     return;
   }
   handlers.setSyncStatus(status as SyncStatusSnapshot);
+}
+
+/**
+ * P5-c §6.19 — `conflicts:changed` is payload-free. Refresh the count
+ * via `GET /conflicts/count` and bump data-bus so any open ConflictsPage
+ * refetches its list. Both calls are best-effort; refresh() swallows
+ * its own errors into `useConflictsStore.error`.
+ */
+async function handleConflictsChanged(handlers: EventHandlers): Promise<void> {
+  await handlers.refreshConflicts();
+  handlers.bumpConflicts();
 }

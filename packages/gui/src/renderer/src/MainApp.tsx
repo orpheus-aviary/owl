@@ -5,6 +5,7 @@ import { extractTitle } from '@/components/NoteListItem';
 import { UnsavedTabsDialog } from '@/components/UnsavedTabsDialog';
 import { ConflictDialog } from '@/components/ai/ConflictDialog';
 import { NoteAppliedToast } from '@/components/ai/NoteAppliedToast';
+import { ConflictsNav } from '@/components/sync/ConflictsNav';
 import { SyncStatusBar } from '@/components/sync/SyncStatusBar';
 import { ResizeHandle } from '@/components/ui/resize-handle';
 import { useOwlLayout } from '@/hooks/useOwlLayout';
@@ -15,6 +16,7 @@ import { LAYOUT_KEYS } from '@/lib/layout-keys';
 import { matchesShortcut } from '@/lib/shortcuts';
 import { useBrowserStore } from '@/stores/browser-store';
 import { useConfigStore } from '@/stores/config-store';
+import { useConflictsStore } from '@/stores/conflicts-store';
 import { useDataBus } from '@/stores/data-bus';
 import { useEditorStore } from '@/stores/editor-store';
 import { isDescendant, useFolderStore } from '@/stores/folder-store';
@@ -47,6 +49,7 @@ import { Group, Panel, usePanelRef } from 'react-resizable-panels';
 import { HashRouter, NavLink, Route, Routes, useNavigate } from 'react-router-dom';
 import { AIPage } from './pages/AIPage';
 import { BrowserPage } from './pages/BrowserPage';
+import { ConflictsPage } from './pages/ConflictsPage';
 import { EditorPage } from './pages/EditorPage';
 import { RemindersPage } from './pages/RemindersPage';
 import { SettingsPage } from './pages/SettingsPage';
@@ -251,6 +254,13 @@ export function MainApp() {
       });
   }, []);
 
+  // P5-c §6.33: cold-start fetch of conflict count. SSE `conflicts:changed`
+  // only fires on *new* conflicts; the sidebar 红点 needs an absolute value
+  // when the daemon has been running before this renderer attached.
+  useEffect(() => {
+    void useConflictsStore.getState().refresh();
+  }, []);
+
   const panelOpen = useFolderStore((s) => s.panelOpen);
   const togglePanel = useFolderStore((s) => s.togglePanel);
 
@@ -331,6 +341,9 @@ export function MainApp() {
               </NavLink>
             ))}
 
+            {/* P5-c §6.19 — only renders when count > 0. */}
+            <ConflictsNav />
+
             {/* P5-b §6.3 — daemon sync indicator pinned to the bottom of
              * the sidebar. The button must be a direct flex child of <nav>
              * so it stretches to the 64px column width; a wrapping div
@@ -377,6 +390,7 @@ export function MainApp() {
                   <Route path="/reminders" element={<RemindersPage />} />
                   <Route path="/todo" element={<TodoPage />} />
                   <Route path="/ai" element={<AIPage />} />
+                  <Route path="/conflicts" element={<ConflictsPage />} />
                   <Route path="/settings" element={<SettingsPage />} />
                 </Routes>
               </main>

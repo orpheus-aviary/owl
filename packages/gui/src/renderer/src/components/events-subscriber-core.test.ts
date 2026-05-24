@@ -1,12 +1,14 @@
 import type { SyncStatusSnapshot } from '@/lib/api';
 import { describe, expect, it, vi } from 'vitest';
-import { handleDaemonEvent } from './events-subscriber-core';
+import { EVENT_TYPES, handleDaemonEvent } from './events-subscriber-core';
 
 function makeHandlers() {
   return {
     openNoteById: vi.fn().mockResolvedValue(undefined),
     navigate: vi.fn(),
     setSyncStatus: vi.fn(),
+    refreshConflicts: vi.fn().mockResolvedValue(undefined),
+    bumpConflicts: vi.fn(),
   };
 }
 
@@ -75,6 +77,8 @@ describe('handleDaemonEvent — open_note', () => {
       openNoteById: vi.fn().mockRejectedValue(new Error('boom')),
       navigate: vi.fn(),
       setSyncStatus: vi.fn(),
+      refreshConflicts: vi.fn().mockResolvedValue(undefined),
+      bumpConflicts: vi.fn(),
     };
 
     await expect(
@@ -148,5 +152,42 @@ describe('handleDaemonEvent — sync:status_changed', () => {
     expect(handlers.setSyncStatus).not.toHaveBeenCalled();
     expect(warn).toHaveBeenCalled();
     warn.mockRestore();
+  });
+});
+
+describe('handleDaemonEvent — conflicts:changed (P5-c §6.19)', () => {
+  it('calls refreshConflicts() then bumpConflicts()', async () => {
+    const handlers = makeHandlers();
+    await handleDaemonEvent(
+      'conflicts:changed',
+      JSON.stringify({ type: 'conflicts:changed' }),
+      handlers,
+    );
+    expect(handlers.refreshConflicts).toHaveBeenCalledTimes(1);
+    expect(handlers.bumpConflicts).toHaveBeenCalledTimes(1);
+  });
+
+  it('ignores rawData payload (event is payload-free)', async () => {
+    const handlers = makeHandlers();
+    await handleDaemonEvent('conflicts:changed', 'not-json-at-all', handlers);
+    expect(handlers.refreshConflicts).toHaveBeenCalledTimes(1);
+    expect(handlers.bumpConflicts).toHaveBeenCalledTimes(1);
+  });
+
+  it('still bumps even if refresh fails (refresh swallows its own errors)', async () => {
+    const handlers = {
+      ...makeHandlers(),
+      refreshConflicts: vi.fn().mockResolvedValue(undefined),
+    };
+    await handleDaemonEvent('conflicts:changed', '{}', handlers);
+    expect(handlers.bumpConflicts).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('EVENT_TYPES is the source of truth (P5-c §6.30)', () => {
+  it('lists every event handled by handleDaemonEvent', () => {
+    expect([...EVENT_TYPES].sort()).toEqual(
+      ['conflicts:changed', 'open_note', 'sync:status_changed'].sort(),
+    );
   });
 });

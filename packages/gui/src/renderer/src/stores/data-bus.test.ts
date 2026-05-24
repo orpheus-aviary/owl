@@ -30,4 +30,14 @@ describe('data-bus', () => {
     expect(calls.length).toBe(2);
     expect(calls[1]).toBe(calls[0] + 1);
   });
+
+  it('bumpConflicts increments conflictVersion independently (P5-c §6.19)', () => {
+    const beforeNote = useDataBus.getState().noteVersion;
+    const beforeFolder = useDataBus.getState().folderVersion;
+    const beforeConflict = useDataBus.getState().conflictVersion;
+    useDataBus.getState().bumpConflicts();
+    expect(useDataBus.getState().conflictVersion).toBe(beforeConflict + 1);
+    expect(useDataBus.getState().noteVersion).toBe(beforeNote);
+    expect(useDataBus.getState().folderVersion).toBe(beforeFolder);
+  });
 });

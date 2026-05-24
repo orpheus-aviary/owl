@@ -17,6 +17,11 @@
  * `ctx.scheduler.reload()` calls — intentionally NOT a separate event,
  * to avoid leaking internal lifecycle to the GUI.
  *
+ * `conflicts:changed` (P5-c §6.19) is a payload-free poke — GUI fetches
+ * fresh count via `/conflicts/count` on receipt. Emitted by `manual.ts`
+ * when `runSync` returns `conflictsRecorded > 0`, and by `/conflicts/:id/ignore`
+ * after the soft-delete UPDATE so other windows see the count drop.
+ *
  * New event types should be added here and mirrored in the renderer
  * dispatcher (see `packages/gui/src/renderer/src/components/
  * events-subscriber-core.ts`). The wire contract is simply
@@ -25,7 +30,8 @@
 export type OwlEvent =
   | { type: 'hello'; server_time: number }
   | { type: 'open_note'; note_id: string }
-  | { type: 'sync:status_changed'; status: SyncStatusSnapshot };
+  | { type: 'sync:status_changed'; status: SyncStatusSnapshot }
+  | { type: 'conflicts:changed' };
 
 export type SyncState = 'idle' | 'syncing' | 'error' | 'offline';
 

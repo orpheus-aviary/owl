@@ -22,13 +22,22 @@ interface DataBus {
   noteVersion: number;
   /** Bump on folder CRUD: create / rename / move / reorder / remove. */
   folderVersion: number;
+  /**
+   * Bump when the daemon signals `conflicts:changed` (P5-c §6.19 — sync round
+   * recorded a new conflict, or ignore route soft-deleted one). Subscribers
+   * refresh the count + list. Cold-start fetch lives in `MainApp` mount.
+   */
+  conflictVersion: number;
   bumpNotes: () => void;
   bumpFolders: () => void;
+  bumpConflicts: () => void;
 }
 
 export const useDataBus = create<DataBus>((set) => ({
   noteVersion: 0,
   folderVersion: 0,
+  conflictVersion: 0,
   bumpNotes: () => set((s) => ({ noteVersion: s.noteVersion + 1 })),
   bumpFolders: () => set((s) => ({ folderVersion: s.folderVersion + 1 })),
+  bumpConflicts: () => set((s) => ({ conflictVersion: s.conflictVersion + 1 })),
 }));

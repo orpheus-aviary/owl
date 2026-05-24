@@ -447,6 +447,40 @@ export interface SyncStatusSnapshot {
 
 export const getSyncStatus = () => request<SyncStatusResult>('GET', '/sync/status');
 
+// Conflicts (P5-c §2.4)
+
+/**
+ * Wire shape of one row from `GET /conflicts`. snake_case mirrors what the
+ * daemon emits straight from `conflict_record`. `local_payload` /
+ * `remote_payload` are serialized JSON strings — callers JSON.parse on
+ * read.
+ */
+export interface ConflictRecord {
+  id: string;
+  entity_type: string;
+  entity_id: string;
+  local_seq: number | null;
+  remote_seq: number | null;
+  detected_at: number;
+  resolved_at: number | null;
+  resolution: string | null;
+  losing_side: string | null;
+  local_payload: string | null;
+  remote_payload: string | null;
+  local_updated_at_ms: number | null;
+  remote_updated_at_ms: number | null;
+}
+
+export const listConflicts = (limit?: number) => {
+  const q = limit !== undefined ? `?limit=${limit}` : '';
+  return request<{ conflicts: ConflictRecord[] }>('GET', `/conflicts${q}`);
+};
+
+export const getConflictCount = () => request<{ count: number }>('GET', '/conflicts/count');
+
+export const ignoreConflict = (id: string) =>
+  request<{ id: string; ignored: true }>('POST', `/conflicts/${id}/ignore`);
+
 // Tag editing helpers
 
 /** Serialize a note's tags array back to raw tag strings for API submission. */
