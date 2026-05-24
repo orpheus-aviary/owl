@@ -394,7 +394,7 @@ function UnfiledSection({
       <button
         type="button"
         onClick={onToggle}
-        className="group flex items-center gap-1 pr-1 h-7 rounded-sm hover:bg-sidebar-accent/60 cursor-default w-full"
+        className="group flex items-center gap-1 pr-1 h-6 rounded-sm hover:bg-sidebar-accent/60 cursor-default w-full"
         style={{ paddingLeft: 4 }}
       >
         <span className="size-4 shrink-0 flex items-center justify-center text-muted-foreground">
@@ -495,7 +495,7 @@ function FolderRow({ node, depth, ...h }: { node: FolderNode; depth: number } & 
             {...attributes}
             onDoubleClick={() => hasChildren && h.onToggle(node.id)}
             className={cn(
-              'group flex items-center gap-1 pr-1 h-7 rounded-sm',
+              'group flex items-center gap-1 pr-1 h-6 rounded-sm',
               isDragging && 'opacity-40',
               showNodeHover
                 ? 'bg-sidebar-primary/25 outline outline-2 outline-sidebar-primary'
@@ -671,7 +671,7 @@ function FolderNoteRow({
           onClick={() => onSelect(note.id)}
           onDoubleClick={() => onOpen(note.id)}
           className={cn(
-            'group flex items-center gap-1 pr-1 h-7 rounded-sm cursor-default',
+            'group flex items-center gap-1 pr-1 h-6 rounded-sm cursor-default',
             isDragging && 'opacity-40',
             isSelected ? 'bg-accent' : 'hover:bg-sidebar-accent/60',
           )}
