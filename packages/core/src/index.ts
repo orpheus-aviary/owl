@@ -128,6 +128,16 @@ export type {
   RunSyncLogger,
 } from './sync/engine.js';
 
+// HTTP retry wrapper (P5-c §2.3)
+export {
+  withRetry,
+  defaultIsRetryable,
+  DEFAULT_MAX_RETRIES,
+  DEFAULT_BACKOFF_MS,
+  DEFAULT_JITTER_MS,
+} from './sync/retry.js';
+export type { WithRetryOptions, RetryLogger } from './sync/retry.js';
+
 // Skybridge client config (P5-a Step 6 — TOML read/write)
 export {
   clearSkybridgeAuth,

@@ -46,6 +46,7 @@ import {
   type NoteTag,
   parseNotePayload,
 } from './payloads/note.js';
+import { type WithRetryOptions, withRetry } from './retry.js';
 
 // ─── Structural client surface (no @skybridge/* imports) ─────────────
 
@@ -114,6 +115,13 @@ export interface RunSyncDeps {
   serverUrl: string;
   nowMs?: () => number;
   logger?: RunSyncLogger;
+  /**
+   * P5-c §2.3 — HTTP retry options for the push / pull calls. Defaults to
+   * `withRetry`'s baked-in 5-retry / 1-2-4-8-16s ladder when omitted.
+   * Tests inject `{ sleep, random, isRetryable }` to make the retry loop
+   * deterministic. Set `maxRetries: 0` to opt out of retry entirely.
+   */
+  retryOptions?: WithRetryOptions;
 }
 
 export interface RunSyncResult {
@@ -686,6 +694,26 @@ export async function runSync(deps: RunSyncDeps): Promise<RunSyncResult> {
   const { db, sqlite, client, workspaceId, serverUrl } = deps;
   const now = deps.nowMs ?? Date.now;
   const logger = deps.logger ?? NOOP_LOGGER;
+  // P5-c §2.3: HTTP retry wrapper. Default 5 retries / 1-2-4-8-16s. Plumbed
+  // into push + pull only — non-HTTP errors (validator failures, protocol
+  // violations) skip the retry layer.
+  const retryOptions = deps.retryOptions;
+  const retryLogger = retryOptions?.logger ?? {
+    warn: (obj: object, msg: string) => logger.warn?.({ kind: 'sync', ...obj }, msg),
+  };
+  const retryPush = (): Promise<PushResultLike> =>
+    withRetry(() => client.pushChanges(workspaceId, localChangesRef.value!), {
+      ...retryOptions,
+      logger: retryLogger,
+    });
+  const retryPull = (sinceServerSeq: number): Promise<PullResultLike> =>
+    withRetry(() => client.pullChanges(workspaceId, sinceServerSeq), {
+      ...retryOptions,
+      logger: retryLogger,
+    });
+  // Captured-reference trick so we can hoist retryPush() out of the loop
+  // body even though `localChanges` is computed later.
+  const localChangesRef: { value: LocalChangeLike[] | null } = { value: null };
 
   // ── Step 0: read cursor ────────────────────────────────────────
   const cursorRow = sqlite
@@ -703,7 +731,7 @@ export async function runSync(deps: RunSyncDeps): Promise<RunSyncResult> {
   // transactions are sync). Validator throws inside → batch rolls back,
   // outer await unwinds, cursor un-advanced.
   for (;;) {
-    const pulled = await client.pullChanges(workspaceId, cursor);
+    const pulled = await retryPull(cursor);
 
     if (pulled.changes.length === 0 && pulled.hasMore) {
       throw new SkybridgeProtocolError(
@@ -764,7 +792,8 @@ export async function runSync(deps: RunSyncDeps): Promise<RunSyncResult> {
       attachmentRefs: null,
     }));
 
-    const result = await client.pushChanges(workspaceId, localChanges);
+    localChangesRef.value = localChanges;
+    const result = await retryPush();
 
     const acks: PushAckLike[] = [...result.accepted, ...result.duplicates];
     serverSeqHigh = acks.reduce((m, a) => (a.serverSeq > m ? a.serverSeq : m), 0);
