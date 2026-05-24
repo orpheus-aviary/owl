@@ -64,6 +64,7 @@ function clearAllTables(sqlite: Database.Database): void {
   sqlite.prepare('DELETE FROM notes').run();
   sqlite.prepare('DELETE FROM sync_changes').run();
   sqlite.prepare('DELETE FROM sync_cursor').run();
+  sqlite.prepare('DELETE FROM conflict_record').run();
   sqlite.prepare('DELETE FROM local_metadata').run();
 }
 
@@ -228,6 +229,7 @@ describe('runSync — empty', () => {
       serverSeqHigh: 0,
       cursorBefore: 0,
       cursorAfter: 0,
+      conflictsRecorded: 0,
     });
     // pull was attempted exactly once with cursor=0
     assert.equal(client.pullCalls.length, 1);
@@ -1547,5 +1549,293 @@ describe('runSync — router (P5-b §4.7)', () => {
       logger.lines.some((l) => l.includes('unknown entity') && l.includes('type=tag')),
       `expected unknown-entity log, got: ${logger.lines.join('\n')}`,
     );
+  });
+});
+
+describe('runSync — conflict detection (P5-c §6.16)', () => {
+  function readConflicts(): Array<{
+    entity_id: string;
+    losing_side: string;
+    local_payload: string;
+    remote_payload: string;
+    local_updated_at_ms: number;
+    remote_updated_at_ms: number;
+    remote_seq: number;
+  }> {
+    return sqlite
+      .prepare(
+        `SELECT entity_id, losing_side, local_payload, remote_payload,
+                local_updated_at_ms, remote_updated_at_ms, remote_seq
+           FROM conflict_record ORDER BY detected_at`,
+      )
+      .all() as ReturnType<typeof readConflicts>;
+  }
+
+  it('records conflict when remote update wins LWW AND content differs', async () => {
+    seedNote(sqlite, 'n-c', { content: 'local copy', updatedAt: 1_000 });
+    const client = new FakeSkybridgeClient();
+    client.enqueuePull({
+      changes: [
+        makeNoteChange({
+          serverSeq: 7,
+          entityId: 'n-c',
+          op: 'update',
+          payload: { updated_at_ms: 2_000, content: 'remote copy' },
+        }),
+      ],
+      hasMore: false,
+    });
+    const result = await runSync({
+      db,
+      sqlite,
+      client,
+      workspaceId: WORKSPACE_ID,
+      serverUrl: SERVER_URL,
+      nowMs: fakeNow,
+    });
+
+    assert.equal(result.appliedTotal, 1);
+    assert.equal(result.conflictsRecorded, 1);
+
+    const rows = readConflicts();
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].entity_id, 'n-c');
+    assert.equal(rows[0].losing_side, 'local');
+    assert.equal(rows[0].local_updated_at_ms, 1_000);
+    assert.equal(rows[0].remote_updated_at_ms, 2_000);
+    assert.equal(rows[0].remote_seq, 7);
+    assert.deepEqual(JSON.parse(rows[0].local_payload), {
+      content: 'local copy',
+      updated_at_ms: 1_000,
+    });
+    assert.deepEqual(JSON.parse(rows[0].remote_payload), {
+      content: 'remote copy',
+      updated_at_ms: 2_000,
+    });
+
+    // Local row overwritten with remote content (LWW apply still happens).
+    assert.equal(readNote(sqlite, 'n-c')?.content, 'remote copy');
+  });
+
+  it('no conflict when content matches (LWW apply without conflict_record write)', async () => {
+    seedNote(sqlite, 'n-c', { content: 'same text', updatedAt: 1_000 });
+    const client = new FakeSkybridgeClient();
+    client.enqueuePull({
+      changes: [
+        makeNoteChange({
+          serverSeq: 3,
+          entityId: 'n-c',
+          op: 'update',
+          payload: { updated_at_ms: 2_000, content: 'same text' },
+        }),
+      ],
+      hasMore: false,
+    });
+    const result = await runSync({
+      db,
+      sqlite,
+      client,
+      workspaceId: WORKSPACE_ID,
+      serverUrl: SERVER_URL,
+      nowMs: fakeNow,
+    });
+
+    assert.equal(result.appliedTotal, 1);
+    assert.equal(result.conflictsRecorded, 0);
+    assert.equal(readConflicts().length, 0);
+  });
+
+  it('no conflict on LWW-loser pull (remote older → skipped, no detection)', async () => {
+    seedNote(sqlite, 'n-c', { content: 'fresh local', updatedAt: 5_000 });
+    const client = new FakeSkybridgeClient();
+    client.enqueuePull({
+      changes: [
+        makeNoteChange({
+          serverSeq: 1,
+          entityId: 'n-c',
+          op: 'update',
+          payload: { updated_at_ms: 2_000, content: 'stale remote' },
+        }),
+      ],
+      hasMore: false,
+    });
+    const result = await runSync({
+      db,
+      sqlite,
+      client,
+      workspaceId: WORKSPACE_ID,
+      serverUrl: SERVER_URL,
+      nowMs: fakeNow,
+    });
+
+    assert.equal(result.appliedTotal, 0);
+    assert.equal(result.skippedTotal, 1);
+    assert.equal(result.conflictsRecorded, 0);
+    assert.equal(readConflicts().length, 0);
+  });
+
+  it('no conflict on update payload without content (sparse update — touch only)', async () => {
+    seedNote(sqlite, 'n-c', { content: 'untouched', updatedAt: 1_000 });
+    const client = new FakeSkybridgeClient();
+    client.enqueuePull({
+      changes: [
+        makeNoteChange({
+          serverSeq: 1,
+          entityId: 'n-c',
+          op: 'update',
+          payload: { updated_at_ms: 2_000 },
+        }),
+      ],
+      hasMore: false,
+    });
+    const result = await runSync({
+      db,
+      sqlite,
+      client,
+      workspaceId: WORKSPACE_ID,
+      serverUrl: SERVER_URL,
+      nowMs: fakeNow,
+    });
+
+    assert.equal(result.appliedTotal, 1);
+    assert.equal(result.conflictsRecorded, 0);
+    assert.equal(readConflicts().length, 0);
+  });
+
+  it('no conflict on create / trash / restore / delete ops', async () => {
+    seedNote(sqlite, 'n-tr', {
+      content: 'before trash',
+      updatedAt: 1_000,
+      trashLevel: 0,
+    });
+    const client = new FakeSkybridgeClient();
+    client.enqueuePull({
+      changes: [
+        // create on fresh id — no local row to lose
+        makeNoteChange({
+          serverSeq: 1,
+          entityId: 'n-new',
+          op: 'create',
+          payload: {
+            updated_at_ms: 2_000,
+            created_at_ms: 1_500,
+            content: 'fresh remote',
+            folder_id: null,
+            trash_level: 0,
+            tags: [],
+          },
+        }),
+        // trash on existing local note
+        makeNoteChange({
+          serverSeq: 2,
+          entityId: 'n-tr',
+          op: 'trash',
+          payload: {
+            updated_at_ms: 3_000,
+            trash_level: 1,
+            trashed_at_ms: 3_000,
+            auto_delete_at_ms: null,
+          },
+        }),
+      ],
+      hasMore: false,
+    });
+    const result = await runSync({
+      db,
+      sqlite,
+      client,
+      workspaceId: WORKSPACE_ID,
+      serverUrl: SERVER_URL,
+      nowMs: fakeNow,
+    });
+
+    assert.equal(result.conflictsRecorded, 0);
+    assert.equal(readConflicts().length, 0);
+  });
+
+  it('multi-note batch: only updates with content diff bump conflictsRecorded', async () => {
+    seedNote(sqlite, 'n-a', { content: 'A-local', updatedAt: 1_000 });
+    seedNote(sqlite, 'n-b', { content: 'B-local', updatedAt: 1_000 });
+    seedNote(sqlite, 'n-c', { content: 'C-local', updatedAt: 1_000 });
+    const client = new FakeSkybridgeClient();
+    client.enqueuePull({
+      changes: [
+        makeNoteChange({
+          serverSeq: 1,
+          entityId: 'n-a',
+          op: 'update',
+          payload: { updated_at_ms: 2_000, content: 'A-remote' },
+        }),
+        makeNoteChange({
+          serverSeq: 2,
+          entityId: 'n-b',
+          op: 'update',
+          payload: { updated_at_ms: 2_000, content: 'B-local' }, // same content
+        }),
+        makeNoteChange({
+          serverSeq: 3,
+          entityId: 'n-c',
+          op: 'update',
+          payload: { updated_at_ms: 2_000, content: 'C-remote' },
+        }),
+      ],
+      hasMore: false,
+    });
+    const result = await runSync({
+      db,
+      sqlite,
+      client,
+      workspaceId: WORKSPACE_ID,
+      serverUrl: SERVER_URL,
+      nowMs: fakeNow,
+    });
+
+    assert.equal(result.appliedTotal, 3);
+    assert.equal(result.conflictsRecorded, 2);
+    const ids = readConflicts()
+      .map((r) => r.entity_id)
+      .sort();
+    assert.deepEqual(ids, ['n-a', 'n-c']);
+  });
+
+  it('self-replay does not trigger conflict detection (cid matches synced outbox)', async () => {
+    // Seed a previously-pushed local update: outbox row with cid 'cid-self' synced.
+    seedNote(sqlite, 'n-c', { content: 'local copy', updatedAt: 1_000 });
+    sqlite
+      .prepare(
+        `INSERT INTO sync_changes
+           (device_id, entity_type, entity_id, op, payload, created_at,
+            client_change_id, server_seq, synced_at)
+         VALUES ('dev-local', 'note', 'n-c', 'update', '{}', 500, 'cid-self', 42, 600)`,
+      )
+      .run();
+
+    const client = new FakeSkybridgeClient();
+    client.enqueuePull({
+      changes: [
+        // Same cid coming back from server — must be treated as self-replay,
+        // not a conflict candidate, even though content differs.
+        makeNoteChange({
+          serverSeq: 42,
+          cid: 'cid-self',
+          entityId: 'n-c',
+          op: 'update',
+          payload: { updated_at_ms: 2_000, content: 'remote ghost' },
+        }),
+      ],
+      hasMore: false,
+    });
+    const result = await runSync({
+      db,
+      sqlite,
+      client,
+      workspaceId: WORKSPACE_ID,
+      serverUrl: SERVER_URL,
+      nowMs: fakeNow,
+    });
+    assert.equal(result.conflictsRecorded, 0);
+    assert.equal(readConflicts().length, 0);
+    // Local row untouched.
+    assert.equal(readNote(sqlite, 'n-c')?.content, 'local copy');
   });
 });

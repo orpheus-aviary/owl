@@ -274,7 +274,7 @@ function totalChangeCount(sqlite: Database.Database): number {
 
 // ─── Suite ───────────────────────────────────────────────────────────
 
-describe('dual-profile core-only e2e (P5-b §8.3 D1-D10)', { skip: !gate }, () => {
+describe('dual-profile core-only e2e (P5-b §8.3 D1-D10 + P5-c D14)', { skip: !gate }, () => {
   let server: E2EServer;
   let profileA: Profile;
   let profileB: Profile;
@@ -571,5 +571,146 @@ describe('dual-profile core-only e2e (P5-b §8.3 D1-D10)', { skip: !gate }, () =
     assert.ok(bFire, 'B has a reminder_status row populated by apply');
     assert.equal(bFire?.fire_at, aFire?.fire_at, 'fire_at parsed identically on both sides');
     assert.equal(bFire?.status, 'pending', 'B’s reminder is queued for the scheduler');
+  });
+
+  it('D14 — concurrent edit → B pulls A’s newer update, conflict_record row written on B (P5-c §6.16)', async () => {
+    // Snapshot pre-existing conflict counts (D7 already produced one on A
+    // when A pulled B’s edit while A-local was older). D14 asserts the
+    // *delta* attributable to this scenario, not absolute totals.
+    const countRows = (sqlite: Database.Database): number =>
+      (sqlite.prepare('SELECT count(*) AS n FROM conflict_record').get() as { n: number }).n;
+    const aConflictsBefore = countRows(profileA.sqlite);
+    const bConflictsBefore = countRows(profileB.sqlite);
+
+    // 1. A creates a fresh note + syncs so B can pull baseline state.
+    const seedNoteRow = createNote(profileA.db, profileA.sqlite, {
+      content: 'v0 — baseline',
+      folderId: null,
+      tags: [],
+    });
+    const d14NoteId = seedNoteRow.id;
+    await runSyncOn(profileA);
+    await runSyncOn(profileB);
+
+    const bBaseline = profileB.sqlite
+      .prepare('SELECT content, updated_at FROM notes WHERE id = ?')
+      .get(d14NoteId) as { content: string; updated_at: number };
+    assert.ok(bBaseline, 'B pulled baseline note');
+    assert.equal(bBaseline.content, 'v0 — baseline');
+
+    // 2. B edits FIRST (so B-local has the OLDER updated_at_ms).
+    updateNote(
+      profileB.db,
+      profileB.sqlite,
+      d14NoteId,
+      { content: 'B’s concurrent edit' },
+      { expectedUpdatedAt: bBaseline.updated_at },
+    );
+    const bLocalAfterEdit = profileB.sqlite
+      .prepare('SELECT content, updated_at FROM notes WHERE id = ?')
+      .get(d14NoteId) as { content: string; updated_at: number };
+    assert.equal(bLocalAfterEdit.content, 'B’s concurrent edit');
+
+    // 3. Ensure A's edit lands at a strictly later wall-clock ms. Date.now()
+    //    has ms granularity on macOS; sleep 5ms to be safe.
+    await new Promise((r) => setTimeout(r, 5));
+
+    // 4. A edits SECOND on its own copy (still on baseline content since A
+    //    hasn't pulled B's pending edit).
+    const aBaseline = profileA.sqlite
+      .prepare('SELECT content, updated_at FROM notes WHERE id = ?')
+      .get(d14NoteId) as { content: string; updated_at: number };
+    updateNote(
+      profileA.db,
+      profileA.sqlite,
+      d14NoteId,
+      { content: 'A’s concurrent edit (wins LWW)' },
+      { expectedUpdatedAt: aBaseline.updated_at },
+    );
+    const aLocalAfterEdit = profileA.sqlite
+      .prepare('SELECT updated_at FROM notes WHERE id = ?')
+      .get(d14NoteId) as { updated_at: number };
+    assert.ok(
+      aLocalAfterEdit.updated_at > bLocalAfterEdit.updated_at,
+      `A’s updated_at (${aLocalAfterEdit.updated_at}) must be > B’s (${bLocalAfterEdit.updated_at})`,
+    );
+
+    // 5. A pushes its edit to the server.
+    const aSync = await runSyncOn(profileA);
+    assert.equal(aSync.pushedTotal, 1, 'A pushed its concurrent edit');
+    assert.equal(aSync.conflictsRecorded, 0, 'A’s sync writes no conflict (A is the winner)');
+
+    // 6. B syncs — pull A's edit (B-local is older → LWW loser → conflict),
+    //    then push B's pending outbox row (accepted server-side, see §6.29).
+    const bSync = await runSyncOn(profileB);
+    assert.ok(bSync.appliedTotal >= 1, 'B applied A’s remote edit');
+    assert.equal(bSync.conflictsRecorded, 1, 'B detected exactly 1 conflict on note update');
+    assert.ok(bSync.pushedTotal >= 1, 'B still pushed its losing local edit (§6.29)');
+
+    // 7. B's local content is now A's version (LWW apply).
+    const bAfter = profileB.sqlite
+      .prepare('SELECT content FROM notes WHERE id = ?')
+      .get(d14NoteId) as { content: string };
+    assert.equal(bAfter.content, 'A’s concurrent edit (wins LWW)');
+
+    // 8. conflict_record row carries the losing local snapshot + winning
+    //    remote payload + paired updated_at_ms. Scope query by entity_id
+    //    so D7’s pre-existing conflict on a different note doesn’t leak in.
+    const conflicts = profileB.sqlite
+      .prepare(
+        `SELECT entity_type, entity_id, losing_side, local_payload, remote_payload,
+                local_updated_at_ms, remote_updated_at_ms, resolved_at
+           FROM conflict_record WHERE entity_id = ?`,
+      )
+      .all(d14NoteId) as Array<{
+      entity_type: string;
+      entity_id: string;
+      losing_side: string;
+      local_payload: string;
+      remote_payload: string;
+      local_updated_at_ms: number;
+      remote_updated_at_ms: number;
+      resolved_at: number | null;
+    }>;
+    assert.equal(conflicts.length, 1, 'exactly one conflict row for this note on B');
+    const row = conflicts[0];
+    assert.equal(row.entity_type, 'note');
+    assert.equal(row.losing_side, 'local');
+    assert.equal(row.resolved_at, null, 'fresh row is unresolved');
+    assert.equal(row.local_updated_at_ms, bLocalAfterEdit.updated_at);
+    assert.equal(row.remote_updated_at_ms, aLocalAfterEdit.updated_at);
+
+    const localPayload = JSON.parse(row.local_payload) as {
+      content: string;
+      updated_at_ms: number;
+    };
+    const remotePayload = JSON.parse(row.remote_payload) as {
+      content: string;
+      updated_at_ms: number;
+    };
+    assert.equal(
+      localPayload.content,
+      'B’s concurrent edit',
+      'local_payload preserves losing copy',
+    );
+    assert.equal(
+      remotePayload.content,
+      'A’s concurrent edit (wins LWW)',
+      'remote_payload has A’s winning text',
+    );
+
+    // 9. A side did not write any new conflict (A is the winner; only the
+    //    losing side records). Asserted as a delta vs the pre-D14 snapshot
+    //    so any D7-era conflict on A doesn’t cause a false positive.
+    assert.equal(
+      countRows(profileA.sqlite) - aConflictsBefore,
+      0,
+      'A’s conflict count did not grow during D14 (only the losing side records)',
+    );
+    assert.equal(
+      countRows(profileB.sqlite) - bConflictsBefore,
+      1,
+      'B’s conflict count grew by exactly 1',
+    );
   });
 });

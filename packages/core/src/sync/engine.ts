@@ -30,6 +30,7 @@ import { syncNoteTags } from '../notes/tags.js';
 import { syncReminders } from '../reminders/index.js';
 import type { ParsedTag } from '../tags/parser.js';
 import { readLocalDeviceUuid } from './changes.js';
+import { recordConflict } from './conflicts.js';
 import {
   type ConversationApplyPayload,
   ConversationPayloadInvalidError,
@@ -134,6 +135,12 @@ export interface RunSyncResult {
   serverSeqHigh: number;
   cursorBefore: number;
   cursorAfter: number;
+  /**
+   * P5-c §6.16/§6.19 — count of `conflict_record` rows written during this
+   * runSync. Only `note + op=update + localTs<remoteTs + content differs`
+   * cases bump the counter; LWW skips / self-replay / non-note rows do not.
+   */
+  conflictsRecorded: number;
 }
 
 export class SkybridgeProtocolError extends Error {
@@ -202,6 +209,31 @@ function readLocalUpdatedAt(sqlite: Database.Database, id: string): number | nul
     | { updated_at: number }
     | undefined;
   return row ? row.updated_at : null;
+}
+
+/**
+ * P5-c §6.16: detection-time snapshot of the losing local note. Read just the
+ * fields we want to render in the GUI "副本" panel.
+ */
+function readLocalNoteSnapshot(
+  sqlite: Database.Database,
+  id: string,
+): { content: string; updated_at_ms: number } | null {
+  const row = sqlite.prepare('SELECT content, updated_at FROM notes WHERE id = ?').get(id) as
+    | { content: string; updated_at: number }
+    | undefined;
+  return row ? { content: row.content, updated_at_ms: row.updated_at } : null;
+}
+
+/**
+ * P5-c §6.19: counts conflict_record rows written by a runSync batch.
+ * Threaded through applyOneChange → applyNoteChange so runSync can return
+ * `conflictsRecorded` without re-querying sqlite.
+ */
+export interface ConflictSink {
+  count: number;
+  /** Override `Date.now()` for deterministic tests. */
+  nowMs?: () => number;
 }
 
 /**
@@ -332,12 +364,46 @@ function applyNoteDelete(
   return r.changes > 0 ? 'applied' : 'skipped';
 }
 
+/**
+ * P5-c §6.16: detection hook. Caller guarantees `payload.op === 'update'`,
+ * `localExists`, and `localTs < remoteTs` (LWW-loser local) — i.e. the call
+ * site has already filtered out self-replay / missing-local / LWW-tie /
+ * non-update ops. We only need to gate on "payload carries content" and
+ * "content differs from local".
+ */
+function maybeRecordNoteConflict(
+  sqlite: Database.Database,
+  c: ServerChangeLike,
+  body: Extract<NoteApplyPayload, { op: 'update' }>['body'],
+  localTs: number,
+  remoteTs: number,
+  conflictSink: ConflictSink,
+): void {
+  if (body.content === undefined) return;
+  const localSnap = readLocalNoteSnapshot(sqlite, c.entityId);
+  if (!localSnap || localSnap.content === body.content) return;
+  const now = conflictSink.nowMs ?? Date.now;
+  recordConflict(sqlite, {
+    entityType: 'note',
+    entityId: c.entityId,
+    losingSide: 'local',
+    localPayload: localSnap,
+    remotePayload: body,
+    localUpdatedAtMs: localTs,
+    remoteUpdatedAtMs: remoteTs,
+    remoteSeq: c.serverSeq,
+    nowMs: now(),
+  });
+  conflictSink.count += 1;
+}
+
 function applyNoteChange(
   db: OwlDatabase,
   sqlite: Database.Database,
   c: ServerChangeLike,
   payload: NoteApplyPayload,
   logger: RunSyncLogger,
+  conflictSink?: ConflictSink,
 ): ApplyOutcome {
   if (isSelfReplay(sqlite, c.clientChangeId)) return 'skipped';
 
@@ -366,6 +432,12 @@ function applyNoteChange(
       `[sync] apply note ${c.entityId} ${payload.op} — LWW skip (local=${localTs} >= remote=${remoteTs})`,
     );
     return 'skipped';
+  }
+
+  // P5-c §6.16: conflict detection runs before applyNoteUpdate overwrites
+  // the losing local row. Other ops (create / trash / restore) skip the hook.
+  if (conflictSink && payload.op === 'update' && localExists) {
+    maybeRecordNoteConflict(sqlite, c, payload.body, localTs, remoteTs, conflictSink);
   }
 
   if (payload.op === 'create') return applyNoteCreate(db, sqlite, c, payload.body);
@@ -607,10 +679,11 @@ function applyOneChange(
   sqlite: Database.Database,
   change: ServerChangeLike,
   logger: RunSyncLogger,
+  conflictSink?: ConflictSink,
 ): ApplyOutcome {
   switch (change.entityType) {
     case 'note':
-      return applyOneNoteChange(db, sqlite, change, logger);
+      return applyOneNoteChange(db, sqlite, change, logger, conflictSink);
     case 'folder':
       return applyOneFolderChange(sqlite, change, logger);
     case 'conversation':
@@ -631,6 +704,7 @@ function applyOneNoteChange(
   sqlite: Database.Database,
   change: ServerChangeLike,
   logger: RunSyncLogger,
+  conflictSink?: ConflictSink,
 ): ApplyOutcome {
   if (!hasUpdatedAtMs(change.payload)) {
     // metadata op (pin / reorder) — apply is out of P5-b scope
@@ -641,7 +715,7 @@ function applyOneNoteChange(
   }
   // Validator throws NotePayloadInvalidError → rolls back the batch
   const parsed = parseNotePayload(change.op, change.payload);
-  return applyNoteChange(db, sqlite, change, parsed, logger);
+  return applyNoteChange(db, sqlite, change, parsed, logger, conflictSink);
 }
 
 function applyOneFolderChange(
@@ -725,6 +799,8 @@ export async function runSync(deps: RunSyncDeps): Promise<RunSyncResult> {
   let pulledTotal = 0;
   let appliedTotal = 0;
   let skippedTotal = 0;
+  // P5-c §6.16: per-runSync conflict sink, threaded into applyNoteChange.
+  const conflictSink: ConflictSink = { count: 0, nowMs: deps.nowMs };
 
   // ── Step 1: pull loop ──────────────────────────────────────────
   // Each batch processed in a single sync transaction (better-sqlite3's
@@ -749,7 +825,7 @@ export async function runSync(deps: RunSyncDeps): Promise<RunSyncResult> {
 
     const runBatch = sqlite.transaction(() => {
       for (const change of pulled.changes) {
-        const outcome = applyOneChange(db, sqlite, change, logger);
+        const outcome = applyOneChange(db, sqlite, change, logger, conflictSink);
         if (outcome === 'applied') batchApplied += 1;
         else batchSkipped += 1;
       }
@@ -826,6 +902,7 @@ export async function runSync(deps: RunSyncDeps): Promise<RunSyncResult> {
     serverSeqHigh,
     cursorBefore,
     cursorAfter: cursor,
+    conflictsRecorded: conflictSink.count,
   };
 }
 
