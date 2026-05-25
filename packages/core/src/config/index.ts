@@ -112,6 +112,14 @@ export interface ShortcutsConfig {
   nav_ai: string;
   nav_settings: string;
   toggle_folder_panel: string;
+  /**
+   * OS-level shortcut handled by Electron `globalShortcut` in the main
+   * process. Brings the window forward + focuses it even when owl is
+   * hidden / unfocused. Empty string disables registration. Canonical
+   * form (`Mod-Alt-KeyO`) is converted to Electron accelerator at
+   * registration time via `@owl/core/shortcuts/accelerator`.
+   */
+  global_invoke: string;
 }
 
 export interface OwlConfig {
@@ -157,6 +165,7 @@ export const DEFAULT_CONFIG: OwlConfig = {
     nav_ai: 'Mod-Digit6',
     nav_settings: 'Mod-Digit7',
     toggle_folder_panel: 'Mod-KeyB',
+    global_invoke: 'Mod-Alt-KeyO',
   },
 };
 

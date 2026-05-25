@@ -43,6 +43,9 @@ export type {
 } from './config/index.js';
 export * as paths from './config/paths.js';
 
+// Shortcuts (canonical → Electron accelerator conversion for main process)
+export { toElectronAccelerator } from './shortcuts/accelerator.js';
+
 // Logger
 export {
   createLogger,
