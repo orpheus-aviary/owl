@@ -4,7 +4,7 @@
  * Sequential D1-D10 user journey through two owl profiles (A + B) talking
  * to one in-process skybridge server. Verifies the production sync
  * semantics push/pull/apply/LWW/tags/folders/conversation/reminder against
- * the real @skybridge/client wire — not the FakeSkybridgeClient that core's
+ * the real @orpheus-aviary/skybridge-client wire — not the FakeSkybridgeClient that core's
  * own engine.test.ts uses.
  *
  * Scope cut from design §8.3:
@@ -26,7 +26,7 @@
  * created, etc. The user journey mirrors the P5-a §13 manual acceptance
  * (D1-D8) and adds D9-D10 for entity types P5-b first ships.
  *
- * @skybridge/server is imported via a variable specifier so `tsc -b` on a
+ * @orpheus-aviary/skybridge-server is imported via a variable specifier so `tsc -b` on a
  * clean checkout (skybridge uninstalled) still types. The structural
  * `SkybridgeServerModule` shape duplicates only what we actually call.
  */
@@ -91,7 +91,7 @@ interface E2EServer {
 }
 
 async function startSkybridgeServer(): Promise<E2EServer> {
-  const spec: string = '@skybridge/server';
+  const spec: string = '@orpheus-aviary/skybridge-server';
   const sb = (await import(spec)) as SkybridgeServerModule;
 
   const tmp = mkdtempSync(join(tmpdir(), 'sync-dual-e2e-'));
@@ -157,7 +157,7 @@ async function createProfile(
   // Variable specifier so `tsc -b` on a clean checkout (skybridge
   // uninstalled) still types — we lean on the structural
   // `SkybridgeClientModule` from session.ts instead of `typeof import(...)`.
-  const spec: string = '@skybridge/client';
+  const spec: string = '@orpheus-aviary/skybridge-client';
   const sb = (await import(spec)) as SkybridgeClientModule;
 
   // 1. login

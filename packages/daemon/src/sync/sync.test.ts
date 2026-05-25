@@ -123,9 +123,9 @@ describe('sync routes (P5-a Step 7)', () => {
       assert.equal(res.json().error_code, 'SKYBRIDGE_AUTH_REQUIRED');
     });
 
-    it('500 + SKYBRIDGE_NOT_INSTALLED when toml is valid but @skybridge/client is absent', async () => {
+    it('500 + SKYBRIDGE_NOT_INSTALLED when toml is valid but @orpheus-aviary/skybridge-client is absent', async () => {
       // Auth is present, so we get past the config guards; the next
-      // step (dynamic import of `@skybridge/client`) fails on a clean
+      // step (dynamic import of `@orpheus-aviary/skybridge-client`) fails on a clean
       // checkout — exactly the install-guard the production daemon
       // should surface.
       writeSkybridgeConfig(

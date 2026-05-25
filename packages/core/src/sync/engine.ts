@@ -3,7 +3,7 @@
  *
  * `runSync(deps)` performs one pull → push round against a structural
  * client (`SkybridgeClientLike`). The interface deliberately mirrors a
- * minimal subset of `@skybridge/client` so this package keeps zero
+ * minimal subset of `@orpheus-aviary/skybridge-client` so this package keeps zero
  * skybridge dependencies — daemon adapts the real client at the seam.
  *
  * Semantics summary (design doc §7):
@@ -49,7 +49,7 @@ import {
 } from './payloads/note.js';
 import { type WithRetryOptions, withRetry } from './retry.js';
 
-// ─── Structural client surface (no @skybridge/* imports) ─────────────
+// ─── Structural client surface (no @orpheus-aviary/skybridge-* imports) ─────────────
 
 export interface LocalChangeLike {
   clientChangeId: string;
@@ -63,7 +63,7 @@ export interface LocalChangeLike {
 }
 
 /**
- * Minimal subset of `@skybridge/proto` `ServerChange` that runSync
+ * Minimal subset of `@orpheus-aviary/skybridge-proto` `ServerChange` that runSync
  * actually reads. `serverReceivedAt` / `clientLocalSeq` / `clientCreatedAt`
  * / `attachmentRefs` are intentionally dropped — the daemon adapter only
  * forwards what's needed.
@@ -95,7 +95,7 @@ export interface PullResultLike {
   hasMore: boolean;
 }
 
-/** Structural subset of `@skybridge/client` `SkybridgeClient`. */
+/** Structural subset of `@orpheus-aviary/skybridge-client` `SkybridgeClient`. */
 export interface SkybridgeClientLike {
   pullChanges(workspaceId: string, sinceServerSeq: number): Promise<PullResultLike>;
   pushChanges(workspaceId: string, changes: LocalChangeLike[]): Promise<PushResultLike>;

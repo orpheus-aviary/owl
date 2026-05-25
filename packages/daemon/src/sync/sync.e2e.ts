@@ -11,7 +11,7 @@
  *      If someone manually runs `node --test 'dist/**\/*.e2e.js'` without
  *      setting the env, the suite still skips.
  *
- * The `@skybridge/server` import uses a variable specifier so TypeScript
+ * The `@orpheus-aviary/skybridge-server` import uses a variable specifier so TypeScript
  * does NOT try to resolve the module. On a clean checkout (skybridge
  * uninstalled) `tsc -b` still passes; running the e2e recipe with the env
  * set requires `just skybridge-install` to have made the package
@@ -26,7 +26,7 @@ import { after, before, describe, it } from 'node:test';
 
 const gate = process.env.SKYBRIDGE_E2E === '1';
 
-// Structural shape of @skybridge/server. NOT imported as a type — the
+// Structural shape of @orpheus-aviary/skybridge-server. NOT imported as a type — the
 // package may be absent on a clean checkout.
 interface SkybridgeServerModule {
   defaultConfig(dir: string): {
@@ -55,7 +55,7 @@ describe('sync e2e (in-process skybridge)', { skip: !gate }, () => {
   let server: E2EHandle;
 
   before(async () => {
-    const spec: string = '@skybridge/server';
+    const spec: string = '@orpheus-aviary/skybridge-server';
     const sb = (await import(spec)) as SkybridgeServerModule;
     const tmp = mkdtempSync(join(tmpdir(), 'sync-e2e-'));
     const config = sb.defaultConfig(tmp);

@@ -1,15 +1,15 @@
 /**
  * P5-a Step 7 — daemon-side sync adapter.
  *
- * Bridges `@owl/core` (engine + config) and `@skybridge/client` (real
+ * Bridges `@owl/core` (engine + config) and `@orpheus-aviary/skybridge-client` (real
  * HTTP wire). core never imports skybridge directly; this file does the
- * one variable-specifier `await import('@skybridge/client')` so a clean
+ * one variable-specifier `await import('@orpheus-aviary/skybridge-client')` so a clean
  * checkout without skybridge installed still passes `tsc -b`.
  *
  * Flow (design §8.2):
  *  1. read skybridge_config.toml (NotConfigured / ServerUrlMissing /
  *     AuthRequired all bubble up as typed errors)
- *  2. load `@skybridge/client` via dynamic import — variable specifier so
+ *  2. load `@orpheus-aviary/skybridge-client` via dynamic import — variable specifier so
  *     TS does NOT try to resolve the type, falls back to unknown
  *  3. `createSkybridgeClient` with the auth context; if device is missing
  *     call `registerDevice` (lazy first-sync) and re-create the client so
@@ -127,7 +127,7 @@ export class SkybridgeSyncFailedError extends Error {
 
 // ─── Error translation from skybridge client / fetch failures ─────────
 //
-// `@skybridge/client` raises `NetworkError` / `ApiError`-tagged errors;
+// `@orpheus-aviary/skybridge-client` raises `NetworkError` / `ApiError`-tagged errors;
 // since we never `import`-type that module we duck-type on `.name` and
 // `.status`. 401 specifically nukes the on-disk [auth] block so the next
 // sync surfaces `SKYBRIDGE_AUTH_REQUIRED` instead of replaying a dead

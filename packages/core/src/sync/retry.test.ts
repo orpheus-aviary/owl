@@ -8,7 +8,7 @@ import {
   withRetry,
 } from './retry.js';
 
-// ─── Synthetic errors that mirror @skybridge/client's ApiError / NetworkError ───
+// ─── Synthetic errors that mirror @orpheus-aviary/skybridge-client's ApiError / NetworkError ───
 
 class FakeApiError extends Error {
   override name = 'ApiError';

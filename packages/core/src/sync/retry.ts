@@ -76,7 +76,7 @@ export interface WithRetryOptions {
  * 504), or any NetworkError / FetchError (offline / DNS failures /
  * connect timeouts). 4xx including 401 falls through to throw.
  *
- * Duck-typed because `@owl/core` does NOT import `@skybridge/client` —
+ * Duck-typed because `@owl/core` does NOT import `@orpheus-aviary/skybridge-client` —
  * the runtime instance check would create a hard module dep we've kept
  * out of core since P4 Phase 1.
  */

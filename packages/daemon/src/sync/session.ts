@@ -45,9 +45,9 @@ import type { AppContext } from '../context.js';
 
 const OWL_APP_VERSION = '0.5.0-dev';
 
-// ─── Real-client structural surface (duck-typed from @skybridge/client) ──
+// ─── Real-client structural surface (duck-typed from @orpheus-aviary/skybridge-client) ──
 //
-// The real `@skybridge/client` package may be absent on a clean checkout,
+// The real `@orpheus-aviary/skybridge-client` package may be absent on a clean checkout,
 // so we never name it in an `import` / `import type` statement. The
 // shape below mirrors what manual.ts / sse-bridge.ts actually call.
 // Lifted here so sse-bridge can import the type without circling through
@@ -119,7 +119,7 @@ export async function loadSkybridgeClient(): Promise<SkybridgeClientModule> {
   // Non-literal specifier: TS sees `import(string)` and skips module
   // resolution, so `tsc -b` on a clean checkout (no skybridge installed)
   // still types.
-  const spec: string = '@skybridge/client';
+  const spec: string = '@orpheus-aviary/skybridge-client';
   try {
     const mod = (await import(spec)) as SkybridgeClientModule;
     return mod;

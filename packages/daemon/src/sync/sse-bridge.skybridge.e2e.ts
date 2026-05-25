@@ -7,7 +7,7 @@ import { createSseBridge } from './sse-bridge.js';
 
 /**
  * P5-c Step 8 — D11. End-to-end integration with the real
- * `@skybridge/client@0.1.1` (installed by `just skybridge-install`):
+ * `@orpheus-aviary/skybridge-client@0.1.1` (installed by `just skybridge-install`):
  * a server-side graceful shutdown surfaces as `{ done: true }` on the
  * SSE reader, which the Step 7 fix in `packages/client/src/sse.ts:
  * pumpStream` now reports as `onError(NetworkError('SSE stream ended'))`.
@@ -20,7 +20,7 @@ import { createSseBridge } from './sse-bridge.js';
  * Gated on filename `*.e2e.ts` (matches `test:e2e` glob in
  * packages/daemon/package.json) so this file is only picked up by
  * `just test-skybridge-e2e`. That recipe sets `SKYBRIDGE_E2E=1` and runs
- * AFTER `just skybridge-install` has put `@skybridge/client` on disk;
+ * AFTER `just skybridge-install` has put `@orpheus-aviary/skybridge-client` on disk;
  * the gate below is belt-and-suspenders.
  */
 
@@ -58,14 +58,14 @@ function makeCtx(): AppContext {
 }
 
 describe(
-  'createSseBridge — G2 integration with real @skybridge/client (P5-c Step 8)',
+  'createSseBridge — G2 integration with real @orpheus-aviary/skybridge-client (P5-c Step 8)',
   { skip: !gate },
   () => {
     it('done:true from a streaming response triggers onError → reconnect at 2s (D11)', async () => {
       // String-variable specifier so tsc on a clean checkout (no skybridge
       // installed via `just skybridge-install`) doesn't try to resolve the
       // module. Same pattern as packages/daemon/src/sync/session.ts:122.
-      const spec: string = '@skybridge/client';
+      const spec: string = '@orpheus-aviary/skybridge-client';
       // biome-ignore lint/suspicious/noExplicitAny: gated import, runtime-only
       const mod = (await import(spec)) as any;
       const { createSkybridgeClient } = mod;
