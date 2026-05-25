@@ -66,11 +66,7 @@ export type { RealSkybridgeClient };
 // into the structured payload; otherwise it falls back to the legacy
 // stringified template path. Exported for direct unit testing.
 
-type PinoLikeWarn = (
-  obj: Record<string, unknown>,
-  msg?: string,
-  ...rest: unknown[]
-) => void;
+type PinoLikeWarn = (obj: Record<string, unknown>, msg?: string, ...rest: unknown[]) => void;
 
 export function emitSyncLog(emit: PinoLikeWarn, args: unknown[]): void {
   if (

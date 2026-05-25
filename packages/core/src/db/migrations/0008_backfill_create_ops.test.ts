@@ -190,8 +190,10 @@ describe('0008_backfill_create_ops', () => {
       .prepare("SELECT * FROM sync_changes WHERE entity_id='n-legacy' AND op='create'")
       .all() as SyncChangeRow[];
     assert.equal(created.length, 1, 'exactly one create op for legacy note');
+    const row = created[0];
+    if (!row) throw new Error('unreachable');
 
-    const payload = JSON.parse(created[0]!.payload) as {
+    const payload = JSON.parse(row.payload) as {
       content: string;
       folder_id: string | null;
       trash_level: number;
@@ -206,9 +208,9 @@ describe('0008_backfill_create_ops', () => {
     assert.equal(payload.updated_at_ms, 1_700_000_001_000);
     assert.deepEqual(payload.tags, [{ tag_type: '#', tag_value: '续费' }]);
 
-    assert.equal(created[0]!.synced_at, null, 'unpushed');
-    assert.equal(created[0]!.server_seq, null, 'no server seq yet');
-    assert.match(created[0]!.client_change_id, /^[0-9a-f]{32}$/);
+    assert.equal(row.synced_at, null, 'unpushed');
+    assert.equal(row.server_seq, null, 'no server seq yet');
+    assert.match(row.client_change_id, /^[0-9a-f]{32}$/);
     sqlite.close();
   });
 
@@ -263,8 +265,10 @@ describe('0008_backfill_create_ops', () => {
       .prepare("SELECT * FROM sync_changes WHERE entity_id='f-legacy' AND op='create'")
       .all() as SyncChangeRow[];
     assert.equal(created.length, 1);
+    const row = created[0];
+    if (!row) throw new Error('unreachable');
 
-    const payload = JSON.parse(created[0]!.payload) as {
+    const payload = JSON.parse(row.payload) as {
       name: string;
       parent_id: string | null;
       position: number;
@@ -317,9 +321,7 @@ describe('0008_backfill_create_ops', () => {
     applyForwardMigrations(sqlite, 7, 8);
 
     const row = sqlite
-      .prepare(
-        "SELECT device_id FROM sync_changes WHERE entity_id='n-legacy' AND op='create'",
-      )
+      .prepare("SELECT device_id FROM sync_changes WHERE entity_id='n-legacy' AND op='create'")
       .get() as { device_id: string };
     assert.equal(row.device_id, 'dev-A-uuid');
     sqlite.close();

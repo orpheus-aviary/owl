@@ -16,7 +16,10 @@ interface Captured {
   msg?: string;
 }
 
-function captureEmit(): { emit: (obj: Record<string, unknown>, msg?: string) => void; calls: Captured[] } {
+function captureEmit(): {
+  emit: (obj: Record<string, unknown>, msg?: string) => void;
+  calls: Captured[];
+} {
   const calls: Captured[] = [];
   const emit = (obj: Record<string, unknown>, msg?: string): void => {
     calls.push({ obj, msg });
