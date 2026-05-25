@@ -31,7 +31,9 @@ export function ShortcutsSection() {
   const resetShortcuts = useConfigStore((s) => s.resetShortcuts);
   const error = useConfigStore((s) => s.error);
 
-  // Map of currently duplicate bindings → which action keys share them.
+  // Duplicate detection only spans in-app shortcuts. `global_invoke` lives
+  // in a different scope (OS-level) so even an identical binding wouldn't
+  // collide — keep it out of `ROWS` and out of this map.
   const duplicates = new Set<string>();
   const seen = new Map<string, keyof ShortcutsConfig>();
   for (const row of ROWS) {
@@ -44,6 +46,9 @@ export function ShortcutsSection() {
       seen.set(binding, row.key);
     }
   }
+
+  const globalInvoke = shortcuts.global_invoke;
+  const globalInvokeChanged = globalInvoke !== DEFAULT_SHORTCUTS.global_invoke;
 
   return (
     <div className="flex flex-col gap-4">
@@ -72,6 +77,30 @@ export function ShortcutsSection() {
         <div className="text-sm text-destructive bg-destructive/10 px-3 py-2 rounded">{error}</div>
       )}
 
+      <div className="flex flex-col gap-1">
+        <h3 className="text-sm font-medium">全局快捷键</h3>
+        <p className="text-xs text-muted-foreground">
+          即使 owl 在后台或失焦也能响应；可能与其他应用冲突，注册失败会在上方提示。
+        </p>
+      </div>
+      <div className="border border-border rounded-md">
+        <div className="flex items-center justify-between px-4 py-2.5 gap-4">
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="text-sm">唤起 owl 窗口</span>
+            {globalInvokeChanged && (
+              <span className="text-[10px] text-muted-foreground">(已修改)</span>
+            )}
+          </div>
+          <ShortcutRecorder
+            value={globalInvoke}
+            onChange={(next) => patchShortcuts({ global_invoke: next })}
+          />
+        </div>
+      </div>
+
+      <div className="flex flex-col gap-1 mt-2">
+        <h3 className="text-sm font-medium">应用内快捷键</h3>
+      </div>
       <div className="border border-border rounded-md divide-y divide-border">
         {ROWS.map((row) => {
           const binding = shortcuts[row.key];

@@ -274,6 +274,8 @@ export interface ShortcutsConfig {
   nav_ai: string;
   nav_settings: string;
   toggle_folder_panel: string;
+  /** OS-level invoke shortcut handled by main process Electron globalShortcut. */
+  global_invoke: string;
 }
 
 export type LlmApiFormat = 'openai' | 'anthropic';

@@ -19,7 +19,27 @@ const DEFAULT_SHORTCUTS: ShortcutsConfig = {
   nav_ai: 'Mod-Digit6',
   nav_settings: 'Mod-Digit7',
   toggle_folder_panel: 'Mod-KeyB',
+  global_invoke: 'Mod-Alt-KeyO',
 };
+
+/**
+ * Push the global invoke binding to the main process. Called after a
+ * successful `patchConfig` that touched `shortcuts.global_invoke`, and on
+ * reset. Returns the main-process registration error if any (binding
+ * conflict / unparseable accelerator) so the store can surface it inline.
+ */
+async function syncGlobalShortcutWithMain(canonical: string): Promise<string | null> {
+  // Guard against renderer-only test environments where owlAPI isn't injected.
+  const api = typeof window !== 'undefined' ? window.owlAPI : undefined;
+  if (!api?.shortcut?.setGlobal) return null;
+  try {
+    const res = await api.shortcut.setGlobal(canonical);
+    if (!res.ok) return res.error ?? '快捷键注册失败';
+    return null;
+  } catch (err) {
+    return err instanceof Error ? err.message : String(err);
+  }
+}
 
 const DEFAULT_FONT: OwlConfig['font'] = {
   global_offset: 0,
@@ -146,6 +166,12 @@ export const useConfigStore = create<ConfigState>((set, get) => ({
       const res = await api.patchConfig({ shortcuts: { ...get().shortcuts, ...delta } });
       if (res.data) {
         applyConfig(set, res.data);
+        if (delta.global_invoke !== undefined) {
+          const err = await syncGlobalShortcutWithMain(delta.global_invoke);
+          set({ error: err });
+          return err === null;
+        }
+        set({ error: null });
         return true;
       }
       return false;
@@ -160,7 +186,9 @@ export const useConfigStore = create<ConfigState>((set, get) => ({
       const res = await api.patchConfig({ shortcuts: DEFAULT_SHORTCUTS });
       if (res.data) {
         applyConfig(set, res.data);
-        return true;
+        const err = await syncGlobalShortcutWithMain(DEFAULT_SHORTCUTS.global_invoke);
+        set({ error: err });
+        return err === null;
       }
       return false;
     } catch (err) {

@@ -19,6 +19,12 @@ interface CliDetectResult {
   version?: string;
 }
 
+interface SetGlobalShortcutResult {
+  ok: boolean;
+  accelerator: string | null;
+  error?: string;
+}
+
 contextBridge.exposeInMainWorld('owlAPI', {
   // P5-c G1: main process injects `--daemon-port=<port>` via BrowserWindow
   // additionalArguments so OWL_DAEMON_PORT env / multi-profile setups
@@ -58,6 +64,17 @@ contextBridge.exposeInMainWorld('owlAPI', {
      * mount and on "重新检测"; latency ~100–300 ms.
      */
     detect: (): Promise<CliDetectResult> => ipcRenderer.invoke('cli:detect'),
+  },
+
+  shortcut: {
+    /**
+     * Rebind the OS-level invoke shortcut. Pass canonical form like
+     * `Mod-Alt-KeyO`; empty string disables. Returns the resolved Electron
+     * accelerator on success or a localized error when registration fails
+     * (binding already in use, malformed key combo, etc.).
+     */
+    setGlobal: (canonical: string): Promise<SetGlobalShortcutResult> =>
+      ipcRenderer.invoke('globalShortcut:set', canonical),
   },
 
   quit: {

@@ -28,6 +28,9 @@ function defaultOwlAPI(): OwlAPI {
     cli: {
       detect: vi.fn(() => Promise.resolve({ installed: false })),
     },
+    shortcut: {
+      setGlobal: vi.fn(() => Promise.resolve({ ok: true, accelerator: null })),
+    },
     quit: {
       onCheckUnsaved: vi.fn(() => () => {}),
       respond: vi.fn(),

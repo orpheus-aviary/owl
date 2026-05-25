@@ -25,6 +25,12 @@ export interface CliDetectResult {
   version?: string;
 }
 
+export interface SetGlobalShortcutResult {
+  ok: boolean;
+  accelerator: string | null;
+  error?: string;
+}
+
 export interface OwlAPI {
   daemonUrl: string;
   startupMode: StartupMode;
@@ -37,6 +43,9 @@ export interface OwlAPI {
   };
   cli: {
     detect: () => Promise<CliDetectResult>;
+  };
+  shortcut: {
+    setGlobal: (canonical: string) => Promise<SetGlobalShortcutResult>;
   };
   quit: {
     onCheckUnsaved: (cb: () => void) => () => void;

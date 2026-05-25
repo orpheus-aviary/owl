@@ -1,7 +1,8 @@
-import { paths } from '@owl/core';
+import { loadConfig, paths } from '@owl/core';
 import { BrowserWindow, app, ipcMain } from 'electron';
 import { detectCli } from './cli-detect.js';
 import { ensureDaemonRunning, getDaemonPort, stopDaemonGracefully } from './daemon.js';
+import { setGlobalShortcut, unregisterGlobalShortcut } from './global-shortcut.js';
 import { registerMigrationIpc } from './migration-ipc.js';
 import type { StartupMode } from './migration-precheck.js';
 import { runMigrationPrecheck } from './migration-precheck.js';
@@ -75,6 +76,24 @@ app.whenReady().then(async () => {
   // and on manual refresh. Handler is cheap (~100-300ms) and idempotent.
   ipcMain.handle('cli:detect', () => detectCli());
 
+  // Global shortcut rebind from Settings → 快捷键 → 全局唤起.
+  // Returns the structured `SetGlobalShortcutResult` so the renderer can
+  // surface "binding taken" failures without trusting main not to throw.
+  ipcMain.handle('globalShortcut:set', (_e, canonical: string) => setGlobalShortcut(canonical));
+
+  // Register the configured global shortcut at startup. Failures (binding
+  // already taken, malformed canonical, etc.) are logged and the app
+  // continues — the user can pick a different key from Settings.
+  try {
+    const cfg = loadConfig();
+    const result = setGlobalShortcut(cfg.shortcuts.global_invoke ?? '');
+    if (!result.ok) {
+      console.warn('global shortcut registration failed:', result.error);
+    }
+  } catch (err) {
+    console.warn('global shortcut init skipped (config unreadable):', err);
+  }
+
   // Renderer's UnsavedTabsDialog replies here once the user has walked
   // through every dirty tab (or cancelled). Stored resolver is set by
   // `askRendererAboutUnsaved` in the `before-quit` path.
@@ -110,6 +129,12 @@ app.on('window-all-closed', () => {
     app.quit();
   }
   // macOS: keep app alive in dock; red-cross only hides the window.
+});
+
+// Release globalShortcut registrations before exit. Without this, a stale
+// binding can linger across dev restarts and block re-registration.
+app.on('will-quit', () => {
+  unregisterGlobalShortcut();
 });
 
 app.on('before-quit', async (event) => {
