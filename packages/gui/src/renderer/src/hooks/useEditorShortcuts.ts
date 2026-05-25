@@ -42,17 +42,31 @@ const ACTIONS: Partial<Record<keyof ShortcutsConfig, ShortcutAction>> = {
   },
 };
 
+/**
+ * `close_tab` (default `Mod-KeyW`) collides with macOS's Cmd+W = "Close
+ * Window". The renderer's window-capture listener would otherwise eat
+ * every Cmd+W and trap the user inside the app. Only intercept when
+ * focus is inside the CodeMirror editor area AND there's an open tab to
+ * close — otherwise return without preventDefault so the OS default
+ * (close window) can take over.
+ */
+function shouldInterceptCloseTab(): boolean {
+  const inEditor = document.activeElement?.closest('.cm-editor') != null;
+  if (!inEditor) return false;
+  return useEditorStore.getState().activeTabId != null;
+}
+
 export function useEditorShortcuts(handlers: ShortcutHandlers) {
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       const shortcuts = useConfigStore.getState().shortcuts;
       for (const action of Object.keys(ACTIONS) as (keyof ShortcutsConfig)[]) {
         const binding = shortcuts[action];
-        if (binding && matchesShortcut(e, binding)) {
-          e.preventDefault();
-          ACTIONS[action]?.(handlers);
-          return;
-        }
+        if (!binding || !matchesShortcut(e, binding)) continue;
+        if (action === 'close_tab' && !shouldInterceptCloseTab()) continue;
+        e.preventDefault();
+        ACTIONS[action]?.(handlers);
+        return;
       }
       // Non-configurable focus helpers.
       if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey) {
