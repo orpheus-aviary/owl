@@ -124,7 +124,19 @@ ensure-node-abi:
         echo "[abi] better-sqlite3 already on Node ABI — skip"
     else
         echo "[abi] rebuilding better-sqlite3 for Node ABI..."
-        cd node_modules/.pnpm/better-sqlite3@*/node_modules/better-sqlite3 && pnpm run install
+        # Use build-release (force node-gyp from source). Plain `pnpm run install`
+        # runs `prebuild-install || node-gyp rebuild`, and the prebuilt grabbed
+        # by `prebuild-install` is for npm's bundled Node (currently 22 / ABI
+        # 132), which silently re-breaks Node 24 (ABI 137) every time pnpm
+        # install runs (e.g. after `just skybridge-install`). 2026-05-25
+        # manual M-checklist hit this 4× in one session.
+        SRC_DIR=node_modules/.pnpm/better-sqlite3@*/node_modules/better-sqlite3
+        (cd $SRC_DIR && pnpm run build-release)
+        # Mirror the freshly built binary to the hoisted top-level copy
+        # (pnpm install ships an independent .node there that doesn't get
+        # rebuilt by the inner script).
+        cp -p node_modules/.pnpm/better-sqlite3@*/node_modules/better-sqlite3/build/Release/better_sqlite3.node \
+            node_modules/better-sqlite3/build/Release/better_sqlite3.node
     fi
 
 # Guarantee the current better-sqlite3 binding is Electron-loadable. Prepended
