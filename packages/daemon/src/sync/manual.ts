@@ -52,6 +52,43 @@ import { getSyncStatusBroadcaster } from './status-broadcaster.js';
 export { SkybridgeNotInstalledError };
 export type { RealSkybridgeClient };
 
+// ─── runSync logger shim ──────────────────────────────────────────────
+//
+// `RunSyncLogger` in core uses a variadic shape `(...a: unknown[]) => void`
+// because most engine call sites pass a single templated string. But
+// `withRetry` in core/sync/retry.ts (and other future structured-log
+// sites) call pino-style `logger.warn({ kind, attempt, ... }, msg)`. A
+// naive `a.map(String).join(' ')` adapter stringifies the object arg as
+// the literal `[object Object]`, hiding all the retry detail we need
+// when debugging. P5-c M6 caught this.
+//
+// emitSyncLog detects the pino `(obj, msg)` shape and merges the object
+// into the structured payload; otherwise it falls back to the legacy
+// stringified template path. Exported for direct unit testing.
+
+type PinoLikeWarn = (
+  obj: Record<string, unknown>,
+  msg?: string,
+  ...rest: unknown[]
+) => void;
+
+export function emitSyncLog(emit: PinoLikeWarn, args: unknown[]): void {
+  if (
+    args.length >= 1 &&
+    typeof args[0] === 'object' &&
+    args[0] !== null &&
+    !Array.isArray(args[0]) &&
+    !(args[0] instanceof Error)
+  ) {
+    const firstObj = args[0] as Record<string, unknown>;
+    const rest = args.slice(1);
+    const msg = rest.length > 0 ? rest.map(String).join(' ') : undefined;
+    emit({ kind: 'sync', ...firstObj }, msg);
+    return;
+  }
+  emit({ kind: 'sync' }, args.map(String).join(' '));
+}
+
 // ─── Daemon-only error subclasses ─────────────────────────────────────
 
 // SkybridgeNotInstalledError now lives in `./session.js` (re-exported above).
@@ -205,8 +242,8 @@ async function doRunManualSync(ctx: AppContext): Promise<RunSyncResult> {
       workspaceId: session.workspaceId,
       serverUrl: session.serverUrl,
       logger: {
-        info: (...a) => ctx.logger.info({ kind: 'sync' }, a.map(String).join(' ')),
-        warn: (...a) => ctx.logger.warn({ kind: 'sync' }, a.map(String).join(' ')),
+        info: (...a) => emitSyncLog(ctx.logger.info.bind(ctx.logger), a),
+        warn: (...a) => emitSyncLog(ctx.logger.warn.bind(ctx.logger), a),
       },
     });
     // P5-b §6.3: success path emits status + reloads the in-memory
