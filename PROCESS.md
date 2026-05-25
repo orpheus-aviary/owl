@@ -1,16 +1,22 @@
 # 开发进度
 
-## 当前阶段：0.4.2 发版准备 — 2026-05-26 bump
+## 当前阶段：0.4.2 公开发版完成 — 2026-05-26
+
+**Release**：https://github.com/orpheus-aviary/owl/releases/tag/v0.4.2
 
 **包内容**：
-- 全局快捷键唤起（默认 ⌘⌥O，可在设置中改键，main process Electron globalShortcut + Settings UI）
-- skybridge 切到 npm 装的 `@orpheus-aviary/skybridge-{client,server}@0.1.1`，废止本地 tarball workflow
+- **新功能**：全局唤起快捷键（默认 ⌘⌥O，可在设置中改键，main process Electron globalShortcut + Settings UI）
+- **Fix**：`⌘W` 在编辑区外不再误抢 macOS 关窗（只在 CodeMirror + 有 tab 时拦截）
+- **Perf**：浏览页 NoteList 拖动 FolderPanel 边界时不再 380px 阈值闪现，每行加 CSS containment
+- **内部**：skybridge 切到 npm 装的 `@orpheus-aviary/skybridge-{client,server}@0.1.1`，废止本地 tarball workflow（删 `scripts/skybridge-overrides.mjs` + `scripts/check-skybridge-not-committed.sh` + 同名 justfile recipe + 同名 check 守卫）
 
-**版号路径决策**：0.5.0 仍保留给 P5-d（safeStorage keychain + 真实双机 soak），不动 ROADMAP gate。0.4.2 是 patch 级，仅装一个用户可见的小功能（global shortcut）+ 一个 100% 内部的依赖切换。
+**版号路径决策**：0.5.0 仍保留给 P5-d（safeStorage keychain + 真实双机 soak），不动 ROADMAP gate。0.4.2 是 patch 级。
 
-**测试基线**：**core 400 / daemon 216 / gui 207 / cli 134 = 957/957 干净 checkout**。`just check` 4 个守卫全过（`skybridge-not-committed` 守卫已废止，dev tarball workflow 整套删了）。
+**测试基线**：**core 400 / daemon 216 / gui 207 / cli 134 = 957/957 干净 checkout**。`just check` 4 个守卫全过（5 → 4，`skybridge-not-committed` 守卫退役）。
 
-**OWL_APP_VERSION**（`packages/daemon/src/sync/session.ts`）：从 `0.5.0-dev` 改成 `0.4.2`，发版后下次 P5-d 开工再切回 `0.5.0-dev`。
+**dmg artefact**：`Owl-0.4.2-arm64.dmg` 124 MB，sha256 `033f1027b682638cdbf752920b3a58f29b1011c36e5a1fceefa432ae3853eeee`。afterPack `codesign-adhoc.mjs` 钩子做 bundle-level ad-hoc 签名（沿用 0.4.1 模式）。
+
+**OWL_APP_VERSION**（`packages/daemon/src/sync/session.ts`）：当前 `0.4.2`，下次 P5-d 开工时切回 `0.5.0-dev`。
 
 ---
 

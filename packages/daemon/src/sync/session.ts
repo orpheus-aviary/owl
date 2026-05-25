@@ -109,7 +109,7 @@ export class SkybridgeNotInstalledError extends Error {
   readonly code = 'SKYBRIDGE_NOT_INSTALLED';
   constructor(readonly cause: unknown) {
     super(
-      'skybridge client module not found — run `just skybridge-install` in the owl repo before using sync',
+      'skybridge client module not found — reinstall owl or run `pnpm install` in the dev tree to restore @orpheus-aviary/skybridge-client',
     );
     this.name = 'SkybridgeNotInstalledError';
   }

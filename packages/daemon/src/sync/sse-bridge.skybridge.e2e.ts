@@ -7,21 +7,20 @@ import { createSseBridge } from './sse-bridge.js';
 
 /**
  * P5-c Step 8 — D11. End-to-end integration with the real
- * `@orpheus-aviary/skybridge-client@0.1.1` (installed by `just skybridge-install`):
- * a server-side graceful shutdown surfaces as `{ done: true }` on the
- * SSE reader, which the Step 7 fix in `packages/client/src/sse.ts:
- * pumpStream` now reports as `onError(NetworkError('SSE stream ended'))`.
- * The bridge picks that up via the standard onError path and schedules
- * a 2s reconnect.
+ * `@orpheus-aviary/skybridge-client@0.1.1` (installed as a normal npm
+ * dep of daemon since 0.4.2): a server-side graceful shutdown surfaces
+ * as `{ done: true }` on the SSE reader, which the Step 7 fix in
+ * `packages/client/src/sse.ts: pumpStream` now reports as
+ * `onError(NetworkError('SSE stream ended'))`. The bridge picks that
+ * up via the standard onError path and schedules a 2s reconnect.
  *
  * Prior to G2 the same close path returned silently, leaving the bridge
  * idle with no pending reconnect — the regression D11 guards against.
  *
  * Gated on filename `*.e2e.ts` (matches `test:e2e` glob in
  * packages/daemon/package.json) so this file is only picked up by
- * `just test-skybridge-e2e`. That recipe sets `SKYBRIDGE_E2E=1` and runs
- * AFTER `just skybridge-install` has put `@orpheus-aviary/skybridge-client` on disk;
- * the gate below is belt-and-suspenders.
+ * `just test-skybridge-e2e`. That recipe sets `SKYBRIDGE_E2E=1`; the
+ * gate below is belt-and-suspenders.
  */
 
 const gate = process.env.SKYBRIDGE_E2E === '1';
@@ -62,9 +61,10 @@ describe(
   { skip: !gate },
   () => {
     it('done:true from a streaming response triggers onError → reconnect at 2s (D11)', async () => {
-      // String-variable specifier so tsc on a clean checkout (no skybridge
-      // installed via `just skybridge-install`) doesn't try to resolve the
-      // module. Same pattern as packages/daemon/src/sync/session.ts:122.
+      // String-variable specifier mirrors the runtime pattern in
+      // packages/daemon/src/sync/session.ts: keeps tsc from statically
+      // resolving the module and lets the SKYBRIDGE_NOT_INSTALLED branch
+      // remain reachable if the dep is ever stripped.
       const spec: string = '@orpheus-aviary/skybridge-client';
       // biome-ignore lint/suspicious/noExplicitAny: gated import, runtime-only
       const mod = (await import(spec)) as any;

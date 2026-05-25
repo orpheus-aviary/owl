@@ -11,11 +11,12 @@
  *      If someone manually runs `node --test 'dist/**\/*.e2e.js'` without
  *      setting the env, the suite still skips.
  *
- * The `@orpheus-aviary/skybridge-server` import uses a variable specifier so TypeScript
- * does NOT try to resolve the module. On a clean checkout (skybridge
- * uninstalled) `tsc -b` still passes; running the e2e recipe with the env
- * set requires `just skybridge-install` to have made the package
- * resolvable first.
+ * The `@orpheus-aviary/skybridge-server` import uses a variable specifier
+ * so TypeScript does not statically resolve the module. The package is
+ * installed as a normal devDependency of daemon (since 0.4.2) so the
+ * runtime import succeeds; the variable-specifier pattern remains for
+ * symmetry with the production session.ts path and to keep the
+ * SKYBRIDGE_NOT_INSTALLED branch reachable if the dep is ever stripped.
  */
 
 import assert from 'node:assert/strict';
