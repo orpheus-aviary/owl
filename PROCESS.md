@@ -1,15 +1,27 @@
 # 开发进度
 
-## 当前阶段：P5-c shipped (内部) — 自动化 + 手动 M1-M8 + 3 个 follow-up bug 全过 2026-05-25；不发版，下一步 P5-d 完工后才 0.5.0
+## 当前阶段：0.4.2 发版准备 — 2026-05-26 bump
+
+**包内容**：
+- 全局快捷键唤起（默认 ⌘⌥O，可在设置中改键，main process Electron globalShortcut + Settings UI）
+- skybridge 切到 npm 装的 `@orpheus-aviary/skybridge-{client,server}@0.1.1`，废止本地 tarball workflow
+
+**版号路径决策**：0.5.0 仍保留给 P5-d（safeStorage keychain + 真实双机 soak），不动 ROADMAP gate。0.4.2 是 patch 级，仅装一个用户可见的小功能（global shortcut）+ 一个 100% 内部的依赖切换。
+
+**测试基线**：**core 400 / daemon 216 / gui 207 / cli 134 = 957/957 干净 checkout**。`just check` 4 个守卫全过（`skybridge-not-committed` 守卫已废止，dev tarball workflow 整套删了）。
+
+**OWL_APP_VERSION**（`packages/daemon/src/sync/session.ts`）：从 `0.5.0-dev` 改成 `0.4.2`，发版后下次 P5-d 开工再切回 `0.5.0-dev`。
+
+---
+
+## 历史：P5-c shipped (内部) — 自动化 + 手动 M1-M8 + 3 个 follow-up bug 全过 2026-05-25；不发版，下一步 P5-d 完工后才 0.5.0
 
 **P5-c 设计文档**：`docs/plans/2026-05-24-p5-c-plan.md`（v5 锁定）
 **手动 M1-M8 checklist**：`docs/plans/2026-05-24-p5-c-manual-checklist.md`
 **M1-M8 暴露的 3 个 bug 闭环**：`docs/plans/2026-05-25-p5-c-manual-bugs.md`
 **实施记录**：`docs/history/P5-c-shipped.md`
 
-测试基线：**core 392 / cli 134 / daemon 219 / gui 207 = 952/952 干净 checkout**，**965/965** 含 `SKYBRIDGE_E2E=1` gated dual e2e（13/13）。`just check` 5 个守卫全过。
-
-owl `main` 比 origin 多 35 commits（未 push）：P5-c 主线 15 + bugs.md 1 + M2 fix 1 + ABI chore 1 + #3 fix 1 + #2 fix 1 + bugs.md update 1 + lint 1。aviary +5、skybridge +6 也未 push。
+P5-c shipped 时测试基线：**core 392 / cli 134 / daemon 219 / gui 207 = 952/952 干净 checkout**，**965/965** 含 `SKYBRIDGE_E2E=1` gated dual e2e（13/13）。`just check` 5 个守卫全过。
 
 **0.5.0 时机**：仍按原口径等 P5-d（safeStorage keychain + 真实双机 soak + logout 流程）完工再发；本次 manual M1-M8 暴露的 3 个 fix 直接进 P5-c 主线，不切 P5-c.5。
 
