@@ -90,13 +90,23 @@ function silentLogger(): Logger & { lines: string[] } {
  * `ctx.eventsBus.emit`, so we need real instances for those even though
  * the bridge mainly cares about ctx identity for the WeakMap lookup.
  * runManualSync(ctx) is still expected to reject (no session); the
- * bridge's .catch swallows it.
+ * bridge's .catch swallows it. Once `@orpheus-aviary/skybridge-client`
+ * became a hard runtime dep the dynamic import inside session.ts
+ * resolves before the rejection, so manual sync reaches code that
+ * touches `ctx.logger.warn`; provide a no-op logger to keep the late
+ * `.catch` from blowing up on an `undefined` field.
  */
 function makeCtx(): AppContext {
   const { db, sqlite } = createDatabase({ dbPath: ':memory:' });
   ensureDeviceId(db);
+  const noopLogger = {
+    info: () => {},
+    warn: () => {},
+    error: () => {},
+    debug: () => {},
+  };
   // biome-ignore lint/suspicious/noExplicitAny: minimal stub
-  return { db, sqlite, eventsBus: new EventsBus() } as any;
+  return { db, sqlite, eventsBus: new EventsBus(), logger: noopLogger } as any;
 }
 
 // ─── tests ───────────────────────────────────────────────────────────

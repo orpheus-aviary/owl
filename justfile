@@ -18,13 +18,6 @@ typecheck:
 core-convergence:
     bash scripts/check-core-convergence.sh
 
-# P5-a — committed manifests must NOT reference @skybridge/*. Local dev
-# uses `just skybridge-install` to patch them temporarily; this guard
-# catches accidental commits of that patched state.
-[group('lint')]
-skybridge-not-committed:
-    bash scripts/check-skybridge-not-committed.sh
-
 # P5-c §6.27 — skybridge auth tokens must not appear in string templates
 # or concatenation. pino.redact covers structured fields but can't reach
 # into `${tok}`. See scripts/check-token-not-templated.sh header.
@@ -33,7 +26,7 @@ token-not-templated:
     bash scripts/check-token-not-templated.sh
 
 [group('lint')]
-check: lint typecheck core-convergence skybridge-not-committed token-not-templated
+check: lint typecheck core-convergence token-not-templated
     @echo "All checks passed."
 
 # ─── Test ───────────────────────────────────────────────
@@ -127,9 +120,9 @@ ensure-node-abi:
         # Use build-release (force node-gyp from source). Plain `pnpm run install`
         # runs `prebuild-install || node-gyp rebuild`, and the prebuilt grabbed
         # by `prebuild-install` is for npm's bundled Node (currently 22 / ABI
-        # 132), which silently re-breaks Node 24 (ABI 137) every time pnpm
-        # install runs (e.g. after `just skybridge-install`). 2026-05-25
-        # manual M-checklist hit this 4× in one session.
+        # 132), which silently re-breaks Node 24 (ABI 137) every time
+        # `pnpm install` runs. 2026-05-25 manual M-checklist hit this 4× in
+        # one session, hence this guard.
         SRC_DIR=node_modules/.pnpm/better-sqlite3@*/node_modules/better-sqlite3
         (cd $SRC_DIR && pnpm run build-release)
         # Mirror the freshly built binary to the hoisted top-level copy
@@ -218,31 +211,12 @@ install:
 [group('setup')]
 reinstall: clean-all install
 
-# ─── Skybridge (P5-a, local-only) ───────────────────────
+# ─── Skybridge ──────────────────────────────────────────
 #
-# skybridge is not on npm yet. The recipes below patch root + daemon
-# manifests with `file:` overrides pointing at tarballs from
-# `../skybridge/dist-pack/`. The patched state MUST NOT be committed —
-# `just check` blocks that via `skybridge-not-committed`.
-#
-# Workflow:
-#   1. In ../skybridge: `just pack-all` → tarballs land in dist-pack/
-#   2. In owl:          `just skybridge-install`  (manifests patched)
-#   3.                  `just test-skybridge-e2e` (runs gated e2e suite)
-#   4.                  `just skybridge-uninstall` (manifests restored)
-
-# Override SKYBRIDGE_DIR if your skybridge checkout is not a sibling of owl.
-skybridge_dir := env_var_or_default("SKYBRIDGE_DIR", "../skybridge")
-
-[group('skybridge')]
-skybridge-install:
-    node scripts/skybridge-overrides.mjs install {{skybridge_dir}}/dist-pack
-    pnpm install
-
-[group('skybridge')]
-skybridge-uninstall:
-    node scripts/skybridge-overrides.mjs uninstall
-    pnpm install
+# `@orpheus-aviary/skybridge-{client,server}` are published on npm and
+# installed as regular workspace dependencies; the previous dev-tarball
+# workflow (skybridge-overrides.mjs + skybridge-install / uninstall
+# recipes + check-skybridge-not-committed.sh guard) is retired.
 
 # One-shot manual sync via daemon HTTP (POST /sync/run).
 # Requires daemon running; reads OWL_NEST_DIR for profile B isolation.
@@ -257,11 +231,12 @@ skybridge-sync-once:
 dev-skybridge: ensure-electron-abi
     bash scripts/dev-skybridge.sh
 
-# Run the gated daemon e2e suite (needs skybridge-install first).
-# The file is named `sync.e2e.ts` (no `.test.` suffix) so the default
-# `just test-daemon` glob never picks it up — only this recipe does.
-# SKYBRIDGE_E2E=1 also unlocks the runtime `{ skip }` gate as belt-
-# and-suspenders.
+# Run the gated daemon e2e suite. `@orpheus-aviary/skybridge-{client,server}`
+# is already installed via daemon's regular deps — no manifest patching
+# needed. The file is named `sync.e2e.ts` (no `.test.` suffix) so the
+# default `just test-daemon` glob never picks it up — only this recipe
+# does. SKYBRIDGE_E2E=1 also unlocks the runtime `{ skip }` gate as
+# belt-and-suspenders.
 [group('skybridge')]
 test-skybridge-e2e: ensure-node-abi build-daemon
     SKYBRIDGE_E2E=1 pnpm --filter @owl/daemon run test:e2e

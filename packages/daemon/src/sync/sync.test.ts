@@ -123,22 +123,12 @@ describe('sync routes (P5-a Step 7)', () => {
       assert.equal(res.json().error_code, 'SKYBRIDGE_AUTH_REQUIRED');
     });
 
-    it('500 + SKYBRIDGE_NOT_INSTALLED when toml is valid but @orpheus-aviary/skybridge-client is absent', async () => {
-      // Auth is present, so we get past the config guards; the next
-      // step (dynamic import of `@orpheus-aviary/skybridge-client`) fails on a clean
-      // checkout — exactly the install-guard the production daemon
-      // should surface.
-      writeSkybridgeConfig(
-        {
-          server: { url: TEST_SERVER_URL },
-          auth: { user_id: 'u', token: 't', email: 'e' },
-        },
-        skybridgeConfigPath(),
-      );
-      const res = await app.inject({ method: 'POST', url: '/sync/run' });
-      assert.equal(res.statusCode, 500);
-      assert.equal(res.json().error_code, 'SKYBRIDGE_NOT_INSTALLED');
-    });
+    // The pre-publish `SKYBRIDGE_NOT_INSTALLED` test that asserted the
+    // dynamic import would fail on a clean checkout was removed once
+    // `@orpheus-aviary/skybridge-client` became a hard runtime dep of
+    // `@owl/daemon`. The error code path still exists for defense in
+    // depth (an upstream consumer could npm-uninstall the dep), but
+    // the supplied test environment can't reach it.
   });
 
   // ── GET /sync/status ────────────────────────────────────────
@@ -263,18 +253,8 @@ describe('sync routes (P5-a Step 7)', () => {
       assert.equal(res.json().error_code, 'SKYBRIDGE_SERVER_URL_MISSING');
     });
 
-    it('500 + SKYBRIDGE_NOT_INSTALLED when server_url provided but skybridge package absent', async () => {
-      const res = await app.inject({
-        method: 'POST',
-        url: '/sync/login',
-        payload: {
-          email: 'jay@local',
-          password: 'longenoughpw',
-          server_url: TEST_SERVER_URL,
-        },
-      });
-      assert.equal(res.statusCode, 500);
-      assert.equal(res.json().error_code, 'SKYBRIDGE_NOT_INSTALLED');
-    });
+    // See note above POST /sync/run — the pre-publish
+    // `SKYBRIDGE_NOT_INSTALLED` assertion was retired alongside the
+    // hard runtime dep on `@orpheus-aviary/skybridge-client`.
   });
 });
