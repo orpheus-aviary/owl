@@ -133,3 +133,27 @@ just check                       # 5 个守卫 + lint + typecheck 全过
 - skybridge 仓配套：`skybridge/PROCESS.md`（client@0.1.1 release + owl P5-c 集成）
 
 下一步 **Step 16-aviary**（ROADMAP + SKYBRIDGE_ARCH 标 shipped）→ **Step 17-skybridge**（PROCESS.md client@0.1.1）→ **Step 18**（手动 M1-M8 全过 + 0.5.0 版号 bump + GUI + CLI tag + release + npm publish）→ **0.5.0 内部 release**。
+
+## 2026-05-25 手动 M1-M8 验收 + 3 bug 闭环
+
+M1-M8 实际跑通了，但碰出 3 个真 bug，全在本 session 修完：
+
+| # | 优先级 | 暴露 | 症状 | 修法 commit |
+|---|---|---|---|---|
+| 1 | P1 | M2 | `GET /tags` 路由没走 G6 的 trash 过滤，drizzle 直接 select schema.tags，浏览页标签下拉里 0-note 的孤儿 tag 依然出现 | `49988c2` `fix(daemon)`：route 改原生 SQL JOIN + HAVING，+ regression test |
+| 2 | **P0** | M5 准备 | 老 note 在 sync_changes 里缺 `create` op（P4 上线时没 backfill），新设备 bootstrap 收到 `update` 找不到 local row → 静默 skip → A 58 条 live note 在 B 上只剩 45。**13 条真实用户笔记凭空消失** | `3d911d4` `fix(skybridge)`：schema v8 migration `0008_backfill_create_ops.sql` + engine 加 `PRAGMA defer_foreign_keys = ON` + `maybeRecordNoteConflict` 加 `EXISTS sync_changes` 闸门（消除 bootstrap 49 个 false conflict） |
+| 3 | P3 | M6 | daemon log 里 retry 行打 `[object Object] sync HTTP retry scheduled`，结构化字段全丢，看不到 attempt / waitMs / cause | `c8d20e1` `fix(daemon)`：`emitSyncLog` shim 识别 pino `(obj, msg)` 形状，+ 7-case 单测 |
+
+修后自动化基线：
+- `@owl/core`: **383 → 392**（+9：8 case 0008 backfill + 1 bootstrap conflict 抑制）
+- `@owl/daemon`: **210 → 219**（+9：7 case emit-sync-log + 2 case `/tags` regression）
+- `@owl/cli` / `@owl/gui`: 不变（134 / 207）
+- gated dual e2e: 13/13 不变
+
+手动 M5 回归（最关键的那个）：profile A 58 live / 71 total / 7 folders → profile B wiped 完 sync → **identical 58 / 71 / 7 + 0 conflict**。
+
+详细见 `docs/plans/2026-05-25-p5-c-manual-bugs.md`。
+
+**0.5.0 时机仍按原口径**：等 P5-d（safeStorage keychain + 真实双机 soak + logout 流程）完工再发；本 session 这 3 个 fix 直接进 P5-c 主线，不单独切 P5-c.5。
+
+附：本次 session 还把 `justfile:ensure-node-abi` 从 `pnpm run install` 切到 `pnpm run build-release` —— 之前依赖 `prebuild-install` 抓 npm 默认 Node 22 的 ABI 132 prebuilt，在 Node 24（ABI 137）环境下每次 `pnpm install` 后都把 better-sqlite3 binary 拍坏一遍，单 session 踩 4 次（commit `806c198`）。

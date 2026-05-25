@@ -1,6 +1,21 @@
 # 开发进度
 
-## 当前阶段：P5-b shipped (内部) — 自动化 D1-D10 + 手动 D11/D11b 验收 2026-05-24 通过；不发版，下一步 P5-c
+## 当前阶段：P5-c shipped (内部) — 自动化 + 手动 M1-M8 + 3 个 follow-up bug 全过 2026-05-25；不发版，下一步 P5-d 完工后才 0.5.0
+
+**P5-c 设计文档**：`docs/plans/2026-05-24-p5-c-plan.md`（v5 锁定）
+**手动 M1-M8 checklist**：`docs/plans/2026-05-24-p5-c-manual-checklist.md`
+**M1-M8 暴露的 3 个 bug 闭环**：`docs/plans/2026-05-25-p5-c-manual-bugs.md`
+**实施记录**：`docs/history/P5-c-shipped.md`
+
+测试基线：**core 392 / cli 134 / daemon 219 / gui 207 = 952/952 干净 checkout**，**965/965** 含 `SKYBRIDGE_E2E=1` gated dual e2e（13/13）。`just check` 5 个守卫全过。
+
+owl `main` 比 origin 多 35 commits（未 push）：P5-c 主线 15 + bugs.md 1 + M2 fix 1 + ABI chore 1 + #3 fix 1 + #2 fix 1 + bugs.md update 1 + lint 1。aviary +5、skybridge +6 也未 push。
+
+**0.5.0 时机**：仍按原口径等 P5-d（safeStorage keychain + 真实双机 soak + logout 流程）完工再发；本次 manual M1-M8 暴露的 3 个 fix 直接进 P5-c 主线，不切 P5-c.5。
+
+---
+
+## 历史：P5-b shipped (内部) — 自动化 D1-D10 + 手动 D11/D11b 验收 2026-05-24 通过
 
 **P5-b 设计文档**（v5 锁定）：`docs/plans/2026-05-22-p5-b-multi-entity-realtime-design.md`
 **D11/D11b 手动 checklist**：`docs/plans/2026-05-24-p5-b-d11-d12-manual-checklist.md`
