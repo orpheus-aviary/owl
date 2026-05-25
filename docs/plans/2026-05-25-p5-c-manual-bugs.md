@@ -19,7 +19,7 @@
 
 ---
 
-## #2 — sync engine 老 note 缺 CREATE op，新设备 bootstrap 拉不全（M5 准备阶段暴露）⏳ 待修
+## #2 — sync engine 老 note 缺 CREATE op，新设备 bootstrap 拉不全（M5 准备阶段暴露）✅ 已修
 
 **优先级**：P0（多设备同步的数据完整性核心 bug；0.5.0 / P5-d 之前必修）
 
@@ -38,15 +38,16 @@
 - 缺失只在 B 这个**测试 nest**上 —— M6/M7/M8 也不依赖 B 数据完整性
 - 用户暂不需要任何手动恢复操作
 
-**修法（待 P5-d 或 P5-c.5 单独 ticket）**：
-1. 新增 migration（最小 0008）扫所有 `notes`，对每条 `id NOT IN (SELECT entity_id FROM sync_changes WHERE entity_type='note' AND op='create')` 的 row 追写一条 `create` op，payload 用当前快照（content / folder_id / tags / created_at / updated_at_ms），device_id 用 `local_metadata.device_uuid`，`client_change_id` 用稳定 UUIDv5 派生防重，`synced_at` 留 NULL 等下次 `/sync/run` push
-2. 同 migration 兼顾 `folders` / `conversations`（如果当时 P4 也漏了）
-3. 写 daemon 单测：seed notes 表 + 留空 sync_changes → 跑 migration → 断言每条 note 有且仅有 1 条 `op='create'` row
-4. 写 gated e2e：A nest 模拟「P4 之前」状态 → 装新设备 B → bootstrap → B 的 notes 表与 A 完全一致
+**修法（本 session 已完成，commit `3d911d4`）**：
+1. ✅ schema v8 migration `0008_backfill_create_ops.sql` 扫 notes / folders 表，对没有 `create` op 的 row 追写一条，payload 用当前快照。folders backfill 先于 notes（保 FK 顺序），SPECIAL_NOTES.MEMO / TODO 不补（每台设备本地 materialise），conversations 不补（apply 端会自动 INSERT）
+2. ✅ engine apply pull 加 `PRAGMA defer_foreign_keys = ON`（防御性，应对真用户 push 顺序乱掉）
+3. ✅ `maybeRecordNoteConflict` 加 `EXISTS sync_changes` 闸门 —— 没本地编辑过的 entity 不记 conflict，消除 bootstrap noise（M5 重测时 49 个 false conflict → 0）
+4. ✅ 0008 单测 8 case：legacy / legacy-with-update / modern / SPECIAL / folder / idempotent / device_uuid 覆盖；engine 加 "bootstrap replay" 新单测
+5. ✅ 手动回归通过：A 58/71/7 → B wiped + re-bootstrap → 58/71/7，0 conflicts
 
 ---
 
-## #3 — `[object Object] sync HTTP retry scheduled` log 模板没序列化（M6 暴露）⏳ 待修
+## #3 — `[object Object] sync HTTP retry scheduled` log 模板没序列化（M6 暴露）✅ 已修
 
 **优先级**：P3（不影响功能，只影响 debug 体验）
 
@@ -56,10 +57,14 @@
 ```
 `[object Object]` 字面出现在 msg 里 —— 模板字符串拼了一个 Error / 上下文对象但没结构化展开。每次 scheduler tick 5 个 retry，连续 5 行噪音，看不到 attempt index / backoff delay / cause。
 
-**根因（未 grep 源码确认）**：估计 `packages/core/src/sync/retry.ts:withRetry` 里 `logger.warn(`${ctx} sync HTTP retry scheduled`)` 模板字符串拼了一个对象。应该 `logger.warn({ attempt, delayMs, cause: err.name }, 'sync HTTP retry scheduled')`。
+**根因**：`packages/core/src/sync/retry.ts:withRetry` 已经走 pino-style `logger.warn({ kind, attempt, of, waitMs }, msg)` 调用，但 `packages/daemon/src/sync/manual.ts` 包了一层 shim：
+```ts
+warn: (...a) => ctx.logger.warn({ kind: 'sync' }, a.map(String).join(' ')),
+```
+`a.map(String)` 把第一个 object arg 字面转 `[object Object]`，结构化字段全丢，所有 retry 详情连带 `attempt` / `waitMs` / `cause` 都看不到。
 
-**修法**：把日志改成 pino 结构化字段。带 `attempt:n delayMs:m causeCode:SKYBRIDGE_SERVER_UNREACHABLE` 等。
+**修法（commit `c8d20e1`）**：抽 `emitSyncLog(emit, args)`，sniff 调用形状：object 头 + optional string msg → 合并到结构化 payload；其它 fall back 老路径。带 7-case 单测覆盖。
 
-**状态**：⏳ 待修，单独 ticket 即可，无依赖。
+**状态**：✅ 已修。
 
 ---
