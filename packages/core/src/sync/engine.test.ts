@@ -112,6 +112,25 @@ function seedNote(
     );
 }
 
+/**
+ * P5-c follow-up #2: conflict detection gates on `sync_changes` row
+ * presence — "B has touched this entity locally". Tests that want to
+ * exercise the conflict-record path must seed at least one
+ * synthetic outbox row so the gate opens. Synced-at can be either
+ * NULL (still pending) or a timestamp (already pushed); either way
+ * counts as "B edited X" history.
+ */
+function markLocalEdit(sqlite: Database.Database, id: string, cid: string): void {
+  sqlite
+    .prepare(
+      `INSERT INTO sync_changes
+         (device_id, entity_type, entity_id, op, payload, created_at,
+          client_change_id, server_seq, synced_at)
+       VALUES ('dev-local', 'note', ?, 'update', '{}', 500, ?, 1, 600)`,
+    )
+    .run(id, cid);
+}
+
 function makeNoteChange(input: {
   serverSeq: number;
   cid?: string;
@@ -1573,6 +1592,7 @@ describe('runSync — conflict detection (P5-c §6.16)', () => {
 
   it('records conflict when remote update wins LWW AND content differs', async () => {
     seedNote(sqlite, 'n-c', { content: 'local copy', updatedAt: 1_000 });
+    markLocalEdit(sqlite, 'n-c', 'cid-local-edit');
     const client = new FakeSkybridgeClient();
     client.enqueuePull({
       changes: [
@@ -1757,6 +1777,9 @@ describe('runSync — conflict detection (P5-c §6.16)', () => {
     seedNote(sqlite, 'n-a', { content: 'A-local', updatedAt: 1_000 });
     seedNote(sqlite, 'n-b', { content: 'B-local', updatedAt: 1_000 });
     seedNote(sqlite, 'n-c', { content: 'C-local', updatedAt: 1_000 });
+    markLocalEdit(sqlite, 'n-a', 'cid-local-a');
+    markLocalEdit(sqlite, 'n-b', 'cid-local-b');
+    markLocalEdit(sqlite, 'n-c', 'cid-local-c');
     const client = new FakeSkybridgeClient();
     client.enqueuePull({
       changes: [
@@ -1796,6 +1819,43 @@ describe('runSync — conflict detection (P5-c §6.16)', () => {
       .map((r) => r.entity_id)
       .sort();
     assert.deepEqual(ids, ['n-a', 'n-c']);
+  });
+
+  it('bootstrap replay: local note with no sync_changes row never records conflict', async () => {
+    // Mirrors P5-c follow-up #2: B is a fresh nest that just received
+    // A's `create` op (so notes row exists locally) and then A's older
+    // `update` arrives in the same pull stream. LWW says remote loses
+    // (older), but engine.ts:430 would have short-circuited there. The
+    // tricky case is when remote *wins* LWW during pure replay — e.g.
+    // create + update both arrive, the update has newer ts than the
+    // create payload. Without the sync_changes gate, the update would
+    // record a conflict against the just-installed create snapshot.
+    seedNote(sqlite, 'n-bootstrap', { content: 'create-snap', updatedAt: 1_000 });
+    // NOTE: no markLocalEdit — B never touched this entity locally.
+    const client = new FakeSkybridgeClient();
+    client.enqueuePull({
+      changes: [
+        makeNoteChange({
+          serverSeq: 11,
+          entityId: 'n-bootstrap',
+          op: 'update',
+          payload: { updated_at_ms: 2_000, content: 'later-history' },
+        }),
+      ],
+      hasMore: false,
+    });
+    const result = await runSync({
+      db,
+      sqlite,
+      client,
+      workspaceId: WORKSPACE_ID,
+      serverUrl: SERVER_URL,
+      nowMs: fakeNow,
+    });
+    assert.equal(result.appliedTotal, 1, 'apply still proceeds — LWW write happens');
+    assert.equal(result.conflictsRecorded, 0, 'no conflict row — pure replay');
+    assert.equal(readConflicts().length, 0);
+    assert.equal(readNote(sqlite, 'n-bootstrap')?.content, 'later-history');
   });
 
   it('self-replay does not trigger conflict detection (cid matches synced outbox)', async () => {

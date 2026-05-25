@@ -382,6 +382,21 @@ function maybeRecordNoteConflict(
   if (body.content === undefined) return;
   const localSnap = readLocalNoteSnapshot(sqlite, c.entityId);
   if (!localSnap || localSnap.content === body.content) return;
+  // P5-c follow-up #2: only "B actually edited X locally" counts as a
+  // real conflict; a fresh bootstrap that replays remote history hits
+  // this code path on every legacy update op (note already has
+  // newer-arrival content from the create row) and shouldn't drown the
+  // sidebar in 红点 noise. sync_changes only ever receives rows from
+  // local mutations (engine apply does NOT touch the table), so its
+  // presence is exactly the "did B touch X" signal we want.
+  const hasLocalEdit = sqlite
+    .prepare(
+      `SELECT 1 FROM sync_changes
+        WHERE entity_type = 'note' AND entity_id = ?
+        LIMIT 1`,
+    )
+    .get(c.entityId) as { 1: number } | undefined;
+  if (!hasLocalEdit) return;
   const now = conflictSink.nowMs ?? Date.now;
   recordConflict(sqlite, {
     entityType: 'note',
@@ -824,6 +839,15 @@ export async function runSync(deps: RunSyncDeps): Promise<RunSyncResult> {
     const batchHigh = pulled.changes.reduce((m, c) => (c.serverSeq > m ? c.serverSeq : m), cursor);
 
     const runBatch = sqlite.transaction(() => {
+      // P5-c follow-up #2: defer FK checks until COMMIT so out-of-order
+      // arrival within a batch (e.g. note.folder_id pointing at a folder
+      // that appears later in the same pull) doesn't fail INSERT. SQLite
+      // only respects this pragma INSIDE a transaction; it auto-resets
+      // on commit/rollback, so no cleanup needed. The 0008 backfill
+      // pushes notes before folders (sync_changes order), and a real
+      // user could also create a note in folder X before folder X
+      // itself reaches the wire — same shape, same fix.
+      sqlite.pragma('defer_foreign_keys = ON');
       for (const change of pulled.changes) {
         const outcome = applyOneChange(db, sqlite, change, logger, conflictSink);
         if (outcome === 'applied') batchApplied += 1;
