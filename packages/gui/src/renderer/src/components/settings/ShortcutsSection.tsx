@@ -80,7 +80,7 @@ export function ShortcutsSection() {
       <div className="flex flex-col gap-1">
         <h3 className="text-sm font-medium">全局快捷键</h3>
         <p className="text-xs text-muted-foreground">
-          即使 owl 在后台或失焦也能响应；可能与其他应用冲突，注册失败会在上方提示。
+          即使 owl 在后台或失焦也能响应。若按下后无反应，多半是被其他应用占用，换一个组合即可。
         </p>
       </div>
       <div className="border border-border rounded-md">

@@ -23,21 +23,18 @@ const DEFAULT_SHORTCUTS: ShortcutsConfig = {
 };
 
 /**
- * Push the global invoke binding to the main process. Called after a
- * successful `patchConfig` that touched `shortcuts.global_invoke`, and on
- * reset. Returns the main-process registration error if any (binding
- * conflict / unparseable accelerator) so the store can surface it inline.
+ * Push the global invoke binding to the main process. Fire-and-forget:
+ * main logs its own failures, the user notices a non-firing shortcut and
+ * picks a different key.
  */
-async function syncGlobalShortcutWithMain(canonical: string): Promise<string | null> {
+async function syncGlobalShortcutWithMain(canonical: string): Promise<void> {
   // Guard against renderer-only test environments where owlAPI isn't injected.
   const api = typeof window !== 'undefined' ? window.owlAPI : undefined;
-  if (!api?.shortcut?.setGlobal) return null;
+  if (!api?.shortcut?.setGlobal) return;
   try {
-    const res = await api.shortcut.setGlobal(canonical);
-    if (!res.ok) return res.error ?? '快捷键注册失败';
-    return null;
-  } catch (err) {
-    return err instanceof Error ? err.message : String(err);
+    await api.shortcut.setGlobal(canonical);
+  } catch {
+    // Swallow IPC errors — main is best-effort, no UI surface here.
   }
 }
 
@@ -167,9 +164,7 @@ export const useConfigStore = create<ConfigState>((set, get) => ({
       if (res.data) {
         applyConfig(set, res.data);
         if (delta.global_invoke !== undefined) {
-          const err = await syncGlobalShortcutWithMain(delta.global_invoke);
-          set({ error: err });
-          return err === null;
+          await syncGlobalShortcutWithMain(delta.global_invoke);
         }
         set({ error: null });
         return true;
@@ -186,9 +181,8 @@ export const useConfigStore = create<ConfigState>((set, get) => ({
       const res = await api.patchConfig({ shortcuts: DEFAULT_SHORTCUTS });
       if (res.data) {
         applyConfig(set, res.data);
-        const err = await syncGlobalShortcutWithMain(DEFAULT_SHORTCUTS.global_invoke);
-        set({ error: err });
-        return err === null;
+        await syncGlobalShortcutWithMain(DEFAULT_SHORTCUTS.global_invoke);
+        return true;
       }
       return false;
     } catch (err) {

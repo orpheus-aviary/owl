@@ -76,20 +76,18 @@ app.whenReady().then(async () => {
   // and on manual refresh. Handler is cheap (~100-300ms) and idempotent.
   ipcMain.handle('cli:detect', () => detectCli());
 
-  // Global shortcut rebind from Settings → 快捷键 → 全局唤起.
-  // Returns the structured `SetGlobalShortcutResult` so the renderer can
-  // surface "binding taken" failures without trusting main not to throw.
-  ipcMain.handle('globalShortcut:set', (_e, canonical: string) => setGlobalShortcut(canonical));
+  // Global shortcut rebind from Settings → 快捷键 → 全局唤起. Fire-and-
+  // forget — setGlobalShortcut logs its own failures, the renderer does
+  // not surface them to the user.
+  ipcMain.handle('globalShortcut:set', (_e, canonical: string) => {
+    setGlobalShortcut(canonical);
+  });
 
-  // Register the configured global shortcut at startup. Failures (binding
-  // already taken, malformed canonical, etc.) are logged and the app
-  // continues — the user can pick a different key from Settings.
+  // Register the configured global shortcut at startup. setGlobalShortcut
+  // is best-effort and logs its own failures.
   try {
     const cfg = loadConfig();
-    const result = setGlobalShortcut(cfg.shortcuts.global_invoke ?? '');
-    if (!result.ok) {
-      console.warn('global shortcut registration failed:', result.error);
-    }
+    setGlobalShortcut(cfg.shortcuts.global_invoke ?? '');
   } catch (err) {
     console.warn('global shortcut init skipped (config unreadable):', err);
   }

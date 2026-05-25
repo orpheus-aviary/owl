@@ -5,7 +5,10 @@ import { BrowserWindow, app, globalShortcut } from 'electron';
  * Electron `globalShortcut` integration. Keeps `currentAccelerator` so we
  * can unregister the previous binding before applying a new one on rebind.
  * Empty / malformed input disables registration without throwing — bad
- * user config shouldn't kill the main process.
+ * user config shouldn't kill the main process. Failures (binding taken
+ * by another app, malformed canonical) log to console and otherwise
+ * silently drop; users can pick a different key if their first choice
+ * doesn't work.
  */
 
 let currentAccelerator: string | null = null;
@@ -24,49 +27,33 @@ function showAndFocus(): void {
   win.focus();
 }
 
-export interface SetGlobalShortcutResult {
-  ok: boolean;
-  accelerator: string | null;
-  error?: string;
-}
-
 /**
  * Register `canonical` as the global invoke shortcut, replacing any prior
- * binding. Empty string disables. Returns success + the resolved Electron
- * accelerator (for logging / UI feedback) or a localized error message
- * when registration fails (e.g. binding taken by another app).
+ * binding. Empty string disables. Best-effort: failures are logged but
+ * not surfaced — the user notices "shortcut doesn't fire" and picks
+ * another key.
  */
-export function setGlobalShortcut(canonical: string): SetGlobalShortcutResult {
+export function setGlobalShortcut(canonical: string): void {
   if (currentAccelerator) {
     globalShortcut.unregister(currentAccelerator);
     currentAccelerator = null;
   }
-  if (!canonical) {
-    return { ok: true, accelerator: null };
-  }
+  if (!canonical) return;
   const accel = toElectronAccelerator(canonical);
   if (!accel) {
-    return { ok: false, accelerator: null, error: `无法解析快捷键格式：${canonical}` };
+    console.warn(`[global-shortcut] unparseable canonical form: ${canonical}`);
+    return;
   }
-  let registered = false;
   try {
-    registered = globalShortcut.register(accel, showAndFocus);
+    if (!globalShortcut.register(accel, showAndFocus)) {
+      console.warn(`[global-shortcut] register returned false for ${accel} (likely taken)`);
+      return;
+    }
   } catch (err) {
-    return {
-      ok: false,
-      accelerator: accel,
-      error: err instanceof Error ? err.message : String(err),
-    };
-  }
-  if (!registered) {
-    return {
-      ok: false,
-      accelerator: accel,
-      error: `快捷键 ${accel} 注册失败，可能已被其他应用占用`,
-    };
+    console.warn('[global-shortcut] register threw:', err);
+    return;
   }
   currentAccelerator = accel;
-  return { ok: true, accelerator: accel };
 }
 
 /** Release all globalShortcut bindings. Call from app `will-quit`. */
