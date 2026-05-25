@@ -120,6 +120,13 @@ export function NoteListItem({
       style={specialColor ? { boxShadow: `inset 4px 0 0 ${specialColor}` } : undefined}
       className={cn(
         '@container w-full text-left px-3 py-2 border-b border-border transition-colors outline-none cursor-pointer select-none',
+        // CSS containment isolates each row's layout + paint from siblings.
+        // Drag-resizing the surrounding panel triggers per-row layout
+        // (title truncation, container-query timestamp column) — without
+        // containment the browser recomputes geometry for every sibling
+        // on each frame, which flickers across ~50 visible items. Skip
+        // `size` containment so the row still grows with its content.
+        '[contain:layout_paint_style]',
         'hover:bg-accent/50',
         pinned && showPinBackground && 'bg-primary/5',
         isActive && 'bg-accent border-l-2 border-l-primary',
@@ -148,13 +155,17 @@ export function NoteListItem({
             )}
           </div>
         </div>
-        {/* Container-query gated: below ~380px row width, title gets the full
-            space and the timestamp column collapses. Avoids the prior behavior
-            where the date column was pushed off-screen at narrow widths.
-            `hideDates` (used by the editor sidebar NoteList) forces the column
-            off entirely regardless of width. */}
+        {/* Always rendered when `hideDates` is false. The previous
+            `hidden @[380px]:block` container-query toggle made the column
+            snap in/out at the threshold, which under fast panel drags
+            looked like jank as 50+ items re-laid-out per frame. The
+            column is already `shrink-0 text-right` so it doesn't push
+            the title off-screen at narrow widths — the title's
+            `flex-1 min-w-0 truncate` handles the squeeze gracefully.
+            `hideDates` (editor sidebar NoteList) still suppresses the
+            column entirely. */}
         {!hideDates && (
-          <div className="hidden @[380px]:block shrink-0 text-right text-xs leading-relaxed pt-0.5">
+          <div className="shrink-0 text-right text-xs leading-relaxed pt-0.5">
             <div
               className={cn(
                 activeSort === 'created' ? 'text-foreground font-bold' : 'text-muted-foreground',
