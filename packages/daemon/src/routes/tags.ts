@@ -1,22 +1,35 @@
-import { listAlarmNotes, parseTag, schema } from '@owl/core';
-import { and, eq, sql } from 'drizzle-orm';
+import { listAlarmNotes, parseTag } from '@owl/core';
 import type { FastifyInstance } from 'fastify';
 import type { AppContext } from '../context.js';
 import { fail, ok } from '../response.js';
 
 export function registerTagRoutes(app: FastifyInstance, ctx: AppContext): void {
-  // GET /tags — list # tags (for autocomplete)
+  // GET /tags — list # tags currently used by at least one non-trashed note
+  // (P5-c G6 — orphan tags after全部 trash must drop out of autocomplete).
+  //
+  // Mirrors `listHashtagTags` join + HAVING shape but keeps the route's
+  // `{id, tagType, tagValue}` payload so GUI `Tag` interface stays stable.
   app.get('/tags', async (req, reply) => {
     const query = req.query as { search?: string };
+    const params: unknown[] = [];
+    let searchClause = '';
+    if (query.search) {
+      searchClause = 'AND t.tag_value LIKE ?';
+      params.push(`%${query.search}%`);
+    }
 
-    const baseCondition = eq(schema.tags.tagType, '#');
-    const rows = query.search
-      ? ctx.db
-          .select()
-          .from(schema.tags)
-          .where(and(baseCondition, sql`${schema.tags.tagValue} LIKE ${`%${query.search}%`}`))
-          .all()
-      : ctx.db.select().from(schema.tags).where(baseCondition).all();
+    const rows = ctx.sqlite
+      .prepare(
+        `SELECT t.id, t.tag_type as tagType, t.tag_value as tagValue
+         FROM tags t
+         JOIN note_tags nt ON t.id = nt.tag_id
+         JOIN notes n ON nt.note_id = n.id AND n.trash_level = 0
+         WHERE t.tag_type = '#' ${searchClause}
+         GROUP BY t.id
+         HAVING COUNT(nt.note_id) > 0
+         ORDER BY t.tag_value ASC`,
+      )
+      .all(...params);
 
     ok(reply, rows);
   });

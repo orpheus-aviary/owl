@@ -487,6 +487,48 @@ describe('daemon API', () => {
     assert.ok(res.json().data.length > 0);
   });
 
+  // P5-c G6 regression: `/tags` previously hit drizzle direct select with no
+  // join to `notes`, so trashing the last note holding a tag still left it in
+  // the autocomplete list. Manual M2 caught it after release — keep this
+  // around so the route doesn't drift back to the unfiltered query.
+  it('GET /tags excludes hashtags whose only notes are trashed', async () => {
+    const tagValue = 'g6-orphan-route';
+    const create = await app.inject({
+      method: 'POST',
+      url: '/notes',
+      payload: { content: 'orphan tag holder', tags: [`#${tagValue}`] },
+    });
+    const noteId = create.json().data.id;
+
+    const before = await app.inject({ method: 'GET', url: '/tags' });
+    assert.ok(
+      (before.json().data as { tagValue: string }[]).some((t) => t.tagValue === tagValue),
+      'tag should be visible while owning note is live',
+    );
+
+    await app.inject({ method: 'DELETE', url: `/notes/${noteId}` });
+
+    const after = await app.inject({ method: 'GET', url: '/tags' });
+    assert.ok(
+      !(after.json().data as { tagValue: string }[]).some((t) => t.tagValue === tagValue),
+      'tag must disappear once all notes carrying it are trashed',
+    );
+
+    await app.inject({ method: 'POST', url: `/notes/${noteId}/restore` });
+
+    const restored = await app.inject({ method: 'GET', url: '/tags' });
+    assert.ok(
+      (restored.json().data as { tagValue: string }[]).some((t) => t.tagValue === tagValue),
+      'tag must come back after restoring the note',
+    );
+
+    const searched = await app.inject({ method: 'GET', url: `/tags?search=${tagValue}` });
+    assert.ok(
+      (searched.json().data as { tagValue: string }[]).some((t) => t.tagValue === tagValue),
+      'search param still narrows to matching live tags',
+    );
+  });
+
   it('POST /parse-tag parses tag string', async () => {
     const res = await app.inject({
       method: 'POST',
