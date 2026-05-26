@@ -43,7 +43,7 @@ import {
 } from '@owl/core';
 import type { AppContext } from '../context.js';
 
-const OWL_APP_VERSION = '0.4.2';
+const OWL_APP_VERSION = '0.5.0-dev';
 
 // ─── Real-client structural surface (duck-typed from @orpheus-aviary/skybridge-client) ──
 //
