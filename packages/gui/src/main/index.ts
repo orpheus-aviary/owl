@@ -6,6 +6,7 @@ import { setGlobalShortcut, unregisterGlobalShortcut } from './global-shortcut.j
 import { registerMigrationIpc } from './migration-ipc.js';
 import type { StartupMode } from './migration-precheck.js';
 import { runMigrationPrecheck } from './migration-precheck.js';
+import { restoreSessionOnStartup } from './sync-auth.js';
 import { createWindow } from './window.js';
 
 let isQuitting = false;
@@ -102,7 +103,19 @@ app.whenReady().then(async () => {
   const daemonPort = getDaemonPort();
 
   if (precheck.mode === 'normal') {
-    await ensureDaemonRunning();
+    const daemonReady = await ensureDaemonRunning();
+    // P5-d Phase 7 — once daemon is reachable, restore the encrypted
+    // skybridge session into daemon's ctx via POST /sync/session. Best-
+    // effort: a missing toml / locked keychain / partial config returns
+    // null silently; the user sees the unauthenticated state and can
+    // log in from Settings. Never block GUI startup on this.
+    if (daemonReady) {
+      try {
+        await restoreSessionOnStartup();
+      } catch (err) {
+        console.warn('skybridge session restore failed (continuing):', err);
+      }
+    }
     createWindow({ daemonPort, onClose: onWindowClose });
   } else {
     const win = createWindow({ startupMode: precheck, daemonPort, onClose: onWindowClose });

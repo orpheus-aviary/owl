@@ -44,10 +44,35 @@ export async function checkDaemon(): Promise<boolean> {
 }
 
 /**
+ * Build the env we hand to the daemon child process.
+ *
+ * P5-d Phase 7 — GUI main MUST pass `OWL_GUI_PARENT_PID=<pid>` so the
+ * daemon's parent-pid probe (packages/daemon/src/sync/parent-probe.ts)
+ * can tear down sync state if GUI crashes / is force-quit.
+ *
+ * What we deliberately do NOT do here:
+ *   - inject `OWL_DAEMON_TOKEN`, `OWL_DAEMON_DEV_TOKEN`, or any other
+ *     token-bearing env. ChildProcess env is copied at spawn and cannot
+ *     be reliably revoked — the only token path is the post-listen
+ *     HTTP `/sync/session` injection from `sync-auth.ts`.
+ *
+ * Exported for direct unit testing (the rest of `spawnDaemon` touches
+ * `process.execPath` + the actual `spawn` call, which would force the
+ * test to mock `child_process`).
+ */
+export function buildSpawnEnv(parentEnv: NodeJS.ProcessEnv, parentPid: number): NodeJS.ProcessEnv {
+  return {
+    ...parentEnv,
+    ELECTRON_RUN_AS_NODE: '1',
+    OWL_GUI_PARENT_PID: String(parentPid),
+  };
+}
+
+/**
  * Spawn daemon process using Electron-as-Node (ELECTRON_RUN_AS_NODE=1).
  * Packaged app doesn't have a standalone `node` binary; run the Electron
  * binary in node mode instead. Inherits parent env so HOME/PATH/proxy/API
- * keys reach the child.
+ * keys reach the child — see buildSpawnEnv for the token-related caveats.
  */
 function spawnDaemon(): boolean {
   let cliPath: string;
@@ -60,7 +85,7 @@ function spawnDaemon(): boolean {
 
   try {
     const child = spawn(process.execPath, [cliPath, 'daemon'], {
-      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+      env: buildSpawnEnv(process.env, process.pid),
       detached: true,
       stdio: 'ignore',
     });
