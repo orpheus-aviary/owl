@@ -181,6 +181,7 @@ export type {
 export { clearSyncIdentity, persistSkybridgeIds } from './skybridge/identity.js';
 export { redactToken } from './skybridge/redact.js';
 export type { RedactTokenOptions } from './skybridge/redact.js';
+export { OWL_APP_VERSION } from './version.js';
 
 // Conversations (AI chat persistence)
 export {

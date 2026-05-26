@@ -30,6 +30,7 @@
 import { hostname } from 'node:os';
 import {
   type LocalChangeLike,
+  OWL_APP_VERSION,
   type PullResultLike,
   type PushResultLike,
   type ServerChangeLike,
@@ -42,8 +43,6 @@ import {
   writeSkybridgeConfig,
 } from '@owl/core';
 import type { AppContext } from '../context.js';
-
-const OWL_APP_VERSION = '0.5.0-dev';
 
 // ─── Real-client structural surface (duck-typed from @orpheus-aviary/skybridge-client) ──
 //

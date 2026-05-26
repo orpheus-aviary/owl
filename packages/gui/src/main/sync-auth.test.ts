@@ -92,6 +92,7 @@ const coreState = {
   cfgReadError: null as Error | null,
 };
 vi.mock('@owl/core', () => ({
+  OWL_APP_VERSION: '0.5.0-dev',
   readSkybridgeConfig: vi.fn(() => {
     if (coreState.cfgReadError) throw coreState.cfgReadError;
     return coreState.cfgRead;

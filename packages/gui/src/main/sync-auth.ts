@@ -33,9 +33,8 @@
  *        the daemon's own toml-bootstrap path (session.ts requireAuth);
  *        we just don't promote it through GUI restore.
  *
- * `OWL_APP_VERSION` is mirrored from `packages/daemon/src/sync/session.ts`
- * — bump together when bumping owl version. Refactoring it to a shared
- * constant lives in commit (h) cleanup if needed.
+ * `OWL_APP_VERSION` is imported from `@owl/core` so the daemon and GUI
+ * always report the same app version through registerDevice.
  */
 
 import { hostname } from 'node:os';
@@ -45,13 +44,16 @@ import {
   createSkybridgeClient,
   login as skybridgeLogin,
 } from '@orpheus-aviary/skybridge-client';
-import { type SkybridgeConfig, readSkybridgeConfig, skybridgeConfigPath } from '@owl/core';
+import {
+  OWL_APP_VERSION,
+  type SkybridgeConfig,
+  readSkybridgeConfig,
+  skybridgeConfigPath,
+} from '@owl/core';
 import { safeStorage } from 'electron';
 import { stringify } from 'smol-toml';
 import { atomicWriteFile, cleanupStaleTmp } from './atomic-write.js';
 import { getDaemonUrl } from './daemon.js';
-
-const OWL_APP_VERSION = '0.5.0-dev';
 
 export interface LoginAndOpenSessionInput {
   serverUrl: string;
