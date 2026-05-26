@@ -107,8 +107,8 @@ importers:
         specifier: ^11.2.0
         version: 11.2.0
       '@orpheus-aviary/skybridge-client':
-        specifier: ^0.1.1
-        version: 0.1.1
+        specifier: ^0.1.3
+        version: 0.1.3
       '@owl/core':
         specifier: workspace:*
         version: link:../core
@@ -132,8 +132,8 @@ importers:
         version: 6.34.0(ws@8.20.0)
     devDependencies:
       '@orpheus-aviary/skybridge-server':
-        specifier: ^0.1.1
-        version: 0.1.1
+        specifier: ^0.1.3
+        version: 0.1.3
       '@types/better-sqlite3':
         specifier: ^7.6.13
         version: 7.6.13
@@ -1470,16 +1470,16 @@ packages:
     engines: {node: ^12.13.0 || ^14.15.0 || >=16.0.0}
     deprecated: This functionality has been moved to @npmcli/fs
 
-  '@orpheus-aviary/skybridge-client@0.1.1':
-    resolution: {integrity: sha512-toEUElia+TUVh6YgbGDlPLiupxzhmH3n6K9iLwRB5KNM5WcY0Pt9FGohgGGrw/YSwwuRZQS208zL1JX2ayBZUA==}
+  '@orpheus-aviary/skybridge-client@0.1.3':
+    resolution: {integrity: sha512-ARjnUYslKOp4p/CuvmhGcsQdT5KXQxfkKvK9WZECNHWWQwG+QzwhnPRq6rZLi5ZdXGEA2/mkMRSmT+Kx77daKQ==}
     engines: {node: '>=22.0.0'}
 
-  '@orpheus-aviary/skybridge-proto@0.1.1':
-    resolution: {integrity: sha512-rN14AKR2XzdO0AeSUh8VDN/SARvJ/Cv1s0soaUuP0BtYhAyIGlCl85Vk/hn9NCWHwxnOdGG6hmEIkPUWoKCoSQ==}
+  '@orpheus-aviary/skybridge-proto@0.1.3':
+    resolution: {integrity: sha512-7vEvfi/GL1a/DVW4249Smf/y2HwQB0gOPtB1JoCEJn85/YHuDRh5XskQ5EvpxqYvZbRPi8TCPd6B2ZdV6LaNiA==}
     engines: {node: '>=22.0.0'}
 
-  '@orpheus-aviary/skybridge-server@0.1.1':
-    resolution: {integrity: sha512-kAsVSJDGAuuEgz24ByGnPCRvFWqMCQnXmp3Ft4OVu5ffwxdCDOMsTyagsqpm8QJN1BJLgaQs2XkaTd9jfBREGw==}
+  '@orpheus-aviary/skybridge-server@0.1.3':
+    resolution: {integrity: sha512-BeKdr4Wwl7taos8PR9XqP/VtkvopIQXz0Xmw+Hco0qrj69tFCdQs0ldbDxLIf8dTcGFiqvAtzAxJuqCdj6z4tA==}
     engines: {node: '>=22.0.0'}
     hasBin: true
 
@@ -6474,16 +6474,16 @@ snapshots:
       mkdirp: 1.0.4
       rimraf: 3.0.2
 
-  '@orpheus-aviary/skybridge-client@0.1.1':
+  '@orpheus-aviary/skybridge-client@0.1.3':
     dependencies:
-      '@orpheus-aviary/skybridge-proto': 0.1.1
+      '@orpheus-aviary/skybridge-proto': 0.1.3
 
-  '@orpheus-aviary/skybridge-proto@0.1.1': {}
+  '@orpheus-aviary/skybridge-proto@0.1.3': {}
 
-  '@orpheus-aviary/skybridge-server@0.1.1':
+  '@orpheus-aviary/skybridge-server@0.1.3':
     dependencies:
       '@node-rs/argon2': 2.0.2
-      '@orpheus-aviary/skybridge-proto': 0.1.1
+      '@orpheus-aviary/skybridge-proto': 0.1.3
       better-sqlite3: 11.10.0
       fastify: 5.8.5
       smol-toml: 1.6.1

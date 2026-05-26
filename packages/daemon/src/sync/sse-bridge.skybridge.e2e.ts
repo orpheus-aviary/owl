@@ -52,8 +52,13 @@ function silentLogger(): Logger {
 function makeCtx(): AppContext {
   const { db, sqlite } = createDatabase({ dbPath: ':memory:' });
   ensureDeviceId(db);
+  // P5-c Step 10b (f73d052) introduced void ensureBackgroundHandles(ctx,
+  // ctx.logger) inside runManualSync. The mid-session bootstrap rejects
+  // here (no real session) and its .catch tries ctx.logger.warn — without
+  // a logger that throws TypeError and surfaces as an unhandled rejection.
+  // Stub a logger so the catch handler can fire harmlessly.
   // biome-ignore lint/suspicious/noExplicitAny: minimal stub
-  return { db, sqlite, eventsBus: new EventsBus() } as any;
+  return { db, sqlite, eventsBus: new EventsBus(), logger: silentLogger() } as any;
 }
 
 describe(

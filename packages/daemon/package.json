@@ -19,7 +19,7 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.90.0",
     "@fastify/cors": "^11.2.0",
-    "@orpheus-aviary/skybridge-client": "^0.1.1",
+    "@orpheus-aviary/skybridge-client": "^0.1.3",
     "@owl/core": "workspace:*",
     "better-sqlite3": "^11.10.0",
     "commander": "^13.1.0",
@@ -29,7 +29,7 @@
     "openai": "^6.34.0"
   },
   "devDependencies": {
-    "@orpheus-aviary/skybridge-server": "^0.1.1",
+    "@orpheus-aviary/skybridge-server": "^0.1.3",
     "@types/better-sqlite3": "^7.6.13",
     "@types/node-notifier": "^8.0.5",
     "typescript": "^5.7.0"
