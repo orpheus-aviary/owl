@@ -257,4 +257,48 @@ describe('sync routes (P5-a Step 7)', () => {
     // `SKYBRIDGE_NOT_INSTALLED` assertion was retired alongside the
     // hard runtime dep on `@orpheus-aviary/skybridge-client`.
   });
+
+  // ── POST /sync/session validation (P5-d Phase 6) ────────────
+
+  describe('POST /sync/session', () => {
+    function validBody() {
+      return {
+        token: 'tk-abc',
+        user_id: 'u1',
+        email: 'j@test',
+        server_url: TEST_SERVER_URL,
+        device: { id: 'dev-1', name: 'mac' },
+        workspace: { id: 'ws-1' },
+      };
+    }
+
+    async function expectMissing(field: string, mutator: (b: Record<string, unknown>) => void) {
+      const body = validBody() as unknown as Record<string, unknown>;
+      mutator(body);
+      const res = await app.inject({ method: 'POST', url: '/sync/session', payload: body });
+      assert.equal(res.statusCode, 400, `${field}: expected 400`);
+      const json = res.json();
+      assert.equal(json.error_code, 'USAGE_ERROR');
+      assert.match(json.message, new RegExp(field.replace('.', '\\.')));
+    }
+
+    it('400 + USAGE_ERROR when token is missing', async () => {
+      await expectMissing('token', (b) => {
+        // biome-ignore lint/performance/noDelete: omitting the field is the assertion
+        delete b.token;
+      });
+    });
+
+    it('400 + USAGE_ERROR when device.id is missing', async () => {
+      await expectMissing('device.id', (b) => {
+        b.device = { name: 'mac' };
+      });
+    });
+
+    it('400 + USAGE_ERROR when workspace.id is missing', async () => {
+      await expectMissing('workspace.id', (b) => {
+        b.workspace = {};
+      });
+    });
+  });
 });

@@ -73,39 +73,47 @@ export async function startSseBridgeIfBootstrapped(
   const buildBridge = deps.createSseBridge ?? defaultCreateSseBridge;
   const buildHealthProbe = deps.createHealthProbe ?? defaultCreateHealthProbe;
 
-  let config: SkybridgeConfig;
-  try {
-    config = readConfig();
-  } catch {
-    logger.info({ kind: 'sse-bridge' }, 'skybridge not configured, skipping bridge');
-    return null;
-  }
-
-  // Demand fully-bootstrapped config so ensureSession is a no-network call.
-  // Missing device.id / workspace.id would trigger registerDevice /
-  // ensureWorkspace inside ensureSession, which we don't want at boot.
-  if (!config.auth?.token || !config.device?.id || !config.workspace?.id) {
-    logger.info(
-      {
-        kind: 'sse-bridge',
-        hasAuth: Boolean(config.auth?.token),
-        hasDevice: Boolean(config.device?.id),
-        hasWorkspace: Boolean(config.workspace?.id),
-      },
-      'skybridge config incomplete, skipping bridge (run `owl sync run` to finish bootstrap)',
-    );
-    return null;
-  }
-
+  // P5-d Phase 6 — if `/sync/session` has already populated the cache,
+  // honor it without going to toml. This is the GUI-main → HTTP path that
+  // works even when toml only carries `encrypted_token` (Phase 7), since
+  // daemon never decrypts.
   let session: SkybridgeSession;
-  try {
-    session = await ensureSession(ctx);
-  } catch (err) {
-    logger.warn(
-      { kind: 'sse-bridge', err: errorMessage(err) },
-      'skybridge session bootstrap failed, skipping bridge',
-    );
-    return null;
+  if (ctx.skybridgeSession) {
+    session = ctx.skybridgeSession;
+  } else {
+    let config: SkybridgeConfig;
+    try {
+      config = readConfig();
+    } catch {
+      logger.info({ kind: 'sse-bridge' }, 'skybridge not configured, skipping bridge');
+      return null;
+    }
+
+    // Demand fully-bootstrapped config so ensureSession is a no-network call.
+    // Missing device.id / workspace.id would trigger registerDevice /
+    // ensureWorkspace inside ensureSession, which we don't want at boot.
+    if (!config.auth?.token || !config.device?.id || !config.workspace?.id) {
+      logger.info(
+        {
+          kind: 'sse-bridge',
+          hasAuth: Boolean(config.auth?.token),
+          hasDevice: Boolean(config.device?.id),
+          hasWorkspace: Boolean(config.workspace?.id),
+        },
+        'skybridge config incomplete, skipping bridge (awaiting /sync/session)',
+      );
+      return null;
+    }
+
+    try {
+      session = await ensureSession(ctx);
+    } catch (err) {
+      logger.warn(
+        { kind: 'sse-bridge', err: errorMessage(err) },
+        'skybridge session bootstrap failed, skipping bridge',
+      );
+      return null;
+    }
   }
 
   // P5-c Step 10: compose bridge + health probe. The cycle (probe needs

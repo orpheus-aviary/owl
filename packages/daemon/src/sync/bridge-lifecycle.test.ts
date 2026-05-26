@@ -268,6 +268,35 @@ describe('startSseBridgeIfBootstrapped', () => {
     assert.deepEqual(probeCalls.at(-1), 'stop');
   });
 
+  // P5-d Phase 6 — when /sync/session already populated ctx.skybridgeSession,
+  // bridge bootstrap must skip the toml read + completeness check (toml may
+  // only carry encrypted_token, which daemon never decrypts).
+  it('honors ctx.skybridgeSession cache and skips readSkybridgeConfig', async () => {
+    const bridge = makeFakeBridge();
+    const logger = silentLogger();
+    const ctx = { skybridgeSession: fakeSession() } as AppContext;
+    let readConfigCalls = 0;
+    let ensureSessionCalls = 0;
+
+    const handle = await startSseBridgeIfBootstrapped(ctx, logger, {
+      readSkybridgeConfig: () => {
+        readConfigCalls += 1;
+        throw new Error('toml read must not happen when ctx cache is hot');
+      },
+      ensureSkybridgeSession: async () => {
+        ensureSessionCalls += 1;
+        throw new Error('ensureSession must not be called when ctx cache is hot');
+      },
+      createSseBridge: () => bridge,
+      createHealthProbe: () => ({ start: () => {}, stop: () => {} }),
+    });
+
+    assert.ok(handle, 'bridge should start from ctx cache');
+    assert.equal(readConfigCalls, 0);
+    assert.equal(ensureSessionCalls, 0);
+    assert.equal(bridge.startCalls, 1);
+  });
+
   it('probe onRecover → bridge.triggerReconnect (full feedback loop)', async () => {
     const bridge = makeFakeBridge();
     const logger = silentLogger();

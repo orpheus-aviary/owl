@@ -48,6 +48,11 @@ export function registerSystemRoutes(app: FastifyInstance): void {
         { method: 'POST', path: '/sync/run', description: 'Trigger one skybridge sync round' },
         { method: 'GET', path: '/sync/status', description: 'Skybridge sync status snapshot' },
         { method: 'POST', path: '/sync/login', description: 'Write skybridge auth credentials' },
+        {
+          method: 'POST',
+          path: '/sync/session',
+          description: 'Install skybridge session (replace semantics, GUI-main → daemon)',
+        },
       ],
     });
   });

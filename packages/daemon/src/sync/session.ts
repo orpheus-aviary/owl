@@ -259,3 +259,75 @@ export async function ensureSkybridgeSession(ctx: AppContext): Promise<Skybridge
 export function invalidateSkybridgeSession(ctx: AppContext): void {
   ctx.skybridgeSession = null;
 }
+
+// ─── /sync/session install (P5-d Phase 6) ─────────────────────────────
+
+export interface InstallSessionInput {
+  token: string;
+  user_id: string;
+  email: string;
+  server_url: string;
+  device: {
+    id: string;
+    name: string;
+    app_version?: string;
+    client_version?: string;
+  };
+  workspace: { id: string; slug?: string };
+}
+
+/**
+ * P5-d Phase 6 — install a fully-resolved skybridge session into `ctx`
+ * from an explicit HTTP payload (GUI main has already done login +
+ * registerDevice + ensureWorkspace remotely; daemon just plugs the
+ * resulting identity into its in-memory cache).
+ *
+ * Builds a `SkybridgeConfig` in memory only — does NOT write toml. The
+ * Phase 7 GUI main path is the sole toml writer; daemon never persists
+ * credentials.
+ *
+ * `persistSkybridgeIds(ctx.sqlite, deviceId, workspaceId)` runs **before**
+ * the cache assignment so a partial failure can't leave a session pointing
+ * to ids that mutation paths can't read. Positional signature per v3 §3.1.1.
+ *
+ * Caller (route handler) is responsible for the replace dance:
+ *   stopBackgroundHandles(ctx)
+ *   ctx.skybridgeSession = null
+ *   installSkybridgeSession(ctx, body)
+ *   ensureBackgroundHandles(ctx, logger)
+ */
+export async function installSkybridgeSession(
+  ctx: AppContext,
+  input: InstallSessionInput,
+): Promise<SkybridgeSession> {
+  const config: SkybridgeConfig = {
+    server: { url: input.server_url },
+    auth: { token: input.token, user_id: input.user_id, email: input.email },
+    device: {
+      id: input.device.id,
+      name: input.device.name,
+      app_version: input.device.app_version ?? `owl ${OWL_APP_VERSION}`,
+      client_version: input.device.client_version ?? '',
+    },
+    workspace: { id: input.workspace.id, slug: input.workspace.slug ?? 'owl/default' },
+  };
+
+  const sb = await loadSkybridgeClient();
+  const realClient = buildClient(
+    sb,
+    config as SkybridgeConfig & { auth: { user_id: string; token: string; email: string } },
+  );
+
+  persistSkybridgeIds(ctx.sqlite, input.device.id, input.workspace.id);
+
+  const session: SkybridgeSession = {
+    realClient,
+    module: sb,
+    config,
+    workspaceId: input.workspace.id,
+    deviceId: input.device.id,
+    serverUrl: input.server_url,
+  };
+  ctx.skybridgeSession = session;
+  return session;
+}
