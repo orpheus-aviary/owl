@@ -51,6 +51,8 @@ describe('logger default redact paths (P5-c §6.27)', () => {
       [
         '*.token',
         '*.auth.token',
+        '*.encrypted_token',
+        '*.auth.encrypted_token',
         'authorization',
         'headers.authorization',
         'req.headers.authorization',

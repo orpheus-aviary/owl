@@ -27,6 +27,10 @@ export interface LoggerOptions {
  * The path globs cover:
  *   - `*.token`               — any object property named `token`
  *   - `*.auth.token`          — explicit nested cfg shape
+ *   - `*.encrypted_token`     — P5-d Phase 7 ciphertext; not strictly
+ *                                secret, but redacted defensively so
+ *                                logs never tempt offline analysis
+ *   - `*.auth.encrypted_token` — explicit nested cfg shape
  *   - `authorization`         — top-level header
  *   - `headers.authorization` — http req object shape
  *   - `req.headers.authorization` — fastify req shape
@@ -34,6 +38,8 @@ export interface LoggerOptions {
 export const DEFAULT_LOG_REDACT_PATHS: readonly string[] = [
   '*.token',
   '*.auth.token',
+  '*.encrypted_token',
+  '*.auth.encrypted_token',
   'authorization',
   'headers.authorization',
   'req.headers.authorization',

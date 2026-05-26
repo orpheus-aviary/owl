@@ -164,6 +164,75 @@ describe('requireAuth narrowing', () => {
         (err as SkybridgeAuthRequiredError & { code: string }).code === 'SKYBRIDGE_AUTH_REQUIRED',
     );
   });
+
+  // P5-d Phase 7 — encrypted-only toml must NOT pass the daemon's
+  // authenticated narrow. Daemon has no Electron handle, so the
+  // ciphertext is unusable from there; GUI main → /sync/session is the
+  // only path that can land the plaintext token in ctx.
+  it('throws SkybridgeAuthRequiredError when only encrypted_token is present (no plaintext)', () => {
+    const cfg: SkybridgeConfig = {
+      server: { url: SERVER_URL },
+      auth: { user_id: 'u', email: 'e', encrypted_token: 'base64ciphertext' },
+    };
+    assert.throws(
+      () => requireAuth(cfg),
+      (err: unknown) =>
+        err instanceof SkybridgeAuthRequiredError &&
+        (err as SkybridgeAuthRequiredError & { code: string }).code === 'SKYBRIDGE_AUTH_REQUIRED',
+    );
+  });
+});
+
+// ─── encrypted_token round-trip (P5-d Phase 7) ──────────
+
+describe('readSkybridgeConfig — encrypted_token transitional schema', () => {
+  it('populates auth from a toml that has encrypted_token only (no plaintext token)', () => {
+    const cfg: SkybridgeConfig = {
+      server: { url: SERVER_URL },
+      auth: { user_id: 'u', email: 'e', encrypted_token: 'ciphertext-b64' },
+    };
+    writeSkybridgeConfig(cfg, cfgPath);
+    const back = readSkybridgeConfig(cfgPath);
+    assert.equal(back.auth?.user_id, 'u');
+    assert.equal(back.auth?.email, 'e');
+    assert.equal(back.auth?.encrypted_token, 'ciphertext-b64');
+    assert.equal(back.auth?.token, undefined, 'no plaintext token leaked into auth');
+  });
+
+  it('preserves both fields when toml carries plaintext + ciphertext (mid-transition)', () => {
+    const cfg: SkybridgeConfig = {
+      server: { url: SERVER_URL },
+      auth: {
+        user_id: 'u',
+        email: 'e',
+        token: 'legacy-plaintext',
+        encrypted_token: 'ciphertext-b64',
+      },
+    };
+    writeSkybridgeConfig(cfg, cfgPath);
+    const back = readSkybridgeConfig(cfgPath);
+    assert.equal(back.auth?.token, 'legacy-plaintext');
+    assert.equal(back.auth?.encrypted_token, 'ciphertext-b64');
+  });
+
+  it('still populates auth from a legacy plaintext-only toml (no encrypted_token)', () => {
+    const cfg: SkybridgeConfig = {
+      server: { url: SERVER_URL },
+      auth: { user_id: 'u', token: 'legacy-plaintext', email: 'e' },
+    };
+    writeSkybridgeConfig(cfg, cfgPath);
+    const back = readSkybridgeConfig(cfgPath);
+    assert.equal(back.auth?.token, 'legacy-plaintext');
+    assert.equal(back.auth?.encrypted_token, undefined);
+  });
+
+  it('leaves auth undefined when user_id + email present but BOTH token fields absent', () => {
+    // Hand-write toml to bypass the writer's shape constraint.
+    const raw = `[server]\nurl = "${SERVER_URL}"\n\n[auth]\nuser_id = "u"\nemail = "e"\n`;
+    writeFileSync(cfgPath, raw, 'utf-8');
+    const back = readSkybridgeConfig(cfgPath);
+    assert.equal(back.auth, undefined, 'no token of either kind → no auth');
+  });
 });
 
 // ─── clearSkybridgeAuth ─────────────────────────────────

@@ -194,12 +194,21 @@ export async function runSyncLogin(flags: SyncLoginFlags, env: SyncCommandEnv): 
 
 interface MaskedSkybridgeConfig {
   server: { url: string };
-  auth?: { user_id: string; token: string; email: string };
+  // P5-d Phase 7: schema now allows encrypted_token-only configs.
+  // `token` is `string | undefined` here to surface that state in the
+  // CLI's masked view.
+  auth?: {
+    user_id: string;
+    token: string | undefined;
+    email: string;
+    encrypted_token?: string;
+  };
   device?: SkybridgeConfig['device'];
   workspace?: SkybridgeConfig['workspace'];
 }
 
-function maskToken(token: string): string {
+function maskToken(token: string | undefined): string | undefined {
+  if (token === undefined) return undefined;
   if (token.length <= 8) return '****';
   return `${token.slice(0, 4)}…${token.slice(-4)}`;
 }
@@ -212,6 +221,9 @@ function mask(config: SkybridgeConfig): MaskedSkybridgeConfig {
           user_id: config.auth.user_id,
           token: maskToken(config.auth.token),
           email: config.auth.email,
+          // P5-d Phase 7: surface the presence of the ciphertext without
+          // dumping the value itself.
+          encrypted_token: config.auth.encrypted_token ? '[ENCRYPTED]' : undefined,
         }
       : undefined,
     device: config.device,

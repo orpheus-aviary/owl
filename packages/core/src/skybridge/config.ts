@@ -33,9 +33,26 @@ export interface SkybridgeServerSection {
 
 export interface SkybridgeAuthSection {
   user_id: string;
-  token: string;
-  /** Only used by `owl sync config show`; never sent on the wire. */
+  /**
+   * Only used by `owl sync config show`; never sent on the wire.
+   */
   email: string;
+  /**
+   * Legacy plaintext token from pre-P5-d-Phase-7 logins. Now optional —
+   * GUI main writes `encrypted_token` instead. Daemon's `requireAuth`
+   * narrowing still demands this field, so an encrypted-only toml is
+   * NOT directly daemon-authenticatable; the session must arrive via
+   * GUI main → /sync/session HTTP injection. Phase 9 deletes this
+   * field outright once the encrypted path has full coverage.
+   */
+  token?: string;
+  /**
+   * P5-d Phase 7 — `safeStorage.encryptString(plaintext_token)` → base64.
+   * Only GUI main writes this. Daemon **never** decrypts (it has no
+   * Electron handle); the plaintext token only ever exists in GUI
+   * main's local scope between decrypt and the POST /sync/session call.
+   */
+  encrypted_token?: string;
 }
 
 export interface SkybridgeDeviceSection {
@@ -110,12 +127,17 @@ export function readSkybridgeConfig(path?: string): SkybridgeConfig {
     throw new SkybridgeServerUrlMissingError(filePath);
   }
   const config: SkybridgeConfig = { server: { url } };
-  if (parsed.auth?.user_id && parsed.auth?.token && parsed.auth?.email) {
+  // P5-d Phase 7 — accept either the legacy plaintext `token` or the new
+  // `encrypted_token`. user_id + email remain required (non-secret
+  // display fields).
+  const hasAnyToken = Boolean(parsed.auth?.token) || Boolean(parsed.auth?.encrypted_token);
+  if (parsed.auth?.user_id && parsed.auth?.email && hasAnyToken) {
     config.auth = {
       user_id: parsed.auth.user_id,
-      token: parsed.auth.token,
       email: parsed.auth.email,
     };
+    if (parsed.auth.token) config.auth.token = parsed.auth.token;
+    if (parsed.auth.encrypted_token) config.auth.encrypted_token = parsed.auth.encrypted_token;
   }
   if (parsed.device?.id) {
     config.device = {
@@ -135,17 +157,24 @@ export function readSkybridgeConfig(path?: string): SkybridgeConfig {
 }
 
 /**
- * Narrow `SkybridgeConfig` to one whose `auth` is present.
+ * Narrow `SkybridgeConfig` to one whose `auth.token` (plaintext) is
+ * present.
  *
  * Daemon calls this right before issuing any authenticated client call.
  * 401 responses should call `clearSkybridgeAuth` so the next sync round
  * tells the user to re-login instead of looping with a dead token.
+ *
+ * P5-d Phase 7 — the narrow demands the plaintext `token` specifically,
+ * NOT `encrypted_token`. Daemon has no Electron handle, so an
+ * encrypted-only toml is intentionally not authenticatable through this
+ * path. GUI main is responsible for decrypting and injecting the
+ * session via POST /sync/session.
  */
 export function requireAuth(
   config: SkybridgeConfig,
-): SkybridgeConfig & { auth: SkybridgeAuthSection } {
-  if (!config.auth) throw new SkybridgeAuthRequiredError();
-  return config as SkybridgeConfig & { auth: SkybridgeAuthSection };
+): SkybridgeConfig & { auth: SkybridgeAuthSection & { token: string } } {
+  if (!config.auth?.token) throw new SkybridgeAuthRequiredError();
+  return config as SkybridgeConfig & { auth: SkybridgeAuthSection & { token: string } };
 }
 
 // ─── Write ──────────────────────────────────────────────
