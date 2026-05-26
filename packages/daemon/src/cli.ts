@@ -23,6 +23,9 @@ import { isDaemonRunning, readPid, removePid, writePid } from './pid.js';
 import { ReminderScheduler } from './scheduler.js';
 import { buildServer } from './server.js';
 import { ensureBackgroundHandles, stopBackgroundHandles } from './sync/bridge-lifecycle.js';
+import { DevTokenInProductionError, tryConsumeDevSession } from './sync/dev-bootstrap.js';
+import { type ParentProbeHandle, startParentProbe } from './sync/parent-probe.js';
+import { installSkybridgeSession } from './sync/session.js';
 
 const program = new Command();
 
@@ -107,10 +110,15 @@ program
     };
     const server = buildServer(ctx);
 
+    // P5-d Phase 6 — parent-process probe handle (started post-listen);
+    // shutdown reads it to cancel the interval timer.
+    let parentProbe: ParentProbeHandle | null = null;
+
     // Graceful shutdown
     const shutdown = async () => {
       logger.info('Daemon shutting down...');
       scheduler.stop();
+      parentProbe?.stop();
       // P5-c §2.2-bis: bridge + sync scheduler live on ctx so mid-session
       // restart can swap them; stopBackgroundHandles reads + clears both.
       stopBackgroundHandles(ctx);
@@ -152,11 +160,25 @@ program
       console.log(`Owl daemon running at ${address} (PID: ${process.pid})`);
       scheduler.start();
 
-      // P5-c §2.2-bis: kick off background handles (SSE bridge if toml
-      // fully bootstrapped, plus the sync scheduler — disabled inside
-      // when interval_min <= 0). Both populated on ctx; idempotent so
-      // manual.ts:doRunManualSync can call again mid-session after a
-      // post-boot login transitions toml to bootstrapped.
+      // P5-d Phase 6 — dev env gate + (optional) parent-process probe.
+      // Hard-panic on production-env misuse; otherwise the daemon proceeds
+      // unauthenticated until /sync/session arrives.
+      await runDevBootstrapOrPanic(ctx, logger, async () => {
+        removePid();
+        await server.close();
+      });
+      if (!ctx.skybridgeSession) {
+        logger.info({ kind: 'sync-session' }, 'unauthenticated mode, awaiting POST /sync/session');
+      }
+      parentProbe = maybeStartParentProbe(ctx, logger);
+
+      // P5-c §2.2-bis: kick off background handles (SSE bridge if ctx
+      // session is populated by dev-bootstrap above, or toml fully
+      // bootstrapped via the legacy path; plus the sync scheduler —
+      // disabled inside when interval_min <= 0). Both populated on
+      // ctx; idempotent so manual.ts:doRunManualSync can call again
+      // mid-session after a post-boot /sync/session install transitions
+      // ctx to authenticated.
       await ensureBackgroundHandles(ctx, logger);
     } catch (err) {
       logger.error({ err }, 'Failed to start daemon');
@@ -202,3 +224,71 @@ program
 // `process.versions.electron` and only strips argv[0], misreading the script
 // path as the first subcommand.
 program.parse(process.argv, { from: 'node' });
+
+// ─── Phase 6 helpers ─────────────────────────────────────────────────
+
+async function runDevBootstrapOrPanic(
+  ctx: AppContext,
+  logger: ReturnType<typeof createLogger>,
+  onPanic: () => Promise<void>,
+): Promise<void> {
+  let dev: ReturnType<typeof tryConsumeDevSession>;
+  try {
+    dev = tryConsumeDevSession();
+  } catch (err) {
+    if (err instanceof DevTokenInProductionError) {
+      logger.error({ kind: 'dev-bootstrap' }, err.message);
+      console.error(err.message);
+      // Hard panic — packaged daemon must never honor a dev env.
+      await onPanic();
+      process.exit(1);
+    }
+    throw err;
+  }
+  if (dev.reason === 'accepted' && dev.input) {
+    await installSkybridgeSession(ctx, dev.input);
+    logger.info(
+      {
+        kind: 'dev-bootstrap',
+        user_id: dev.input.user_id,
+        workspace_id: dev.input.workspace.id,
+        device_id: dev.input.device.id,
+      },
+      'dev session installed from env (token redacted)',
+    );
+  } else if (dev.reason === 'partial-env') {
+    logger.warn(
+      { kind: 'dev-bootstrap' },
+      'partial OWL_DAEMON_DEV_TOKEN / OWL_ALLOW_INSECURE_DEV_TOKEN — both required, ignoring',
+    );
+  } else if (dev.reason === 'toml-incomplete') {
+    logger.info(
+      { kind: 'dev-bootstrap' },
+      'dev env present but toml lacks identity fields — pre-seed skybridge_config.toml',
+    );
+  }
+}
+
+function maybeStartParentProbe(
+  ctx: AppContext,
+  logger: ReturnType<typeof createLogger>,
+): ParentProbeHandle | null {
+  const raw = process.env.OWL_GUI_PARENT_PID;
+  if (!raw) return null;
+  const pid = Number.parseInt(raw, 10);
+  if (!Number.isFinite(pid) || pid <= 0) {
+    logger.warn(
+      { kind: 'parent-probe', raw },
+      'OWL_GUI_PARENT_PID is not a positive integer; probe skipped',
+    );
+    return null;
+  }
+  return startParentProbe(
+    pid,
+    () => {
+      stopBackgroundHandles(ctx);
+      ctx.skybridgeSession = null;
+    },
+    logger,
+  );
+}
