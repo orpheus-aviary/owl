@@ -2,19 +2,28 @@
  * P5-a Step 7 — sync HTTP routes.
  *
  * Endpoints:
- *   POST /sync/run     — one manual pull/push round, returns RunSyncResult
- *   GET  /sync/status  — config + cursor + pending snapshot
- *   POST /sync/login   — write skybridge_config.toml [server]+[auth]
- *                        (retires in Phase 6 commit c; GUI main owns toml)
- *   POST /sync/session — P5-d Phase 6: install session from explicit body
- *                        with replace semantics (stop → clear → install →
- *                        restart background handles). 127.0.0.1 only.
- *                        Handler MUST NOT log req.body / token.
+ *   POST /sync/run          — one manual pull/push round, returns RunSyncResult
+ *   GET  /sync/status       — config + cursor + pending snapshot
+ *   POST /sync/session      — P5-d Phase 6: install session from explicit body
+ *                              with replace semantics (stop → clear → install →
+ *                              restart background handles). 127.0.0.1 only.
+ *                              Handler MUST NOT log req.body / token.
+ *   POST /sync/logout-local — P5-d Phase 6: tear down background handles +
+ *                              clear ctx.skybridgeSession + clearSyncIdentity
+ *                              on sqlite. Does NOT touch toml or sync_cursor
+ *                              (GUI main owns toml; cursor isolation is keyed
+ *                              by syncEndpointKey, see v3 §3.6.2).
+ *
+ * Retired in P5-d Phase 6:
+ *   POST /sync/login — daemon never writes toml; GUI main is the sole writer
+ *                       via the Phase 7 keychain path. Until that ships, dev
+ *                       drivers seed credentials directly via /sync/session.
  *
  * Error translation comes from `manual.ts` (`statusForError` /
  * `codeForError`) so the §5.4 error_code matrix lives in one place.
  */
 
+import { clearSyncIdentity } from '@owl/core';
 import type { FastifyInstance } from 'fastify';
 import type { AppContext } from '../context.js';
 import { fail, ok } from '../response.js';
@@ -23,7 +32,6 @@ import {
   codeForError,
   messageForError,
   readSyncStatus,
-  runManualLogin,
   runManualSync,
   statusForError,
 } from '../sync/manual.js';
@@ -42,24 +50,6 @@ export function registerSyncRoutes(app: FastifyInstance, ctx: AppContext): void 
   app.get('/sync/status', async (_req, reply) => {
     try {
       ok(reply, readSyncStatus(ctx));
-    } catch (err) {
-      fail(reply, statusForError(err), messageForError(err), codeForError(err));
-    }
-  });
-
-  app.post('/sync/login', async (req, reply) => {
-    const body = (req.body ?? {}) as {
-      email?: string;
-      password?: string;
-      server_url?: string;
-    };
-    if (!body.email || !body.password) {
-      fail(reply, 400, 'email and password required', 'USAGE_ERROR');
-      return;
-    }
-    try {
-      const result = await runManualLogin(ctx, body.email, body.password, body.server_url);
-      ok(reply, result);
     } catch (err) {
       fail(reply, statusForError(err), messageForError(err), codeForError(err));
     }
@@ -97,6 +87,23 @@ export function registerSyncRoutes(app: FastifyInstance, ctx: AppContext): void 
         device_id: session.deviceId,
         workspace_id: session.workspaceId,
       });
+    } catch (err) {
+      fail(reply, statusForError(err), messageForError(err), codeForError(err));
+    }
+  });
+
+  // P5-d Phase 6 — tear down daemon-side session state. Caller (GUI main)
+  // is responsible for remote /auth/logout + toml rewrite. We never touch
+  // sync_cursor — cross-workspace cursor isolation is keyed by
+  // syncEndpointKey(serverUrl, workspaceId) so a same-workspace re-login
+  // resumes from the same `pulled_seq`.
+  app.post('/sync/logout-local', async (_req, reply) => {
+    try {
+      stopBackgroundHandles(ctx);
+      ctx.skybridgeSession = null;
+      clearSyncIdentity(ctx.sqlite);
+      ctx.logger.info({ kind: 'sync-session', op: 'logout-local' }, 'sync session cleared');
+      ok(reply, { cleared: true });
     } catch (err) {
       fail(reply, statusForError(err), messageForError(err), codeForError(err));
     }

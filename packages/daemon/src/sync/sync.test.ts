@@ -222,41 +222,9 @@ describe('sync routes (P5-a Step 7)', () => {
     });
   });
 
-  // ── POST /sync/login validation ─────────────────────────────
-
-  describe('POST /sync/login', () => {
-    it('400 + USAGE_ERROR when email or password missing', async () => {
-      const noEmail = await app.inject({
-        method: 'POST',
-        url: '/sync/login',
-        payload: { password: 'pw' },
-      });
-      assert.equal(noEmail.statusCode, 400);
-      assert.equal(noEmail.json().error_code, 'USAGE_ERROR');
-
-      const noPw = await app.inject({
-        method: 'POST',
-        url: '/sync/login',
-        payload: { email: 'a@b' },
-      });
-      assert.equal(noPw.statusCode, 400);
-      assert.equal(noPw.json().error_code, 'USAGE_ERROR');
-    });
-
-    it('400 + SKYBRIDGE_SERVER_URL_MISSING when no config + no server_url body field', async () => {
-      const res = await app.inject({
-        method: 'POST',
-        url: '/sync/login',
-        payload: { email: 'a@b', password: 'pw' },
-      });
-      assert.equal(res.statusCode, 400);
-      assert.equal(res.json().error_code, 'SKYBRIDGE_SERVER_URL_MISSING');
-    });
-
-    // See note above POST /sync/run — the pre-publish
-    // `SKYBRIDGE_NOT_INSTALLED` assertion was retired alongside the
-    // hard runtime dep on `@orpheus-aviary/skybridge-client`.
-  });
+  // P5-d Phase 6 — POST /sync/login retired; GUI main is the sole toml
+  // writer and seeds the daemon via /sync/session (or the dev double-env
+  // gate). Hitting /sync/login now lands on Fastify's default 404.
 
   // ── POST /sync/session validation (P5-d Phase 6) ────────────
 
@@ -299,6 +267,50 @@ describe('sync routes (P5-a Step 7)', () => {
       await expectMissing('workspace.id', (b) => {
         b.workspace = {};
       });
+    });
+  });
+
+  // ── POST /sync/logout-local (P5-d Phase 6) ──────────────────
+
+  describe('POST /sync/logout-local', () => {
+    it('clears ctx.skybridgeSession + skybridge identity rows in local_metadata', async () => {
+      // Seed sqlite with the rows /sync/logout-local is supposed to delete,
+      // and a parked sync_cursor row that MUST survive (v3 §3.6.2).
+      sqlite
+        .prepare("INSERT INTO local_metadata (key, value) VALUES ('skybridge_device_id', 'dev-X')")
+        .run();
+      sqlite
+        .prepare(
+          "INSERT INTO local_metadata (key, value) VALUES ('skybridge_workspace_id', 'ws-X')",
+        )
+        .run();
+      sqlite
+        .prepare("INSERT INTO local_metadata (key, value) VALUES ('skybridge_backfilled', '1')")
+        .run();
+      upsertSyncCursor(sqlite, TEST_SERVER_URL, { pulledSeq: 42, nowMs: 1 });
+
+      const res = await app.inject({ method: 'POST', url: '/sync/logout-local' });
+      assert.equal(res.statusCode, 200);
+      assert.deepEqual(res.json().data, { cleared: true });
+
+      const keys = (
+        sqlite.prepare('SELECT key FROM local_metadata ORDER BY key').all() as { key: string }[]
+      ).map((r) => r.key);
+      assert.ok(!keys.includes('skybridge_device_id'), 'device id row removed');
+      assert.ok(!keys.includes('skybridge_workspace_id'), 'workspace id row removed');
+      assert.ok(!keys.includes('skybridge_backfilled'), 'backfill sentinel removed');
+
+      const cursor = sqlite
+        .prepare('SELECT pulled_seq FROM sync_cursor WHERE endpoint = ?')
+        .get(TEST_SERVER_URL) as { pulled_seq: number } | undefined;
+      assert.equal(cursor?.pulled_seq, 42, 'sync_cursor must survive logout-local');
+    });
+
+    it('is idempotent — a second call on already-clear state returns 200', async () => {
+      const first = await app.inject({ method: 'POST', url: '/sync/logout-local' });
+      assert.equal(first.statusCode, 200);
+      const second = await app.inject({ method: 'POST', url: '/sync/logout-local' });
+      assert.equal(second.statusCode, 200);
     });
   });
 });

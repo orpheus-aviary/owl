@@ -47,11 +47,15 @@ export function registerSystemRoutes(app: FastifyInstance): void {
         { method: 'GET', path: '/api/capabilities', description: 'List all endpoints' },
         { method: 'POST', path: '/sync/run', description: 'Trigger one skybridge sync round' },
         { method: 'GET', path: '/sync/status', description: 'Skybridge sync status snapshot' },
-        { method: 'POST', path: '/sync/login', description: 'Write skybridge auth credentials' },
         {
           method: 'POST',
           path: '/sync/session',
           description: 'Install skybridge session (replace semantics, GUI-main → daemon)',
+        },
+        {
+          method: 'POST',
+          path: '/sync/logout-local',
+          description: 'Tear down daemon-side session + clearSyncIdentity (toml untouched)',
         },
       ],
     });

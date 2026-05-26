@@ -178,7 +178,7 @@ export type {
   SkybridgeServerSection,
   SkybridgeWorkspaceSection,
 } from './skybridge/config.js';
-export { persistSkybridgeIds } from './skybridge/identity.js';
+export { clearSyncIdentity, persistSkybridgeIds } from './skybridge/identity.js';
 export { redactToken } from './skybridge/redact.js';
 export type { RedactTokenOptions } from './skybridge/redact.js';
 

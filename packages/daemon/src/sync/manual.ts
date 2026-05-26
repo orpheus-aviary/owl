@@ -34,7 +34,6 @@ import {
   readSkybridgeConfig,
   runSync,
   skybridgeConfigPath,
-  writeSkybridgeConfig,
 } from '@owl/core';
 import type { AppContext } from '../context.js';
 import { ensureBackgroundHandles } from './bridge-lifecycle.js';
@@ -45,7 +44,6 @@ import {
   adaptClient,
   ensureSkybridgeSession,
   invalidateSkybridgeSession,
-  loadSkybridgeClient,
 } from './session.js';
 import { getSyncStatusBroadcaster } from './status-broadcaster.js';
 
@@ -267,76 +265,6 @@ async function doRunManualSync(ctx: AppContext): Promise<RunSyncResult> {
     const translated = translateSkybridgeError(err, cfgPath);
     broadcaster.markError(translated);
     throw translated;
-  }
-}
-
-// ─── Login (writes config) ────────────────────────────────────────────
-
-export interface LoginResult {
-  server_url: string;
-  email: string;
-  user_id: string;
-}
-
-/**
- * `POST /sync/login` — writes (or replaces) the `[server]` + `[auth]`
- * sections of skybridge_config.toml. Device + workspace are NOT registered
- * here; the first `POST /sync/run` after login does that lazily so the
- * login flow itself is a single round-trip.
- *
- * Accepts an optional `serverUrl` body argument — if absent we reuse the
- * URL already on disk; if neither is present we fail with
- * `SKYBRIDGE_SERVER_URL_MISSING` so the user knows to pass `--server-url`
- * (or pre-write the file).
- */
-export async function runManualLogin(
-  _ctx: AppContext,
-  email: string,
-  password: string,
-  serverUrl?: string,
-): Promise<LoginResult> {
-  const cfgPath = skybridgeConfigPath();
-  let resolvedUrl = serverUrl;
-  if (!resolvedUrl) {
-    try {
-      const existing = readSkybridgeConfig(cfgPath);
-      resolvedUrl = existing.server.url;
-    } catch (err) {
-      if (
-        err instanceof SkybridgeNotConfiguredError ||
-        err instanceof SkybridgeServerUrlMissingError
-      ) {
-        throw new SkybridgeServerUrlMissingError(cfgPath);
-      }
-      throw err;
-    }
-  }
-
-  try {
-    const sb = await loadSkybridgeClient();
-    const result = await sb.login(resolvedUrl, email, password);
-
-    // Preserve device + workspace if already in toml; overwrite server + auth
-    let preserved: SkybridgeConfig | null = null;
-    try {
-      preserved = readSkybridgeConfig(cfgPath);
-    } catch {
-      // No prior config — first login. We'll write a fresh one.
-    }
-    const next: SkybridgeConfig = {
-      server: { url: result.serverUrl },
-      auth: { user_id: result.user.id, token: result.token, email: result.user.email },
-      device: preserved?.device,
-      workspace: preserved?.workspace,
-    };
-    writeSkybridgeConfig(next, cfgPath);
-    return {
-      server_url: result.serverUrl,
-      email: result.user.email,
-      user_id: result.user.id,
-    };
-  } catch (err) {
-    throw translateSkybridgeError(err, cfgPath);
   }
 }
 

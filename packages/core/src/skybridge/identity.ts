@@ -47,6 +47,29 @@ export function readSkybridgeDeviceId(sqlite: Database.Database): string | null 
   return row?.value ?? null;
 }
 
+/**
+ * P5-d Phase 6 — logout-local helper. Removes the skybridge identity
+ * fields from `local_metadata` so the next login starts from a clean
+ * slate. Whitelist:
+ *
+ *   - skybridge_device_id
+ *   - skybridge_workspace_id
+ *   - skybridge_backfilled
+ *
+ * Does NOT touch `sync_cursor` (per v3 §3.6.2: cursor isolation is
+ * keyed by `syncEndpointKey(serverUrl, workspaceId)`, so a same-workspace
+ * re-login can resume from the same `pulled_seq`). Does NOT touch toml
+ * (GUI main owns toml writes). Does NOT delete the local `device_uuid`
+ * — that's the pre-skybridge local identity, still needed for backfill.
+ */
+export function clearSyncIdentity(sqlite: Database.Database): void {
+  sqlite
+    .prepare(
+      "DELETE FROM local_metadata WHERE key IN ('skybridge_device_id', 'skybridge_workspace_id', 'skybridge_backfilled')",
+    )
+    .run();
+}
+
 export function persistSkybridgeIds(
   sqlite: Database.Database,
   skybridgeDeviceId: string,

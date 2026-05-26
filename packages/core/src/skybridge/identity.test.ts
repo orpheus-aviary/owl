@@ -3,7 +3,7 @@ import { after, before, beforeEach, describe, it } from 'node:test';
 import type Database from 'better-sqlite3';
 import { createDatabase } from '../db/index.js';
 import { ensureDeviceId } from '../db/special-notes.js';
-import { persistSkybridgeIds, readSkybridgeDeviceId } from './identity.js';
+import { clearSyncIdentity, persistSkybridgeIds, readSkybridgeDeviceId } from './identity.js';
 
 const SKYBRIDGE_DEVICE_ID = 'skybridge-dev-abc';
 const SKYBRIDGE_WORKSPACE_ID = 'ws-1';
@@ -154,5 +154,70 @@ describe('readSkybridgeDeviceId (P5-c G4)', () => {
       .prepare("INSERT INTO local_metadata (key, value) VALUES ('skybridge_device_id', NULL)")
       .run();
     assert.equal(readSkybridgeDeviceId(sqlite), null);
+  });
+});
+
+// ─── clearSyncIdentity (P5-d Phase 6) ──────────────────────────────────
+
+describe('clearSyncIdentity (P5-d Phase 6)', () => {
+  let sqlite: Database.Database;
+  // biome-ignore lint/suspicious/noExplicitAny: drizzle wrapper type irrelevant
+  let db: any;
+
+  before(() => {
+    const created = createDatabase({ dbPath: ':memory:' });
+    sqlite = created.sqlite;
+    db = created.db;
+    ensureDeviceId(db);
+  });
+
+  after(() => {
+    sqlite.close();
+  });
+
+  beforeEach(() => {
+    sqlite
+      .prepare(
+        "DELETE FROM local_metadata WHERE key IN ('skybridge_device_id', 'skybridge_workspace_id', 'skybridge_backfilled', 'cursor_pulled')",
+      )
+      .run();
+  });
+
+  function metaKeys(): string[] {
+    return (
+      sqlite.prepare('SELECT key FROM local_metadata ORDER BY key').all() as { key: string }[]
+    ).map((r) => r.key);
+  }
+
+  it('deletes skybridge_device_id, skybridge_workspace_id, skybridge_backfilled', () => {
+    persistSkybridgeIds(sqlite, 'dev-1', 'ws-1');
+    assert.ok(metaKeys().includes('skybridge_device_id'));
+    assert.ok(metaKeys().includes('skybridge_workspace_id'));
+    assert.ok(metaKeys().includes('skybridge_backfilled'));
+
+    clearSyncIdentity(sqlite);
+    const keys = metaKeys();
+    assert.ok(!keys.includes('skybridge_device_id'));
+    assert.ok(!keys.includes('skybridge_workspace_id'));
+    assert.ok(!keys.includes('skybridge_backfilled'));
+  });
+
+  it('leaves device_uuid (pre-skybridge local identity) untouched', () => {
+    persistSkybridgeIds(sqlite, 'dev-1', 'ws-1');
+    const beforeUuid = sqlite
+      .prepare("SELECT value FROM local_metadata WHERE key = 'device_uuid'")
+      .get() as { value: string } | undefined;
+    assert.ok(beforeUuid?.value, 'precondition: device_uuid exists');
+
+    clearSyncIdentity(sqlite);
+    const afterUuid = sqlite
+      .prepare("SELECT value FROM local_metadata WHERE key = 'device_uuid'")
+      .get() as { value: string } | undefined;
+    assert.equal(afterUuid?.value, beforeUuid.value, 'device_uuid must survive logout');
+  });
+
+  it('is idempotent — calling on already-clear local_metadata is a no-op', () => {
+    clearSyncIdentity(sqlite);
+    assert.doesNotThrow(() => clearSyncIdentity(sqlite));
   });
 });
