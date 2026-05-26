@@ -1,6 +1,53 @@
 # 开发进度
 
-## 当前阶段：0.4.2 公开发版完成 — 2026-05-26
+## 当前阶段：P5-d Phase 2-5 完成 — 2026-05-27（skybridge SDK 配套 + npm latest @0.1.3）
+
+**设计文档**：`docs/plans/2026-05-26-p5-d-design.md`（v1 → v2 → **v3 锁定 2026-05-26**）
+
+**Phase 2-5 已 ship 的内容**：
+
+| Phase | 内容 | commit |
+|---|---|---|
+| 2 | skybridge SDK 三 additive API + 单测 | skybridge `220cc50` |
+| 3 | npm publish 三包 `0.1.2@next` →（撞 logout 空 body 500 bug）→ bump 0.1.3 republish | skybridge `1f56edc` |
+| 4 | owl dep bump `^0.1.3` + dual e2e 13→16 + SDK fixture smoke + D11 pre-existing fixture fix | owl `74066bb` + `41a699d` |
+| 5 | promote `next → latest` 三包，`@orpheus-aviary/skybridge-{proto,client,server}@0.1.3` 上 npm `latest` | n/a（dist-tag move） |
+
+**skybridge SDK 新增**（0.1.3 vs 0.1.1）：
+- `client.logout()` → POST /v1/auth/logout（带 `body: {}` 避 Fastify 空 body 500）
+- `client.listDevices()` → GET /v1/devices
+- `subscribeEvents({ onFrame? })` 透传每个 SSE block；`parseFrame` 给 `:ok\n\n` 合成 `{event:'comment'}` 让 watchdog 能感知 keep-alive
+
+**owl 端配套**：
+- `packages/daemon/package.json`：`@orpheus-aviary/skybridge-client/server: ^0.1.3`
+- 新文件 `packages/daemon/src/sync/skybridge-sdk-smoke.skybridge.e2e.ts`（spawn 0.1.3 server in-process 验三 API）
+- `packages/daemon/src/sync/sse-bridge.skybridge.e2e.ts` D11 fixture 补 logger（之前 P5-c Step 10b `f73d052` 引入 `ctx.logger.warn` 后 D11 一直 stale，gated e2e CI 没触发所以漏。brief 之前的 13/13 baseline 实际是 12/13）
+
+**测试基线（Phase 5 完成后）**：
+- 单元 **957/957**（core 400 + daemon 216 + gui 207 + cli 134）
+- **dual e2e 16/16**（旧 13 + 新 SDK smoke 3：logout 撤 token、listDevices 字段映射、subscribeEvents onFrame 收 :ok/ping/change）
+- `just check` 4 guards 全过
+
+**npm 状态**：
+
+| 包 | latest | next |
+|---|---|---|
+| `@orpheus-aviary/skybridge-proto`  | 0.1.3 | 0.1.3 |
+| `@orpheus-aviary/skybridge-client` | 0.1.3 | 0.1.3 |
+| `@orpheus-aviary/skybridge-server` | 0.1.3 | 0.1.3 |
+
+**Phase 6+ 接力点**：daemon `/sync/session` (replace) + `/sync/logout-local` + 删 `/sync/login` + 父进程 PID 探测 + dev 双 env gate（`OWL_DAEMON_DEV_TOKEN` + `OWL_ALLOW_INSECURE_DEV_TOKEN`）。`OWL_APP_VERSION` 在 Phase 6 开工时切回 `0.5.0-dev`。
+
+**v3 关键不变量**（详见设计文档 §3）：
+- 生产路径 daemon **完全不用 spawn env 传 token**（Node ChildProcess env 复制后不可撤）
+- `/sync/session` 是 replace 语义：stopBackgroundHandles → 清旧 → set 新 → restart
+- watchdog 直接 `unsubscribe + mark offline + scheduleReconnect()`，不依赖 close→onError
+- `sync_cursor` 切号靠 `syncEndpointKey(serverUrl, workspaceId)` 隔离，logout **不动** cursor
+- toml `[auth]` 写 `encrypted_token + user_id + email`；daemon 不读 `encrypted_token`，由 GUI main 通过 HTTP `/sync/session` 注入明文
+
+---
+
+## 历史：0.4.2 公开发版完成 — 2026-05-26
 
 **Release**：https://github.com/orpheus-aviary/owl/releases/tag/v0.4.2
 

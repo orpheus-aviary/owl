@@ -7,10 +7,10 @@ import { createSseBridge } from './sse-bridge.js';
 
 /**
  * P5-c Step 8 — D11. End-to-end integration with the real
- * `@orpheus-aviary/skybridge-client@0.1.1` (installed as a normal npm
- * dep of daemon since 0.4.2): a server-side graceful shutdown surfaces
- * as `{ done: true }` on the SSE reader, which the Step 7 fix in
- * `packages/client/src/sse.ts: pumpStream` now reports as
+ * `@orpheus-aviary/skybridge-client` (npm runtime dep of daemon since
+ * 0.4.2): a server-side graceful shutdown surfaces as `{ done: true }`
+ * on the SSE reader, which the G2 fix in skybridge-client
+ * `packages/client/src/sse.ts: pumpStream` reports as
  * `onError(NetworkError('SSE stream ended'))`. The bridge picks that
  * up via the standard onError path and schedules a 2s reconnect.
  *
