@@ -72,7 +72,7 @@ describe('SyncSection — unauth → login → auth flow', () => {
     render(<SyncSection />);
     await waitFor(() => screen.getByRole('button', { name: '登录' }));
 
-    fireEvent.change(screen.getByDisplayValue('http://127.0.0.1:18443'), {
+    fireEvent.change(screen.getByDisplayValue('http://127.0.0.1:8443'), {
       target: { value: 'http://srv' },
     });
     // Use the input labels; the form has exactly one of each.

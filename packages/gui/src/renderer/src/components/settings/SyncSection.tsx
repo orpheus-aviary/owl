@@ -21,7 +21,11 @@ type View =
   | { kind: 'unauth' }
   | { kind: 'auth'; session: SessionShape; snapshot: SnapshotShape };
 
-const DEFAULT_SERVER_URL = 'http://127.0.0.1:18443';
+// Skybridge server's actual default port is 8443
+// (`skybridge/packages/server/src/config.ts`). The earlier `18443` in the
+// Phase 8 design doc was a typo that survived into the form default and
+// was caught during manual testing 2026-05-29.
+const DEFAULT_SERVER_URL = 'http://127.0.0.1:8443';
 
 export function SyncSection() {
   const [view, setView] = useState<View>({ kind: 'loading' });
