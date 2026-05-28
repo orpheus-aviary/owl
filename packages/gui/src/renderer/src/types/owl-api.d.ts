@@ -1,6 +1,15 @@
 // Global type declaration for window.owlAPI, mirrored in preload/index.ts.
 // Single source of truth — lib/api.ts's prior local `declare global`
 // window.owlAPI block is removed in favor of this file.
+//
+// IMPORTANT: this file lives in renderer-land (src/renderer/src/types/). It
+// MUST NOT import from `../../../main/*` — `tsconfig.web.json` does not
+// include `src/main`, and dragging Electron / Node main modules into the
+// web type-graph type-collapses the renderer build. All sync IPC types
+// come from `src/shared/`.
+
+import type { LoginAndOpenSessionInput } from '../../../shared/sync-auth-types.js';
+import type { SyncIpcReply, SyncStatusReply } from '../../../shared/sync-status-types.js';
 
 export type StartupMode =
   | { mode: 'normal' }
@@ -44,6 +53,11 @@ export interface OwlAPI {
   quit: {
     onCheckUnsaved: (cb: () => void) => () => void;
     respond: (proceed: boolean) => void;
+  };
+  sync: {
+    login: (input: LoginAndOpenSessionInput) => Promise<SyncIpcReply<void>>;
+    logout: () => Promise<SyncIpcReply<void>>;
+    status: () => Promise<SyncIpcReply<SyncStatusReply>>;
   };
 }
 

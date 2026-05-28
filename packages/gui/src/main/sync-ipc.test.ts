@@ -1,0 +1,343 @@
+/**
+ * P5-d Phase 8 — sync-ipc.ts unit tests.
+ *
+ * Covers all three handlers + the `extractSession` gate that mirrors
+ * `restoreSessionOnStartup`'s safeStorage + decrypt-probe (v4 design).
+ *
+ * Mock surface:
+ *   - electron: `ipcMain.handle` captures handler functions into a map;
+ *               `safeStorage.{isEncryptionAvailable, decryptString}` are
+ *               driven directly to exercise the v4 availability gate.
+ *   - ./sync-auth.js: loginAndOpenSession + logout + SafeStorageUnavailableError.
+ *   - @orpheus-aviary/skybridge-client: real ApiError / NetworkError classes.
+ *   - @owl/core: readSkybridgeConfig is mocked per test.
+ *   - ./daemon.js: getDaemonUrl returns a known URL.
+ *   - global fetch: mocked per test for /sync/status snapshot path.
+ */
+
+import { Buffer } from 'node:buffer';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+// ─── hoisted mocks ──────────────────────────────────────────────────
+
+const handlerMap = new Map<string, (...args: unknown[]) => unknown>();
+const safeStorageState = {
+  available: true,
+  decryptString: vi.fn((b: Buffer) => b.toString('utf-8')),
+};
+vi.mock('electron', () => ({
+  ipcMain: {
+    handle: (channel: string, handler: (...args: unknown[]) => unknown) => {
+      handlerMap.set(channel, handler);
+    },
+  },
+  safeStorage: {
+    isEncryptionAvailable: () => safeStorageState.available,
+    decryptString: (b: Buffer) => safeStorageState.decryptString(b),
+  },
+}));
+
+const authState = {
+  loginError: null as Error | null,
+  logoutError: null as Error | null,
+  loginCalls: [] as Array<{ serverUrl: string; email: string; password: string }>,
+  logoutCalls: 0,
+};
+vi.mock('./sync-auth.js', () => ({
+  loginAndOpenSession: vi.fn(
+    async (input: { serverUrl: string; email: string; password: string }) => {
+      authState.loginCalls.push(input);
+      if (authState.loginError) throw authState.loginError;
+      return {
+        server_url: input.serverUrl,
+        user_id: 'u-A',
+        email: input.email,
+        device_id: 'dev-A',
+        workspace_id: 'ws-A',
+      };
+    },
+  ),
+  logout: vi.fn(async () => {
+    authState.logoutCalls += 1;
+    if (authState.logoutError) throw authState.logoutError;
+  }),
+  // Real error class so `err instanceof SafeStorageUnavailableError` works.
+  SafeStorageUnavailableError: class SafeStorageUnavailableError extends Error {
+    readonly code = 'SAFE_STORAGE_UNAVAILABLE';
+    constructor() {
+      super('safe storage unavailable');
+      this.name = 'SafeStorageUnavailableError';
+    }
+  },
+}));
+
+// Real ApiError / NetworkError classes so `instanceof` narrowing in `safe()`
+// behaves identically to production.
+vi.mock('@orpheus-aviary/skybridge-client', async () => {
+  const actual = await vi.importActual<typeof import('@orpheus-aviary/skybridge-client')>(
+    '@orpheus-aviary/skybridge-client',
+  );
+  return { ApiError: actual.ApiError, NetworkError: actual.NetworkError };
+});
+
+const coreState = {
+  readReturn: null as unknown,
+  readError: null as Error | null,
+};
+vi.mock('@owl/core', () => ({
+  readSkybridgeConfig: vi.fn(() => {
+    if (coreState.readError) throw coreState.readError;
+    return coreState.readReturn;
+  }),
+}));
+
+vi.mock('./daemon.js', () => ({
+  getDaemonUrl: () => 'http://127.0.0.1:47010',
+}));
+
+// ─── lazy import after mocks ────────────────────────────────────────
+
+const { registerSyncIpc } = await import('./sync-ipc.js');
+const { ApiError, NetworkError } = await import('@orpheus-aviary/skybridge-client');
+const { SafeStorageUnavailableError } = await import('./sync-auth.js');
+
+type IpcReply<T> = { ok: true; data: T } | { ok: false; message: string };
+
+function call(channel: string, ...args: unknown[]): Promise<unknown> {
+  const handler = handlerMap.get(channel);
+  if (!handler) throw new Error(`no handler for ${channel}`);
+  // Pretend to be an IpcMainInvokeEvent — `_event` is not read.
+  return Promise.resolve(handler({}, ...args));
+}
+
+// ─── setup ──────────────────────────────────────────────────────────
+
+const FULL_CFG = {
+  server: { url: 'http://srv' },
+  auth: {
+    user_id: 'u-A',
+    email: 'a@test',
+    encrypted_token: Buffer.from('plaintext-tk', 'utf-8').toString('base64'),
+  },
+  device: { id: 'dev-A', name: 'mac-a', app_version: '', client_version: '' },
+  workspace: { id: 'ws-A', slug: 'owl/default' },
+};
+
+beforeEach(() => {
+  handlerMap.clear();
+  authState.loginError = null;
+  authState.logoutError = null;
+  authState.loginCalls = [];
+  authState.logoutCalls = 0;
+  coreState.readReturn = null;
+  coreState.readError = null;
+  safeStorageState.available = true;
+  safeStorageState.decryptString = vi.fn((b: Buffer) => b.toString('utf-8'));
+  registerSyncIpc();
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+});
+
+// ─── tests ──────────────────────────────────────────────────────────
+
+describe('sync:login', () => {
+  it('success → { ok: true, data: undefined } (summary discarded)', async () => {
+    const reply = (await call('sync:login', {
+      serverUrl: 'http://srv',
+      email: 'a@test',
+      password: 'pw',
+    })) as IpcReply<void>;
+    // Exact match — see v3 lock on success shape.
+    expect(reply).toEqual({ ok: true, data: undefined });
+    expect(authState.loginCalls).toEqual([
+      { serverUrl: 'http://srv', email: 'a@test', password: 'pw' },
+    ]);
+  });
+
+  it('ApiError(INVALID_CREDENTIALS) → 邮箱或密码不正确', async () => {
+    authState.loginError = new ApiError('INVALID_CREDENTIALS', 401, 'bad creds');
+    const reply = (await call('sync:login', {
+      serverUrl: 'http://srv',
+      email: 'a',
+      password: 'p',
+    })) as IpcReply<void>;
+    expect(reply).toEqual({ ok: false, message: '邮箱或密码不正确' });
+  });
+
+  it('NetworkError → 网络连接失败…', async () => {
+    authState.loginError = new NetworkError('TCP reset');
+    const reply = (await call('sync:login', {
+      serverUrl: 'http://srv',
+      email: 'a',
+      password: 'p',
+    })) as IpcReply<void>;
+    expect(reply.ok).toBe(false);
+    if (!reply.ok) expect(reply.message).toMatch(/网络连接失败/);
+  });
+
+  it('SafeStorageUnavailableError → 系统钥匙串不可用…', async () => {
+    authState.loginError = new SafeStorageUnavailableError();
+    const reply = (await call('sync:login', {
+      serverUrl: 'http://srv',
+      email: 'a',
+      password: 'p',
+    })) as IpcReply<void>;
+    expect(reply.ok).toBe(false);
+    if (!reply.ok) expect(reply.message).toMatch(/系统钥匙串不可用/);
+  });
+
+  it('plain Error → unknown fallback with detail', async () => {
+    authState.loginError = new Error('weird');
+    const reply = (await call('sync:login', {
+      serverUrl: 'http://srv',
+      email: 'a',
+      password: 'p',
+    })) as IpcReply<void>;
+    expect(reply).toEqual({ ok: false, message: '同步出错：weird' });
+  });
+});
+
+describe('sync:logout', () => {
+  it('success → { ok: true, data: undefined }', async () => {
+    const reply = (await call('sync:logout')) as IpcReply<void>;
+    expect(reply).toEqual({ ok: true, data: undefined });
+    expect(authState.logoutCalls).toBe(1);
+  });
+});
+
+describe('sync:status — session derivation', () => {
+  // Stub fetch globally for the snapshot leg of buildStatus().
+  beforeEach(() => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              data: {
+                configured: true,
+                authenticated: true,
+                server_url: 'http://srv',
+                device_id: 'dev-A',
+                workspace_id: 'ws-A',
+                pending_count: 0,
+                pulled_seq: 1,
+                pushed_seq: 1,
+                last_sync_at: 12345,
+              },
+            }),
+            { status: 200 },
+          ),
+      ),
+    );
+  });
+
+  it('full encrypted cfg + safeStorage available + decrypt OK → session present + snapshot', async () => {
+    coreState.readReturn = FULL_CFG;
+    const reply = (await call('sync:status')) as IpcReply<{
+      session: unknown;
+      snapshot: unknown;
+    }>;
+    expect(reply.ok).toBe(true);
+    if (!reply.ok) return;
+    expect(reply.data.session).toEqual({
+      email: 'a@test',
+      server_url: 'http://srv',
+      workspace_slug: 'owl/default',
+      workspace_id: 'ws-A',
+      device_id: 'dev-A',
+      device_name: 'mac-a',
+    });
+    expect(reply.data.snapshot).toMatchObject({
+      configured: true,
+      authenticated: true,
+      pending_count: 0,
+    });
+  });
+
+  it('legacy plaintext-only toml (auth.token without encrypted_token) → session null', async () => {
+    // readSkybridgeConfig drops `auth` entirely unless hasAnyToken is true,
+    // but we simulate a hand-edited toml that left plaintext token only.
+    coreState.readReturn = {
+      ...FULL_CFG,
+      auth: { user_id: 'u-A', email: 'a@test', token: 'legacy-pt' },
+    };
+    const reply = (await call('sync:status')) as IpcReply<{ session: unknown }>;
+    expect(reply.ok).toBe(true);
+    if (reply.ok) expect(reply.data.session).toBeNull();
+  });
+
+  it('workspace missing → session null (no throw)', async () => {
+    coreState.readReturn = { ...FULL_CFG, workspace: undefined };
+    const reply = (await call('sync:status')) as IpcReply<{ session: unknown }>;
+    expect(reply.ok).toBe(true);
+    if (reply.ok) expect(reply.data.session).toBeNull();
+  });
+
+  it('daemon /sync/status unreachable → snapshot null, session still derived', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new Error('ECONNREFUSED');
+      }),
+    );
+    coreState.readReturn = FULL_CFG;
+    const reply = (await call('sync:status')) as IpcReply<{
+      session: unknown;
+      snapshot: unknown;
+    }>;
+    expect(reply.ok).toBe(true);
+    if (!reply.ok) return;
+    expect(reply.data.snapshot).toBeNull();
+    expect(reply.data.session).not.toBeNull();
+  });
+
+  it('readSkybridgeConfig throws (no toml) → session null + snapshot still attempted', async () => {
+    coreState.readError = new Error('no toml');
+    const reply = (await call('sync:status')) as IpcReply<{
+      session: unknown;
+      snapshot: unknown;
+    }>;
+    expect(reply.ok).toBe(true);
+    if (reply.ok) expect(reply.data.session).toBeNull();
+  });
+
+  // v4 additions: align extractSession with restoreSessionOnStartup gate.
+  it('v4: safeStorage.isEncryptionAvailable=false → session null even with full cfg', async () => {
+    safeStorageState.available = false;
+    coreState.readReturn = FULL_CFG;
+    const reply = (await call('sync:status')) as IpcReply<{ session: unknown }>;
+    expect(reply.ok).toBe(true);
+    if (reply.ok) {
+      // Settings must NOT lie — startup restore would return null here.
+      expect(reply.data.session).toBeNull();
+    }
+  });
+
+  it('v4: encrypted_token present but decryptString throws → session null', async () => {
+    safeStorageState.decryptString = vi.fn(() => {
+      throw new Error('keychain locked');
+    });
+    coreState.readReturn = FULL_CFG;
+    const reply = (await call('sync:status')) as IpcReply<{ session: unknown }>;
+    expect(reply.ok).toBe(true);
+    if (reply.ok) expect(reply.data.session).toBeNull();
+  });
+
+  it('workspace.slug empty string normalises to null in reply', async () => {
+    coreState.readReturn = {
+      ...FULL_CFG,
+      workspace: { id: 'ws-A', slug: '' },
+    };
+    const reply = (await call('sync:status')) as IpcReply<{
+      session: { workspace_slug: string | null } | null;
+    }>;
+    expect(reply.ok).toBe(true);
+    if (reply.ok && reply.data.session) {
+      expect(reply.data.session.workspace_slug).toBeNull();
+    }
+  });
+});

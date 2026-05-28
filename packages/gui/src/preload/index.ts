@@ -1,4 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron';
+import type { LoginAndOpenSessionInput } from '../shared/sync-auth-types.js';
+import type { SyncIpcReply, SyncStatusReply } from '../shared/sync-status-types.js';
 import { daemonUrlFromArgv, parseStartupMode } from './args.js';
 
 type MigratePhase = 'backup' | 'copy' | 'fts-rebuild' | 'swap';
@@ -91,5 +93,29 @@ contextBridge.exposeInMainWorld('owlAPI', {
     respond: (proceed: boolean): void => {
       ipcRenderer.send('quit:response', proceed);
     },
+  },
+
+  sync: {
+    /**
+     * Login to skybridge. Success returns `{ ok: true, data: undefined }` —
+     * the resolved identity is intentionally NOT carried back; the
+     * renderer is expected to `await sync.status()` afterwards. Single
+     * display truth keeps display fields decoupled from login wire shape.
+     */
+    login: (input: LoginAndOpenSessionInput): Promise<SyncIpcReply<void>> =>
+      ipcRenderer.invoke('sync:login', input),
+    /**
+     * Logout: revokes server-side token + clears daemon session + clears
+     * encrypted toml `[auth] / [device] / [workspace]` (preserves
+     * `[server].url` for next login default).
+     */
+    logout: (): Promise<SyncIpcReply<void>> => ipcRenderer.invoke('sync:logout'),
+    /**
+     * Identity + sync snapshot. `session === null` covers unauthenticated
+     * AND keychain-unavailable cases (kept aligned with
+     * `restoreSessionOnStartup`'s decrypt-probe gate so Settings can't
+     * lie about "logged in" while next-boot restore would actually fail).
+     */
+    status: (): Promise<SyncIpcReply<SyncStatusReply>> => ipcRenderer.invoke('sync:status'),
   },
 });

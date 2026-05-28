@@ -35,6 +35,16 @@ function defaultOwlAPI(): OwlAPI {
       onCheckUnsaved: vi.fn(() => () => {}),
       respond: vi.fn(),
     },
+    sync: {
+      login: vi.fn(() => Promise.resolve({ ok: true, data: undefined } as const)),
+      logout: vi.fn(() => Promise.resolve({ ok: true, data: undefined } as const)),
+      status: vi.fn(() =>
+        Promise.resolve({
+          ok: true,
+          data: { session: null, snapshot: null },
+        } as const),
+      ),
+    },
   };
 }
 

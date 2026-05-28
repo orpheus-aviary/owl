@@ -1,5 +1,13 @@
 // ─── Types ──────────────────────────────────────────────
 
+// P5-d Phase 8 — `SyncStatusResult` is shared between renderer (this file)
+// and main (`shared/sync-ipc.ts`); single owner lives in `src/shared/`.
+// Type-only import so callers can still reference `SyncStatusResult` via
+// `from '@/lib/api'` (re-export below); local `import type` keeps it in
+// this module's scope for `request<SyncStatusResult>` use.
+import type { SyncStatusResult } from '../../../shared/sync-status-types.js';
+export type { SyncStatusResult };
+
 export interface ApiResponse<T = unknown> {
   success: boolean;
   data?: T;
@@ -409,24 +417,9 @@ export const applyAiPreview = (previewId: string) =>
 
 export type SyncState = 'idle' | 'syncing' | 'error' | 'offline';
 
-/**
- * Wire shape returned by `GET /sync/status`. Daemon source of truth is
- * `SyncStatusResult` in `packages/daemon/src/sync/manual.ts`. The
- * endpoint reflects configured-ness and cursor truth from sqlite; it
- * does NOT carry the live `state` / `last_error` overlay (those are
- * broadcaster-only and only show up on SSE).
- */
-export interface SyncStatusResult {
-  configured: boolean;
-  authenticated: boolean;
-  server_url: string | null;
-  device_id: string | null;
-  workspace_id: string | null;
-  pending_count: number;
-  pulled_seq: number;
-  pushed_seq: number;
-  last_sync_at: number | null;
-}
+// `SyncStatusResult` is re-exported from `shared/sync-status-types.ts`
+// at the top of this file. The previous local definition was deleted in
+// Phase 8 to avoid drift with main's IPC consumer.
 
 /**
  * Wire shape pushed on SSE `sync:status_changed`. Daemon source of truth

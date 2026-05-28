@@ -7,6 +7,7 @@ import { registerMigrationIpc } from './migration-ipc.js';
 import type { StartupMode } from './migration-precheck.js';
 import { runMigrationPrecheck } from './migration-precheck.js';
 import { restoreSessionOnStartup } from './sync-auth.js';
+import { registerSyncIpc } from './sync-ipc.js';
 import { createWindow } from './window.js';
 
 let isQuitting = false;
@@ -83,6 +84,9 @@ app.whenReady().then(async () => {
   ipcMain.handle('globalShortcut:set', (_e, canonical: string) => {
     setGlobalShortcut(canonical);
   });
+
+  // P5-d Phase 8 — Settings → 同步 tab wiring: login / logout / status.
+  registerSyncIpc();
 
   // Register the configured global shortcut at startup. setGlobalShortcut
   // is best-effort and logs its own failures.

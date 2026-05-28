@@ -48,7 +48,9 @@ export default defineConfig({
           // preload tests share node env + plain argv parsing helpers, no
           // electron context needed (args.ts factored out of preload/index.ts
           // for exactly this reason). P5-c G1.
-          include: ['src/main/**/*.test.ts', 'src/preload/**/*.test.ts'],
+          // P5-d Phase 8: `src/shared/**` joins the main project (node env,
+          // no jsdom) — shared modules are pure TS / no DOM access.
+          include: ['src/main/**/*.test.ts', 'src/preload/**/*.test.ts', 'src/shared/**/*.test.ts'],
         },
       },
     ],

@@ -52,14 +52,9 @@ import {
 } from '@owl/core';
 import { safeStorage } from 'electron';
 import { stringify } from 'smol-toml';
+import type { LoginAndOpenSessionInput } from '../shared/sync-auth-types.js';
 import { atomicWriteFile, cleanupStaleTmp } from './atomic-write.js';
 import { getDaemonUrl } from './daemon.js';
-
-export interface LoginAndOpenSessionInput {
-  serverUrl: string;
-  email: string;
-  password: string;
-}
 
 export interface SyncSessionSummary {
   server_url: string;
