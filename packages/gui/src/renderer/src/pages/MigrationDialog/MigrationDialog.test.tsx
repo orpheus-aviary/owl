@@ -66,6 +66,12 @@ function installMigrationStub(): MigrationStub {
           data: { session: null, snapshot: null },
         } as const),
       ),
+      devices: vi.fn(() =>
+        Promise.resolve({
+          ok: true as const,
+          data: { devices: [] },
+        }),
+      ),
     },
   };
 

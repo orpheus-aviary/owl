@@ -341,3 +341,106 @@ describe('sync:status — session derivation', () => {
     }
   });
 });
+
+// ─── sync:devices (P5-d Phase 10) ───────────────────────────────────
+
+describe('sync:devices', () => {
+  // Wire shape returned by daemon (camelCase ApiDevice from the SDK).
+  const DEVICE_A = {
+    id: 'dev-A',
+    name: 'mac-a (owl)',
+    platform: 'darwin',
+    appVersion: 'owl 0.4.2',
+    clientVersion: '0.1.3',
+    createdAt: 1700000000000,
+    lastSeenAt: 1700000100000,
+  };
+  const DEVICE_B = {
+    id: 'dev-B',
+    name: 'mac-b (owl)',
+    platform: 'darwin',
+    appVersion: 'owl 0.4.2',
+    clientVersion: '0.1.3',
+    createdAt: 1700000200000,
+    lastSeenAt: 1700000300000,
+  };
+
+  function stubDaemonDevices(devices: object[], status = 200): void {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(JSON.stringify({ data: { devices } }), { status })),
+    );
+  }
+
+  it('happy path: maps camelCase → snake_case + computes is_current from toml device.id', async () => {
+    coreState.readReturn = FULL_CFG; // FULL_CFG.device.id === 'dev-A'
+    stubDaemonDevices([DEVICE_A, DEVICE_B]);
+    const reply = (await call('sync:devices')) as IpcReply<{
+      devices: Array<{ id: string; is_current: boolean; app_version: string | null }>;
+    }>;
+    expect(reply.ok).toBe(true);
+    if (!reply.ok) return;
+    expect(reply.data.devices).toHaveLength(2);
+    expect(reply.data.devices[0]).toMatchObject({
+      id: 'dev-A',
+      app_version: 'owl 0.4.2',
+      is_current: true,
+    });
+    expect(reply.data.devices[1]).toMatchObject({
+      id: 'dev-B',
+      is_current: false,
+    });
+  });
+
+  it('no toml device.id → is_current false for all', async () => {
+    coreState.readReturn = { ...FULL_CFG, device: undefined };
+    stubDaemonDevices([DEVICE_A]);
+    const reply = (await call('sync:devices')) as IpcReply<{
+      devices: Array<{ is_current: boolean }>;
+    }>;
+    expect(reply.ok).toBe(true);
+    if (reply.ok) expect(reply.data.devices[0]?.is_current).toBe(false);
+  });
+
+  it('daemon 401 envelope → ok:false + 中文 message from daemon body', async () => {
+    coreState.readReturn = FULL_CFG;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              success: false,
+              error_code: 'SKYBRIDGE_AUTH_REQUIRED',
+              message: 'skybridge token rejected (401); 请在设置中重新登录',
+            }),
+            { status: 401 },
+          ),
+      ),
+    );
+    const reply = (await call('sync:devices')) as IpcReply<unknown>;
+    expect(reply.ok).toBe(false);
+    if (!reply.ok) expect(reply.message).toMatch(/请在设置中重新登录/);
+  });
+
+  it('fetch rejects (daemon down) → NetworkError → 网络连接失败…', async () => {
+    coreState.readReturn = FULL_CFG;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new Error('ECONNREFUSED');
+      }),
+    );
+    const reply = (await call('sync:devices')) as IpcReply<unknown>;
+    expect(reply.ok).toBe(false);
+    if (!reply.ok) expect(reply.message).toMatch(/网络连接失败/);
+  });
+
+  it('empty devices array passes through', async () => {
+    coreState.readReturn = FULL_CFG;
+    stubDaemonDevices([]);
+    const reply = (await call('sync:devices')) as IpcReply<{ devices: unknown[] }>;
+    expect(reply.ok).toBe(true);
+    if (reply.ok) expect(reply.data.devices).toEqual([]);
+  });
+});

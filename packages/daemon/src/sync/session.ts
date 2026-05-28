@@ -85,6 +85,23 @@ export interface RealSkybridgeClient {
     limit?: number,
   ): Promise<{ changes: ServerChangeLike[]; hasMore: boolean; latestSeq: number }>;
   subscribeEvents(workspaceId: string, handlers: SseHandlers): () => void;
+  /**
+   * List devices under the current authenticated user. Used by the
+   * Settings → 同步 tab read-only device card (P5-d Phase 10). The SDK
+   * returns camelCase `ApiDevice[]`; daemon passes through unchanged
+   * and main IPC layer maps to snake_case for renderer consumption.
+   */
+  listDevices(): Promise<
+    {
+      id: string;
+      name: string;
+      platform: string | null;
+      appVersion: string | null;
+      clientVersion: string | null;
+      createdAt: number;
+      lastSeenAt: number;
+    }[]
+  >;
 }
 
 export interface SkybridgeClientModule {

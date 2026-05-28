@@ -33,15 +33,18 @@ import type Database from 'better-sqlite3';
 import { ConversationStore } from '../ai/conversations.js';
 import { PreviewStore } from '../ai/preview-store.js';
 import { createBuiltinRegistry } from '../ai/tools/index.js';
+import type { AppContext } from '../context.js';
 import { EventsBus } from '../events/bus.js';
 import { ReminderScheduler } from '../scheduler.js';
 import { buildServer } from '../server.js';
 import { __resetInflightSync } from './manual.js';
+import type { RealSkybridgeClient, SkybridgeSession } from './session.js';
 
 const TEST_SERVER_URL = 'http://127.0.0.1:18443';
 
 describe('sync routes (P5-a Step 7)', () => {
   let app: ReturnType<typeof buildServer>;
+  let ctx: AppContext;
   let db: OwlDatabase;
   let sqlite: Database.Database;
   let scheduler: ReminderScheduler;
@@ -68,7 +71,7 @@ describe('sync routes (P5-a Step 7)', () => {
     conversationStore = new ConversationStore(sqlite);
     previewStore = new PreviewStore();
 
-    app = buildServer({
+    ctx = {
       db,
       sqlite,
       config,
@@ -80,7 +83,8 @@ describe('sync routes (P5-a Step 7)', () => {
       previewStore,
       eventsBus: new EventsBus(),
       skybridgeSession: null,
-    });
+    };
+    app = buildServer(ctx);
     await app.ready();
   });
 
@@ -89,6 +93,7 @@ describe('sync routes (P5-a Step 7)', () => {
     removeSkybridgeConfig(skybridgeConfigPath());
     sqlite.prepare('DELETE FROM sync_changes').run();
     sqlite.prepare('DELETE FROM sync_cursor').run();
+    ctx.skybridgeSession = null;
     __resetInflightSync();
   });
 
@@ -311,6 +316,79 @@ describe('sync routes (P5-a Step 7)', () => {
       assert.equal(first.statusCode, 200);
       const second = await app.inject({ method: 'POST', url: '/sync/logout-local' });
       assert.equal(second.statusCode, 200);
+    });
+  });
+
+  // ── GET /sync/devices (P5-d Phase 10) ────────────────────────
+
+  describe('GET /sync/devices', () => {
+    // Build a minimal SkybridgeSession with a fake realClient whose only
+    // method the route uses is `listDevices()`. Other RealSkybridgeClient
+    // fields are widened via `as` because the route never touches them.
+    const fakeDevice = {
+      id: 'dev-A',
+      name: 'tester (owl)',
+      platform: 'darwin',
+      appVersion: 'owl 0.4.2',
+      clientVersion: '0.1.3',
+      createdAt: 1700000000000,
+      lastSeenAt: 1700000100000,
+    };
+
+    function injectFakeSession(
+      listDevicesImpl: () => Promise<(typeof fakeDevice)[]> = async () => [fakeDevice],
+    ): void {
+      const realClient = {
+        listDevices: listDevicesImpl,
+      } as unknown as RealSkybridgeClient;
+      ctx.skybridgeSession = {
+        realClient,
+        module: {} as SkybridgeSession['module'],
+        config: { server: { url: TEST_SERVER_URL } } as SkybridgeSession['config'],
+        workspaceId: 'ws-X',
+        deviceId: 'dev-A',
+        serverUrl: TEST_SERVER_URL,
+      };
+    }
+
+    it('returns devices when session is installed', async () => {
+      injectFakeSession();
+      const res = await app.inject({ method: 'GET', url: '/sync/devices' });
+      assert.equal(res.statusCode, 200);
+      const body = res.json();
+      assert.equal(body.success, true);
+      assert.deepEqual(body.data, { devices: [fakeDevice] });
+    });
+
+    it('401 + SKYBRIDGE_AUTH_REQUIRED when no session installed', async () => {
+      // ctx.skybridgeSession defaults to null via beforeEach
+      const res = await app.inject({ method: 'GET', url: '/sync/devices' });
+      assert.equal(res.statusCode, 401);
+      const body = res.json();
+      assert.equal(body.success, false);
+      assert.equal(body.error_code, 'SKYBRIDGE_AUTH_REQUIRED');
+    });
+
+    it('translates SDK ApiError(401) → 401 + SKYBRIDGE_AUTH_REQUIRED + invalidates session', async () => {
+      // Fake a skybridge-client ApiError shape: duck-typed by `name` +
+      // `status` (manual.ts:140 isApiError).
+      const apiError = Object.assign(new Error('token revoked'), {
+        name: 'ApiError',
+        status: 401,
+      });
+      injectFakeSession(async () => {
+        throw apiError;
+      });
+      assert.ok(ctx.skybridgeSession, 'precondition: session installed');
+
+      const res = await app.inject({ method: 'GET', url: '/sync/devices' });
+      assert.equal(res.statusCode, 401);
+      assert.equal(res.json().error_code, 'SKYBRIDGE_AUTH_REQUIRED');
+      assert.equal(
+        ctx.skybridgeSession,
+        null,
+        'stale in-memory session must be invalidated on 401',
+      );
     });
   });
 });

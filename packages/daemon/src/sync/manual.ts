@@ -143,7 +143,7 @@ function isApiError(err: unknown): err is { status: number; message: string } {
   return name === 'ApiError' && typeof (err as { status?: unknown }).status === 'number';
 }
 
-function translateSkybridgeError(err: unknown, configPath: string): Error {
+export function translateSkybridgeError(err: unknown, configPath: string): Error {
   // Pass core-typed errors through unchanged
   if (
     err instanceof SkybridgeNotConfiguredError ||

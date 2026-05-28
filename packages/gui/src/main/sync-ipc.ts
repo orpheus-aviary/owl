@@ -19,10 +19,11 @@
  * `../shared/`. Renderer can't import main; main reads shared.
  */
 
-import { ApiError, NetworkError } from '@orpheus-aviary/skybridge-client';
+import { type ApiDevice, ApiError, NetworkError } from '@orpheus-aviary/skybridge-client';
 import { type SkybridgeConfig, readSkybridgeConfig } from '@owl/core';
 import { ipcMain, safeStorage } from 'electron';
 import type { LoginAndOpenSessionInput } from '../shared/sync-auth-types.js';
+import type { SyncDevicesReply } from '../shared/sync-devices-types.js';
 import { syncErrorMessage } from '../shared/sync-error-message.js';
 import type {
   SyncIpcReply,
@@ -43,6 +44,7 @@ export function registerSyncIpc(): void {
   );
   ipcMain.handle('sync:logout', async () => safe<void>(() => logout()));
   ipcMain.handle('sync:status', async () => safe<SyncStatusReply>(buildStatus));
+  ipcMain.handle('sync:devices', async () => safe<SyncDevicesReply>(buildDevices));
 }
 
 async function buildStatus(): Promise<SyncStatusReply> {
@@ -97,6 +99,52 @@ function extractSession(cfg: SkybridgeConfig | null): SyncStatusReply['session']
     workspace_id: workspace.id,
     device_id: device.id,
     device_name: device.name,
+  };
+}
+
+// P5-d Phase 10 — `sync:devices` handler. Fetches the daemon's
+// /sync/devices, computes `is_current` against the toml `[device].id`
+// (single display truth comes from the toml probe, same as buildStatus).
+//
+// Unlike buildStatus (which swallows fetch failures into `snapshot: null`
+// because identity can still render from toml), buildDevices has no
+// fallback — it must surface error so the UI can render「重试」. Bare
+// fetch failures in Node throw plain Error / TypeError, so we explicitly
+// wrap them as the SDK's NetworkError to route through the existing
+// `safe<T>()` NetworkError branch (Chinese「无法连接到本地后台服务」).
+async function buildDevices(): Promise<SyncDevicesReply> {
+  const cfg = safeReadConfig();
+  const currentDeviceId = cfg?.device?.id ?? null;
+
+  let res: Response;
+  try {
+    res = await fetch(`${getDaemonUrl()}/sync/devices`);
+  } catch (err) {
+    throw new NetworkError(
+      err instanceof Error ? err.message : String(err),
+      err instanceof Error ? err : undefined,
+    );
+  }
+  if (!res.ok) {
+    // Daemon envelope.message is already Chinese (manual.ts
+    // messageForError after translateSkybridgeError). Surface it through
+    // `safe<T>()`'s unknown branch which renders `detail` verbatim.
+    const body = (await res.json().catch(() => null)) as { message?: string } | null;
+    throw new Error(body?.message ?? `daemon /sync/devices returned HTTP ${res.status}`);
+  }
+  const body = (await res.json()) as { data?: { devices: ApiDevice[] } };
+  const apiDevices = body.data?.devices ?? [];
+  return {
+    devices: apiDevices.map((d) => ({
+      id: d.id,
+      name: d.name,
+      platform: d.platform,
+      app_version: d.appVersion,
+      client_version: d.clientVersion,
+      created_at: d.createdAt,
+      last_seen_at: d.lastSeenAt,
+      is_current: currentDeviceId !== null && d.id === currentDeviceId,
+    })),
   };
 }
 

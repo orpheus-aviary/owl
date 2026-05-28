@@ -23,7 +23,7 @@
  * `codeForError`) so the §5.4 error_code matrix lives in one place.
  */
 
-import { clearSyncIdentity } from '@owl/core';
+import { SkybridgeAuthRequiredError, clearSyncIdentity, skybridgeConfigPath } from '@owl/core';
 import type { FastifyInstance } from 'fastify';
 import type { AppContext } from '../context.js';
 import { fail, ok } from '../response.js';
@@ -34,8 +34,13 @@ import {
   readSyncStatus,
   runManualSync,
   statusForError,
+  translateSkybridgeError,
 } from '../sync/manual.js';
-import { type InstallSessionInput, installSkybridgeSession } from '../sync/session.js';
+import {
+  type InstallSessionInput,
+  installSkybridgeSession,
+  invalidateSkybridgeSession,
+} from '../sync/session.js';
 
 export function registerSyncRoutes(app: FastifyInstance, ctx: AppContext): void {
   app.post('/sync/run', async (_req, reply) => {
@@ -52,6 +57,47 @@ export function registerSyncRoutes(app: FastifyInstance, ctx: AppContext): void 
       ok(reply, readSyncStatus(ctx));
     } catch (err) {
       fail(reply, statusForError(err), messageForError(err), codeForError(err));
+    }
+  });
+
+  // P5-d Phase 10 — list devices under the current skybridge user.
+  // Read-only; revoke endpoint absent in skybridge ^0.1.3 (recipe for
+  // Phase 10.5+).
+  //
+  // Does NOT call ensureSkybridgeSession() — directly reads
+  // ctx.skybridgeSession. After Phase 10 commit 3, lazy bootstrap is
+  // gone; reading the cache here keeps the path symmetric with the
+  // future state.
+  //
+  // SDK ApiError(401) / NetworkError must go through translateSkybridgeError
+  // before status/code helpers — those helpers only recognise daemon's
+  // own error classes; raw SDK errors would otherwise fall to
+  // 500 / SKYBRIDGE_SYNC_FAILED.
+  //
+  // When the translated error is SkybridgeAuthRequiredError (either our
+  // self-thrown "no session installed" or a translated SDK 401), the
+  // in-memory ctx.skybridgeSession is invalidated. doRunManualSync does
+  // the same in manual.ts:258; /sync/devices does it locally because it
+  // never goes through doRunManualSync.
+  app.get('/sync/devices', async (_req, reply) => {
+    try {
+      const session = ctx.skybridgeSession;
+      if (!session) {
+        throw new SkybridgeAuthRequiredError('skybridge session not installed; 请在设置中登录');
+      }
+      const devices = await session.realClient.listDevices();
+      ok(reply, { devices });
+    } catch (err) {
+      const translated = translateSkybridgeError(err, skybridgeConfigPath());
+      if (translated instanceof SkybridgeAuthRequiredError) {
+        invalidateSkybridgeSession(ctx);
+      }
+      fail(
+        reply,
+        statusForError(translated),
+        messageForError(translated),
+        codeForError(translated),
+      );
     }
   });
 

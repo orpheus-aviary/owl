@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type { LoginAndOpenSessionInput } from '../shared/sync-auth-types.js';
+import type { SyncDevicesReply } from '../shared/sync-devices-types.js';
 import type { SyncIpcReply, SyncStatusReply } from '../shared/sync-status-types.js';
 import { daemonUrlFromArgv, parseStartupMode } from './args.js';
 
@@ -117,5 +118,11 @@ contextBridge.exposeInMainWorld('owlAPI', {
      * lie about "logged in" while next-boot restore would actually fail).
      */
     status: (): Promise<SyncIpcReply<SyncStatusReply>> => ipcRenderer.invoke('sync:status'),
+    /**
+     * List devices under the current skybridge user. Read-only —
+     * Phase 10 has no revoke surface (server endpoint absent in SDK
+     * ^0.1.3). main computes `is_current` against toml `[device].id`.
+     */
+    devices: (): Promise<SyncIpcReply<SyncDevicesReply>> => ipcRenderer.invoke('sync:devices'),
   },
 });

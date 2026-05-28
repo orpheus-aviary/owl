@@ -9,6 +9,7 @@
 // come from `src/shared/`.
 
 import type { LoginAndOpenSessionInput } from '../../../shared/sync-auth-types.js';
+import type { SyncDevicesReply } from '../../../shared/sync-devices-types.js';
 import type { SyncIpcReply, SyncStatusReply } from '../../../shared/sync-status-types.js';
 
 export type StartupMode =
@@ -58,6 +59,7 @@ export interface OwlAPI {
     login: (input: LoginAndOpenSessionInput) => Promise<SyncIpcReply<void>>;
     logout: () => Promise<SyncIpcReply<void>>;
     status: () => Promise<SyncIpcReply<SyncStatusReply>>;
+    devices: () => Promise<SyncIpcReply<SyncDevicesReply>>;
   };
 }
 
