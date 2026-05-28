@@ -1,5 +1,6 @@
 import { render, screen, within } from '@testing-library/react';
 import type { ComponentProps, ReactNode } from 'react';
+import { MemoryRouter } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { SyncStatusSnapshot } from '@/lib/api';
@@ -66,14 +67,22 @@ afterEach(() => {
 describe('SyncStatusBar trigger button', () => {
   it('renders 已同步 for idle state', () => {
     snapshotHolder.value = makeSnapshot({ state: 'idle' });
-    render(<SyncStatusBar />);
+    render(
+      <MemoryRouter>
+        <SyncStatusBar />
+      </MemoryRouter>,
+    );
     const button = screen.getByRole('button', { name: /同步状态：已同步/ });
     expect(within(button).getByText('已同步')).toBeTruthy();
   });
 
   it('renders 同步中 for syncing state with a spinner', () => {
     snapshotHolder.value = makeSnapshot({ state: 'syncing' });
-    render(<SyncStatusBar />);
+    render(
+      <MemoryRouter>
+        <SyncStatusBar />
+      </MemoryRouter>,
+    );
     const button = screen.getByRole('button', { name: /同步状态：同步中/ });
     expect(within(button).getByText('同步中')).toBeTruthy();
     expect(button.querySelector('.animate-spin')).toBeTruthy();
@@ -81,19 +90,31 @@ describe('SyncStatusBar trigger button', () => {
 
   it('renders 出错 for error state', () => {
     snapshotHolder.value = makeSnapshot({ state: 'error', last_error: 'auth rejected' });
-    render(<SyncStatusBar />);
+    render(
+      <MemoryRouter>
+        <SyncStatusBar />
+      </MemoryRouter>,
+    );
     expect(screen.getByRole('button', { name: /同步状态：出错/ })).toBeTruthy();
   });
 
   it('renders 离线 for offline state', () => {
     snapshotHolder.value = makeSnapshot({ state: 'offline' });
-    render(<SyncStatusBar />);
+    render(
+      <MemoryRouter>
+        <SyncStatusBar />
+      </MemoryRouter>,
+    );
     expect(screen.getByRole('button', { name: /同步状态：离线/ })).toBeTruthy();
   });
 
   it('falls back to idle when snapshot is null', () => {
     snapshotHolder.value = null;
-    render(<SyncStatusBar />);
+    render(
+      <MemoryRouter>
+        <SyncStatusBar />
+      </MemoryRouter>,
+    );
     // Cold-start fallback: paint idle so we don't flash a red dot before
     // the SSE channel comes up.
     expect(screen.getByRole('button', { name: /同步状态：已同步/ })).toBeTruthy();
@@ -103,23 +124,72 @@ describe('SyncStatusBar trigger button', () => {
 describe('SyncStatusBar popover content', () => {
   it('surfaces last_error in the popover for error state', () => {
     snapshotHolder.value = makeSnapshot({ state: 'error', last_error: 'token rejected (401)' });
-    render(<SyncStatusBar />);
+    render(
+      <MemoryRouter>
+        <SyncStatusBar />
+      </MemoryRouter>,
+    );
     const popover = screen.getByTestId('popover-content');
     expect(within(popover).getByText('token rejected (401)')).toBeTruthy();
   });
 
   it('shows auto-retry reassurance for offline state', () => {
     snapshotHolder.value = makeSnapshot({ state: 'offline' });
-    render(<SyncStatusBar />);
+    render(
+      <MemoryRouter>
+        <SyncStatusBar />
+      </MemoryRouter>,
+    );
     const popover = screen.getByTestId('popover-content');
     expect(within(popover).getByText(/自动重试/)).toBeTruthy();
   });
 
   it('renders the cold-start explainer when snapshot is null', () => {
     snapshotHolder.value = null;
-    render(<SyncStatusBar />);
+    render(
+      <MemoryRouter>
+        <SyncStatusBar />
+      </MemoryRouter>,
+    );
     const popover = screen.getByTestId('popover-content');
     expect(within(popover).getByText(/daemon 尚未上报同步状态/)).toBeTruthy();
+  });
+
+  // P5-d Phase 8 — popover must NOT instruct users to drop into the
+  // terminal for sync login; the in-app flow lives at Settings → 同步.
+  it('cold-start popover no longer mentions terminal `owl sync login`', () => {
+    snapshotHolder.value = null;
+    render(
+      <MemoryRouter>
+        <SyncStatusBar />
+      </MemoryRouter>,
+    );
+    const popover = screen.getByTestId('popover-content');
+    expect(popover.textContent ?? '').not.toMatch(/owl sync login/);
+  });
+
+  it('cold-start popover links into Settings → 同步 tab', () => {
+    snapshotHolder.value = null;
+    render(
+      <MemoryRouter>
+        <SyncStatusBar />
+      </MemoryRouter>,
+    );
+    const popover = screen.getByTestId('popover-content');
+    const link = within(popover).getByRole('link', { name: /设置 → 同步/ });
+    expect(link.getAttribute('href')).toBe('/settings?tab=sync');
+  });
+
+  it('configured popover surfaces a "管理账号" link to /settings?tab=sync', () => {
+    snapshotHolder.value = makeSnapshot({ state: 'idle' });
+    render(
+      <MemoryRouter>
+        <SyncStatusBar />
+      </MemoryRouter>,
+    );
+    const popover = screen.getByTestId('popover-content');
+    const link = within(popover).getByRole('link', { name: /管理账号/ });
+    expect(link.getAttribute('href')).toBe('/settings?tab=sync');
   });
 
   it('shortens long ids to a leading segment', () => {
@@ -127,7 +197,11 @@ describe('SyncStatusBar popover content', () => {
       device_id: '1f2a3b4c-aaaa-bbbb-cccc-dddddddddddd',
       workspace_id: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
     });
-    render(<SyncStatusBar />);
+    render(
+      <MemoryRouter>
+        <SyncStatusBar />
+      </MemoryRouter>,
+    );
     const popover = screen.getByTestId('popover-content');
     expect(within(popover).getByText('1f2a3b4c…')).toBeTruthy();
     expect(within(popover).getByText('aaaaaaaa…')).toBeTruthy();
@@ -138,7 +212,11 @@ describe('SyncStatusBar popover content', () => {
   // someone adds a token-flavoured property to the wire snapshot.
   it('renders no field-name labels that smell like a token (regression: P5-c §6.27)', () => {
     snapshotHolder.value = makeSnapshot({ state: 'idle' });
-    render(<SyncStatusBar />);
+    render(
+      <MemoryRouter>
+        <SyncStatusBar />
+      </MemoryRouter>,
+    );
     const popover = screen.getByTestId('popover-content');
     const text = popover.textContent ?? '';
     // None of the popover row labels reveal an auth token.
@@ -161,7 +239,11 @@ describe('SyncStatusBar popover content', () => {
       state: 'error',
       last_error: 'auth rejected', // verbatim — daemon must scrub before sending
     });
-    render(<SyncStatusBar />);
+    render(
+      <MemoryRouter>
+        <SyncStatusBar />
+      </MemoryRouter>,
+    );
     const popover = screen.getByTestId('popover-content');
     expect(popover.textContent ?? '').not.toContain(tok);
   });

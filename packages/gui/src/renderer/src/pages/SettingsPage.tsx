@@ -2,20 +2,38 @@ import { AdvancedSection } from '@/components/settings/AdvancedSection';
 import { AppearanceSection } from '@/components/settings/AppearanceSection';
 import { CustomSection } from '@/components/settings/CustomSection';
 import { ShortcutsSection } from '@/components/settings/ShortcutsSection';
+import { SyncSection } from '@/components/settings/SyncSection';
 import { cn } from '@/lib/utils';
-import { useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 
-type SettingsTab = 'shortcuts' | 'appearance' | 'custom' | 'advanced';
+type SettingsTab = 'shortcuts' | 'appearance' | 'custom' | 'sync' | 'advanced';
 
 const TABS: { id: SettingsTab; label: string }[] = [
   { id: 'shortcuts', label: '快捷键' },
   { id: 'appearance', label: '外观' },
   { id: 'custom', label: '自定义' },
+  { id: 'sync', label: '同步' },
   { id: 'advanced', label: '高级' },
 ];
 
+const TAB_IDS = new Set<SettingsTab>(TABS.map((t) => t.id));
+
+function isValidTab(value: string | null): value is SettingsTab {
+  return value !== null && TAB_IDS.has(value as SettingsTab);
+}
+
 export function SettingsPage() {
-  const [active, setActive] = useState<SettingsTab>('shortcuts');
+  // HashRouter + react-router-dom@7: `#/settings?tab=sync` exposes
+  // `tab=sync` through useSearchParams. Deep links from
+  // SyncStatusBar.popover (and future external triggers) flow through
+  // here without manual `window.location.hash` parsing.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const requested = searchParams.get('tab');
+  const active: SettingsTab = isValidTab(requested) ? requested : 'shortcuts';
+
+  const onSelect = (id: SettingsTab) => {
+    setSearchParams({ tab: id }, { replace: true });
+  };
 
   return (
     <div className="flex h-full">
@@ -25,7 +43,7 @@ export function SettingsPage() {
           <button
             type="button"
             key={tab.id}
-            onClick={() => setActive(tab.id)}
+            onClick={() => onSelect(tab.id)}
             className={cn(
               'text-left px-4 py-2 text-sm transition-colors',
               active === tab.id
@@ -45,6 +63,7 @@ export function SettingsPage() {
           {active === 'shortcuts' && <ShortcutsSection />}
           {active === 'appearance' && <AppearanceSection />}
           {active === 'custom' && <CustomSection />}
+          {active === 'sync' && <SyncSection />}
           {active === 'advanced' && <AdvancedSection />}
         </div>
       </div>

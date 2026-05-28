@@ -9,6 +9,7 @@ import {
 import type { SyncState, SyncStatusSnapshot } from '@/lib/api';
 import { useSyncStatus } from '@/stores/sync-status';
 import { Loader2 } from 'lucide-react';
+import { Link } from 'react-router-dom';
 
 /**
  * P5-b §6.3 / §7 — daemon sync status indicator. Lives at the very
@@ -98,8 +99,11 @@ function SyncStatusDetails({
       <PopoverHeader>
         <PopoverTitle>同步状态</PopoverTitle>
         <PopoverDescription>
-          daemon 尚未上报同步状态。如果未配置 skybridge，可在终端运行{' '}
-          <code className="rounded bg-muted px-1 text-[11px]">owl sync login</code> 开始。
+          daemon 尚未上报同步状态。如果未配置 skybridge，可在{' '}
+          <Link to="/settings?tab=sync" className="underline">
+            设置 → 同步
+          </Link>{' '}
+          中登录。
         </PopoverDescription>
       </PopoverHeader>
     );
@@ -148,6 +152,13 @@ function SyncStatusDetails({
         <dt>已推送 seq</dt>
         <dd className="text-foreground">{snapshot.pushed_seq}</dd>
       </dl>
+
+      <Link
+        to="/settings?tab=sync"
+        className="text-xs text-muted-foreground hover:text-foreground self-end"
+      >
+        管理账号 →
+      </Link>
     </div>
   );
 }

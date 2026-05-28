@@ -10,6 +10,8 @@ import { defineConfig } from 'vitest/config';
 // aliases close the door.
 const REACT = resolve(__dirname, '../../node_modules/react');
 const REACT_DOM = resolve(__dirname, '../../node_modules/react-dom');
+const REACT_ROUTER = resolve(__dirname, '../../node_modules/react-router');
+const REACT_ROUTER_DOM = resolve(__dirname, '../../node_modules/react-router-dom');
 
 export default defineConfig({
   resolve: {
@@ -26,8 +28,15 @@ export default defineConfig({
             '@': resolve(__dirname, 'src/renderer/src'),
             react: REACT,
             'react-dom': REACT_DOM,
+            'react-router': REACT_ROUTER,
+            'react-router-dom': REACT_ROUTER_DOM,
           },
-          dedupe: ['react', 'react-dom'],
+          // P5-d Phase 8: react-router and its umbrella react-router-dom
+          // both need to share the workspace React copy. Listing them in
+          // dedupe + inlining via `server.deps.inline` below keeps
+          // MemoryRouter from crashing with "useRef of null" inside
+          // vitest's jsdom.
+          dedupe: ['react', 'react-dom', 'react-router', 'react-router-dom'],
         },
         test: {
           name: 'renderer',
@@ -36,7 +45,7 @@ export default defineConfig({
           setupFiles: ['src/renderer/src/test-setup.ts'],
           server: {
             deps: {
-              inline: [/@testing-library\//],
+              inline: [/@testing-library\//, /^react-router(-dom)?$/],
             },
           },
         },

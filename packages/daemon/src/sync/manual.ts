@@ -168,9 +168,7 @@ function translateSkybridgeError(err: unknown, configPath: string): Error {
         // best-effort; if we can't update the file, the API error still
         // surfaces to the user — they'll re-login manually
       }
-      return new SkybridgeAuthRequiredError(
-        'skybridge token rejected (401); re-run `owl sync login`',
-      );
+      return new SkybridgeAuthRequiredError('skybridge token rejected (401); 请在设置中重新登录');
     }
     return new SkybridgeApiError(
       err.message || `skybridge API error ${err.status}`,
