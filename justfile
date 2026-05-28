@@ -25,8 +25,29 @@ core-convergence:
 token-not-templated:
     bash scripts/check-token-not-templated.sh
 
+# P5-d Phase 9 — daemon process must stay electron-free. safeStorage /
+# keychain logic lives in GUI main only. Catches daemon-src imports of
+# 'electron' in all three forms (static / CJS / dynamic).
 [group('lint')]
-check: lint typecheck core-convergence token-not-templated
+daemon-no-electron-storage:
+    bash scripts/check-daemon-no-electron-storage.sh
+
+# P5-d Phase 9 — OWL_DAEMON_(DEV_)TOKEN must never appear outside
+# dev-bootstrap.ts + cli.ts. Anywhere else widens the dev bypass.
+[group('lint')]
+no-prod-env-token:
+    bash scripts/check-no-prod-env-token.sh
+
+# P5-d Phase 9 — /sync/session handler holds plaintext skybridge token in
+# req.body. Pino redact + token-not-templated cover structured /
+# templated leaks; this guards the route handler against logging
+# req.body / token / password via ctx.logger.* (multi-line aware).
+[group('lint')]
+session-body-not-logged:
+    bash scripts/check-session-body-not-logged.sh
+
+[group('lint')]
+check: lint typecheck core-convergence token-not-templated daemon-no-electron-storage no-prod-env-token session-body-not-logged
     @echo "All checks passed."
 
 # ─── Test ───────────────────────────────────────────────

@@ -16,7 +16,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SyncSection } from './SyncSection';
 
 // shared/SyncStatusReply shape used in fixtures.
-const FULL_SESSION = {
+type Session = {
+  email: string;
+  server_url: string;
+  workspace_slug: string | null;
+  workspace_id: string;
+  device_id: string;
+  device_name: string;
+};
+
+const FULL_SESSION: Session = {
   email: 'a@test',
   server_url: 'http://srv',
   workspace_slug: 'owl/default',
@@ -25,7 +34,7 @@ const FULL_SESSION = {
   device_name: 'mac-a',
 };
 
-const okStatus = (sessionOverride: typeof FULL_SESSION | null = FULL_SESSION) =>
+const okStatus = (sessionOverride: Session | null = FULL_SESSION) =>
   Promise.resolve({
     ok: true as const,
     data: { session: sessionOverride, snapshot: null },
