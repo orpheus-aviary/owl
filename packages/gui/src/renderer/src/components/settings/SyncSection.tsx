@@ -3,6 +3,7 @@ import { Input } from '@/components/ui/input';
 import { Loader2 } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import type { SyncStatusReply } from '../../../../shared/sync-status-types.js';
+import { DevicesCard } from './DevicesCard';
 
 /**
  * P5-d Phase 8 — Settings → 同步 tab.
@@ -156,42 +157,45 @@ export function SyncSection() {
       )}
 
       {view.kind === 'auth' && (
-        <div className="border border-border rounded-md divide-y divide-border">
-          <SettingRow label="账号">
-            <span className="text-sm text-foreground">{view.session.email}</span>
-          </SettingRow>
-          <SettingRow label="工作区">
-            <span className="text-sm font-mono text-foreground">
-              {view.session.workspace_slug ?? view.session.workspace_id}
-            </span>
-          </SettingRow>
-          <SettingRow label="当前设备">
-            <span className="text-sm text-foreground">{view.session.device_name}</span>
-          </SettingRow>
-          <div className="px-4 py-3 flex justify-end gap-2">
-            {confirmingLogout ? (
-              <>
-                <span className="text-xs text-muted-foreground self-center mr-2">确认退出？</span>
-                <Button variant="outline" size="sm" onClick={() => setConfirmingLogout(false)}>
-                  取消
+        <>
+          <div className="border border-border rounded-md divide-y divide-border">
+            <SettingRow label="账号">
+              <span className="text-sm text-foreground">{view.session.email}</span>
+            </SettingRow>
+            <SettingRow label="工作区">
+              <span className="text-sm font-mono text-foreground">
+                {view.session.workspace_slug ?? view.session.workspace_id}
+              </span>
+            </SettingRow>
+            <SettingRow label="当前设备">
+              <span className="text-sm text-foreground">{view.session.device_name}</span>
+            </SettingRow>
+            <div className="px-4 py-3 flex justify-end gap-2">
+              {confirmingLogout ? (
+                <>
+                  <span className="text-xs text-muted-foreground self-center mr-2">确认退出？</span>
+                  <Button variant="outline" size="sm" onClick={() => setConfirmingLogout(false)}>
+                    取消
+                  </Button>
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    onClick={handleLogout}
+                    disabled={submitting}
+                  >
+                    {submitting && <Loader2 className="size-4 animate-spin" />}
+                    确认退出
+                  </Button>
+                </>
+              ) : (
+                <Button variant="outline" size="sm" onClick={() => setConfirmingLogout(true)}>
+                  退出登录
                 </Button>
-                <Button
-                  variant="destructive"
-                  size="sm"
-                  onClick={handleLogout}
-                  disabled={submitting}
-                >
-                  {submitting && <Loader2 className="size-4 animate-spin" />}
-                  确认退出
-                </Button>
-              </>
-            ) : (
-              <Button variant="outline" size="sm" onClick={() => setConfirmingLogout(true)}>
-                退出登录
-              </Button>
-            )}
+              )}
+            </div>
           </div>
-        </div>
+          <DevicesCard />
+        </>
       )}
     </div>
   );

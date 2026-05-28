@@ -198,4 +198,21 @@ describe('SyncSection — auth → logout flow', () => {
     expect(window.owlAPI.sync.logout).not.toHaveBeenCalled();
     expect(screen.getByText('a@test')).toBeTruthy();
   });
+
+  it('renders DevicesCard collapsed header in auth view, does NOT fetch devices', async () => {
+    render(<SyncSection />);
+    await waitFor(() => screen.getByText('a@test'));
+    // Sub-card header is present + collapsed (no device row rendered yet)
+    expect(screen.getByRole('button', { name: /管理我的设备/ })).toBeTruthy();
+    expect(window.owlAPI.sync.devices).not.toHaveBeenCalled();
+  });
+});
+
+describe('SyncSection — DevicesCard wiring', () => {
+  it('does NOT render DevicesCard in unauth view', async () => {
+    // Default beforeEach gives an unauthenticated session.
+    render(<SyncSection />);
+    await waitFor(() => screen.getByRole('button', { name: '登录' }));
+    expect(screen.queryByRole('button', { name: /管理我的设备/ })).toBeNull();
+  });
 });
