@@ -46,8 +46,15 @@ no-prod-env-token:
 session-body-not-logged:
     bash scripts/check-session-body-not-logged.sh
 
+# P5-d Phase 10 — daemon plaintext bootstrap retired. GUI main owns
+# skybridge_config.toml writes via the Phase 7 keychain path; daemon
+# source must not call writeSkybridgeConfig / clearSkybridgeAuth.
 [group('lint')]
-check: lint typecheck core-convergence token-not-templated daemon-no-electron-storage no-prod-env-token session-body-not-logged
+daemon-no-toml-write:
+    bash scripts/check-daemon-no-toml-write.sh
+
+[group('lint')]
+check: lint typecheck core-convergence token-not-templated daemon-no-electron-storage no-prod-env-token session-body-not-logged daemon-no-toml-write
     @echo "All checks passed."
 
 # ─── Test ───────────────────────────────────────────────

@@ -1,46 +1,42 @@
 /**
- * P5-b §6.1 — session bootstrap helper.
+ * Skybridge session helpers.
  *
- * Lifted out of `manual.ts` so both manual sync and the new sse-bridge
- * (§6.2) can share a single registered-device + workspace handle. Without
- * this, sse-bridge would have to repeat the config-read + dynamic import
- * + registerDevice / ensureWorkspace dance and risk drifting from
- * doRunManualSync.
+ * Two surfaces:
+ *   - `ensureSkybridgeSession(ctx)` — returns the cached in-memory
+ *     session, or throws `SkybridgeAuthRequiredError`. Phase 10 retired
+ *     the lazy toml bootstrap: this function NO LONGER reads toml,
+ *     calls registerDevice / ensureWorkspace, or writes the on-disk
+ *     config. The only way `ctx.skybridgeSession` becomes non-null is
+ *     `installSkybridgeSession` (POST /sync/session from GUI main).
+ *
+ *   - `installSkybridgeSession(ctx, body)` — Phase 6 path used by
+ *     `/sync/session`. Builds the session in memory from explicit HTTP
+ *     fields (GUI main already did remote login + registerDevice +
+ *     ensureWorkspace) and persists `skybridge_device_id` /
+ *     `skybridge_workspace_id` into local_metadata + runs the
+ *     non-destructive backfill of notes/folders rows whose device_id
+ *     was still the local uuid (P5-a vintage) or NULL.
  *
  * AppContext-scoped cache (`ctx.skybridgeSession`) — not module-level —
- * so the dual-profile e2e suite running two owl instances in one process
- * doesn't share session state between them.
+ * so the dual-profile e2e suite running two owl instances in one
+ * process doesn't share session state between them.
  *
- * Session invalidation: 401 / SkybridgeAuthRequired sets
- * `ctx.skybridgeSession = null` (handled by manual.ts), so the next call
- * re-runs ensureSkybridgeSession against the freshly logged-in toml.
- *
- * device_id / workspace_id sticky-write: every successful ensure writes
- * `skybridge_device_id` + `skybridge_workspace_id` into local_metadata
- * (INSERT OR REPLACE), regardless of whether registerDevice / ensureWorkspace
- * actually ran. mutation paths read these for `notes.device_id` /
- * `folders.device_id` columns. P5-b §3.3.
- *
- * Non-destructive backfill: first time we see a real skybridge device id
- * here, sweep notes/folders rows whose device_id is still the local uuid
- * (P5-a vintage) or NULL and stamp them with the real id, then set the
- * `skybridge_backfilled` sentinel so subsequent calls skip the UPDATE.
+ * Session invalidation: 401 / SkybridgeAuthRequired drops
+ * `ctx.skybridgeSession = null` (`doRunManualSync` in manual.ts +
+ * `GET /sync/devices` in routes/sync.ts), forcing the next call to
+ * surface AUTH_REQUIRED until GUI main re-installs.
  */
 
-import { hostname } from 'node:os';
 import {
   type LocalChangeLike,
   OWL_APP_VERSION,
   type PullResultLike,
   type PushResultLike,
   type ServerChangeLike,
+  SkybridgeAuthRequiredError,
   type SkybridgeClientLike,
   type SkybridgeConfig,
   persistSkybridgeIds,
-  readSkybridgeConfig,
-  requireAuth,
-  skybridgeConfigPath,
-  writeSkybridgeConfig,
 } from '@owl/core';
 import type { AppContext } from '../context.js';
 
@@ -144,13 +140,6 @@ export async function loadSkybridgeClient(): Promise<SkybridgeClientModule> {
   }
 }
 
-function defaultDeviceName(): string {
-  // hostname() can return empty string in containers; fall back to a
-  // generic label so registerDevice always sees a non-empty value.
-  const host = hostname();
-  return host ? `${host} (owl)` : 'owl device';
-}
-
 function buildClient(
   sb: SkybridgeClientModule,
   config: SkybridgeConfig & { auth: { user_id: string; token: string; email: string } },
@@ -191,84 +180,30 @@ export interface SkybridgeSession {
 }
 
 /**
- * Ensure a usable session for `ctx`. Always re-reads toml + re-bootstraps
- * if the cached session is missing or its config differs from disk (e.g.
- * caller invalidated after a 401 + re-login).
+ * Return the cached skybridge session, or throw `SkybridgeAuthRequiredError`.
  *
- * Writes `skybridge_device_id` / `skybridge_workspace_id` into
- * local_metadata on every successful call so mutation paths can read
- * the latest id without coordination with this module. The very first
- * time we see a real device id, runs the one-shot non-destructive
- * backfill (UPDATE notes / folders ... WHERE device_id IS NULL OR
- * device_id = local_device_uuid).
+ * P5-d Phase 10 — the daemon's plaintext-bootstrap path is gone. The only
+ * way `ctx.skybridgeSession` becomes non-null is `installSkybridgeSession`
+ * (POST /sync/session from GUI main, after it has decrypted the toml
+ * `encrypted_token` via safeStorage). This function NEVER reads toml,
+ * NEVER calls `registerDevice` / `ensureWorkspace`, and NEVER writes
+ * the on-disk config — those responsibilities live entirely in GUI main
+ * (`sync-auth.ts`).
+ *
+ * On a fresh daemon process with no session installed, callers see
+ * `SKYBRIDGE_AUTH_REQUIRED` and must wait for GUI main to inject the
+ * session (Phase 7 keychain restore on startup, or an explicit user
+ * login from Settings → 同步 tab).
+ *
+ * `persistSkybridgeIds` (local_metadata + one-shot backfill) is invoked
+ * by `installSkybridgeSession`, not here — see below.
  */
 export async function ensureSkybridgeSession(ctx: AppContext): Promise<SkybridgeSession> {
   const cached = ctx.skybridgeSession;
-  if (cached) return cached;
-
-  const cfgPath = skybridgeConfigPath();
-  let config = readSkybridgeConfig(cfgPath);
-  requireAuth(config);
-  const sb = await loadSkybridgeClient();
-  let client = buildClient(
-    sb,
-    config as SkybridgeConfig & { auth: { user_id: string; token: string; email: string } },
-  );
-
-  // Lazy device registration on first sync
-  if (!config.device?.id) {
-    const device = await client.registerDevice({
-      name: defaultDeviceName(),
-      appVersion: `owl ${OWL_APP_VERSION}`,
-      clientVersion: sb.CLIENT_VERSION,
-    });
-    config = {
-      ...config,
-      device: {
-        id: device.id,
-        name: device.name,
-        app_version: `owl ${OWL_APP_VERSION}`,
-        client_version: sb.CLIENT_VERSION,
-      },
-    };
-    writeSkybridgeConfig(config, cfgPath);
-    client = buildClient(
-      sb,
-      config as SkybridgeConfig & { auth: { user_id: string; token: string; email: string } },
-    );
+  if (!cached) {
+    throw new SkybridgeAuthRequiredError('skybridge session not installed; 请在设置中登录');
   }
-
-  // Lazy workspace bootstrap
-  if (!config.workspace?.id) {
-    const ws = await client.ensureWorkspace('owl', 'default');
-    config = {
-      ...config,
-      workspace: { id: ws.id, slug: ws.slug ?? 'owl/default' },
-    };
-    writeSkybridgeConfig(config, cfgPath);
-  }
-
-  const workspaceId = config.workspace?.id;
-  const deviceId = config.device?.id;
-  if (!workspaceId || !deviceId) {
-    throw new Error('skybridge session bootstrap did not yield workspace + device ids');
-  }
-
-  // Sticky-write skybridge ids into local_metadata + run one-shot backfill.
-  // Implementation lives in @owl/core to satisfy the P4 Phase 1 invariant
-  // (daemon never writes business tables directly).
-  persistSkybridgeIds(ctx.sqlite, deviceId, workspaceId);
-
-  const session: SkybridgeSession = {
-    realClient: client,
-    module: sb,
-    config,
-    workspaceId,
-    deviceId,
-    serverUrl: config.server.url,
-  };
-  ctx.skybridgeSession = session;
-  return session;
+  return cached;
 }
 
 /** Drop the cached session — caller's responsibility on 401 / re-login. */

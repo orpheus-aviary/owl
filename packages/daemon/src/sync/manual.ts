@@ -30,7 +30,6 @@ import {
   type SkybridgeConfig,
   SkybridgeNotConfiguredError,
   SkybridgeServerUrlMissingError,
-  clearSkybridgeAuth,
   readSkybridgeConfig,
   runSync,
   skybridgeConfigPath,
@@ -143,7 +142,22 @@ function isApiError(err: unknown): err is { status: number; message: string } {
   return name === 'ApiError' && typeof (err as { status?: unknown }).status === 'number';
 }
 
-export function translateSkybridgeError(err: unknown, configPath: string): Error {
+/**
+ * Translate raw SDK / fetch errors into daemon's own error class
+ * hierarchy so the `statusForError` / `codeForError` / `messageForError`
+ * helpers (which only recognise daemon classes) produce the right HTTP
+ * + error_code on the wire.
+ *
+ * P5-d Phase 10 — no longer takes / uses a `configPath`. The pre-Phase
+ * 10 401 branch dropped the dead `[auth]` block from toml via the core
+ * helper that core still exports for GUI / tests; that side effect is
+ * retired here because the daemon no longer owns toml (GUI main writes
+ * encrypted_token via the Phase 7 keychain path). On 401, callers should
+ * `invalidateSkybridgeSession(ctx)` so the in-memory session does not
+ * keep replaying a dead token. `doRunManualSync` already does this in
+ * its catch block; `GET /sync/devices` mirrors it locally.
+ */
+export function translateSkybridgeError(err: unknown): Error {
   // Pass core-typed errors through unchanged
   if (
     err instanceof SkybridgeNotConfiguredError ||
@@ -161,13 +175,6 @@ export function translateSkybridgeError(err: unknown, configPath: string): Error
   }
   if (isApiError(err)) {
     if (err.status === 401) {
-      // Drop dead [auth] block so the next round demands re-login
-      try {
-        clearSkybridgeAuth(configPath);
-      } catch {
-        // best-effort; if we can't update the file, the API error still
-        // surfaces to the user — they'll re-login manually
-      }
       return new SkybridgeAuthRequiredError('skybridge token rejected (401); 请在设置中重新登录');
     }
     return new SkybridgeApiError(
@@ -210,7 +217,6 @@ export function runManualSync(ctx: AppContext): Promise<RunSyncResult> {
 }
 
 async function doRunManualSync(ctx: AppContext): Promise<RunSyncResult> {
-  const cfgPath = skybridgeConfigPath();
   const broadcaster = getSyncStatusBroadcaster(ctx);
   broadcaster.markSyncing();
   try {
@@ -260,7 +266,7 @@ async function doRunManualSync(ctx: AppContext): Promise<RunSyncResult> {
     } else if (err instanceof SkybridgeAuthRequiredError) {
       invalidateSkybridgeSession(ctx);
     }
-    const translated = translateSkybridgeError(err, cfgPath);
+    const translated = translateSkybridgeError(err);
     broadcaster.markError(translated);
     throw translated;
   }

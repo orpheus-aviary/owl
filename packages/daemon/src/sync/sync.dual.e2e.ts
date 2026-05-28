@@ -144,9 +144,15 @@ const APP_VERSION = 'owl 0.5.0-dev';
 
 /**
  * Build a fully bootstrapped profile against the given skybridge server.
- * Mirrors what `ensureSkybridgeSession` does in production but without the
- * toml round-trip — we keep everything in memory because the test only
- * cares about the sqlite state and the client surface.
+ *
+ * Mirrors the production flow that GUI main's `sync-auth.ts` (Phase 7)
+ * runs on login — remote login + registerDevice + ensureWorkspace —
+ * but in memory only, since the test cares about sqlite state + client
+ * surface, not on-disk toml. After Phase 10 retired daemon's lazy
+ * bootstrap, daemon-side this identity is injected via
+ * `installSkybridgeSession`; here we wire the realClient directly into
+ * `ctx.skybridgeSession` because the e2e drives `runSync` without a
+ * Fastify HTTP layer.
  */
 async function createProfile(
   label: string,

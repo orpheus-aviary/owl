@@ -113,15 +113,19 @@ describe('sync routes (P5-a Step 7)', () => {
   // ── POST /sync/run ──────────────────────────────────────────
 
   describe('POST /sync/run', () => {
-    it('400 + SKYBRIDGE_NOT_CONFIGURED when no toml exists', async () => {
+    // P5-d Phase 10: daemon no longer reads toml on the sync path; both
+    // missing-toml and missing-[auth] reduce to "no in-memory session"
+    // → SKYBRIDGE_AUTH_REQUIRED. The pre-Phase-10 NotConfigured (400)
+    // distinction lived only in the retired lazy-bootstrap code path.
+    it('401 + SKYBRIDGE_AUTH_REQUIRED when no session installed (no toml)', async () => {
       const res = await app.inject({ method: 'POST', url: '/sync/run' });
-      assert.equal(res.statusCode, 400);
+      assert.equal(res.statusCode, 401);
       const body = res.json();
       assert.equal(body.success, false);
-      assert.equal(body.error_code, 'SKYBRIDGE_NOT_CONFIGURED');
+      assert.equal(body.error_code, 'SKYBRIDGE_AUTH_REQUIRED');
     });
 
-    it('401 + SKYBRIDGE_AUTH_REQUIRED when [auth] is absent', async () => {
+    it('401 + SKYBRIDGE_AUTH_REQUIRED when toml exists but no session installed', async () => {
       writeSkybridgeConfig({ server: { url: TEST_SERVER_URL } }, skybridgeConfigPath());
       const res = await app.inject({ method: 'POST', url: '/sync/run' });
       assert.equal(res.statusCode, 401);

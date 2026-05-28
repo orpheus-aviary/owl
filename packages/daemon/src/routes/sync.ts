@@ -23,7 +23,7 @@
  * `codeForError`) so the §5.4 error_code matrix lives in one place.
  */
 
-import { SkybridgeAuthRequiredError, clearSyncIdentity, skybridgeConfigPath } from '@owl/core';
+import { SkybridgeAuthRequiredError, clearSyncIdentity } from '@owl/core';
 import type { FastifyInstance } from 'fastify';
 import type { AppContext } from '../context.js';
 import { fail, ok } from '../response.js';
@@ -88,7 +88,7 @@ export function registerSyncRoutes(app: FastifyInstance, ctx: AppContext): void 
       const devices = await session.realClient.listDevices();
       ok(reply, { devices });
     } catch (err) {
-      const translated = translateSkybridgeError(err, skybridgeConfigPath());
+      const translated = translateSkybridgeError(err);
       if (translated instanceof SkybridgeAuthRequiredError) {
         invalidateSkybridgeSession(ctx);
       }
