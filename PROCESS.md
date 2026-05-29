@@ -1,6 +1,34 @@
 # 开发进度
 
-## 当前阶段：P5-d Phase 10 完成 — 2026-05-29（设备列表 GUI + daemon plaintext bootstrap 退役）
+## 当前阶段：P5-d per-profile 隔离 — **Phase 12 完成 2026-05-30**（设计 v6 定稿，D1-D11+W1-W13 拍板）
+
+**设计文档**：`docs/plans/2026-05-29-account-profile-isolation-design.md`（**v6 定稿，以 §0.5 决策总账为准**）+ `2026-05-29-phase12-profile-foundation.md`（Phase 12 子设计）。
+
+**模型（终态）**：`profile = (server_id, user_id)`，`profileId = sha256(server_id, user_id)` 前 32 位。锚点 **server_id**（skybridge 配置文件长随机标识，可迁移带走，换 url 不丢工作区，D11/W1）。每账号 `profiles/<id>/owl.db`；**local = `owl/owl.db` 原地**（D10a）。**账号同步永不写 local**（不变式）。导入仅"认领空账号"（D10b）。**免密快切并入 0.5.0**（refresh-token 带轮换，D2 翻转/W4）。LWW 时间戳改 server 归一化 offset + counter（W3）。
+
+**✅ Phase 12（profile 地基）已落 main，3 commit**：
+| Commit | 内容 |
+|---|---|
+| `45eef1e` | T1 core resolver（`resolveActiveProfileDbPath` raw-parse + 存在性闸 + profileId 校验回退 legacy）+ `normalizeServerUrl`/`computeProfileId`(sha256/128bit) + path helpers + index 导出 + 25 单测 |
+| `a4c61bd` | T2 三入口切 resolver（daemon cli.ts:62 / GUI index.ts:73 / CLI config.ts:43，含 B3） |
+| `d15c9cd` | T4 redact globs `*.profiles.*.encrypted_token`/`*.profiles.*.auth.token` + logger 测试 |
+（T3 = bypass 审计 doc-only：无旁路 reader，readSkybridgeConfig 沿用为 adapter，清单校正见设计稿 §5.9。）
+
+**Phase 12 验收**：core 435 · CLI 134 · daemon 255 · GUI main 74 · **SKYBRIDGE_E2E 16/16** · `just check` 8 子任务全绿。**运行时行为 diff=0**（resolver 全程回退 legacy）。
+
+**⚠️ Phase 12 provisional（后续决策修订，实现时以设计稿为准）**：`computeProfileId(url,user)` → D11 改 server_id（Phase 15）；`localProfileDbPath()=profiles/local` → D10a 重映射 owl/owl.db（Phase 13）。
+
+**0.5.0 新增依赖：skybridge 0.1.4 server（跨仓，设计稿 §14）** = server_id 暴露 + 同步回 server 时间 + `/auth/refresh`(带轮换) + device revoke 端点。Phase 15/17 前 ready。
+
+**重排路线（设计稿 §11）**：Phase 12 ✅ → **Phase S(skybridge 0.1.4)** ∥ 13(存储+迁移,W2 简化) → 14(switch) → 15(登录/refresh/server_id) → 16(import 守卫+reset+W3) → 17(GUI 快切+移除设备+手动同步) → 18-23(全链路/阿里云/soak/CLI/发版/收尾)。
+
+**下个对话**：开工 **Phase S（skybridge 0.1.4 server）** ∥ **Phase 13（存储+迁移）**。
+
+**Push 状态**：Phase 12 三 commit（`45eef1e`/`a4c61bd`/`d15c9cd`）在本地 main，**未 push**。设计文档 + PROCESS/MEMORY 为工作树改动，未 commit。
+
+---
+
+## 历史：P5-d Phase 10 完成 — 2026-05-29（设备列表 GUI + daemon plaintext bootstrap 退役）
 
 **设计文档**：`docs/plans/2026-05-29-p5-d-phase-10-design.md`（v 锁定 2026-05-29，已实施 + 手动 e2e 9/9 通过）；父框架 `docs/plans/2026-05-26-p5-d-design.md`（v3）。
 
