@@ -31,6 +31,10 @@ export interface LoggerOptions {
  *                                secret, but redacted defensively so
  *                                logs never tempt offline analysis
  *   - `*.auth.encrypted_token` — explicit nested cfg shape
+ *   - `*.profiles.*.encrypted_token` — P5-d Phase 12: per-profile toml
+ *                                shape `cfg.profiles.<id>.encrypted_token`
+ *   - `*.profiles.*.auth.token` — per-profile legacy token under
+ *                                `cfg.profiles.<id>.auth.token`
  *   - `authorization`         — top-level header
  *   - `headers.authorization` — http req object shape
  *   - `req.headers.authorization` — fastify req shape
@@ -40,6 +44,8 @@ export const DEFAULT_LOG_REDACT_PATHS: readonly string[] = [
   '*.auth.token',
   '*.encrypted_token',
   '*.auth.encrypted_token',
+  '*.profiles.*.encrypted_token',
+  '*.profiles.*.auth.token',
   'authorization',
   'headers.authorization',
   'req.headers.authorization',

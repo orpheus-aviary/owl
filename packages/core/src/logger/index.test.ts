@@ -53,6 +53,8 @@ describe('logger default redact paths (P5-c §6.27)', () => {
         '*.auth.token',
         '*.encrypted_token',
         '*.auth.encrypted_token',
+        '*.profiles.*.encrypted_token',
+        '*.profiles.*.auth.token',
         'authorization',
         'headers.authorization',
         'req.headers.authorization',
@@ -74,6 +76,26 @@ describe('logger default redact paths (P5-c §6.27)', () => {
     const out = lines().join('\n');
     assert.ok(!out.includes('tok_nested_secret'));
     assert.ok(out.includes('"user_id":"u"'), 'sibling fields stay visible');
+  });
+
+  it('masks per-profile `*.profiles.*.encrypted_token` (P5-d Phase 12 schema)', () => {
+    const { logger, lines } = makeCapture();
+    logger.info(
+      { cfg: { profiles: { p1: { encrypted_token: 'enc_secret_p1', email: 'a@b.c' } } } },
+      'profile cfg',
+    );
+    const out = lines().join('\n');
+    assert.ok(!out.includes('enc_secret_p1'), `encrypted_token leaked: ${out}`);
+    assert.ok(out.includes('a@b.c'), 'sibling fields stay visible');
+  });
+
+  it('masks per-profile `*.profiles.*.auth.token` (P5-d Phase 12 schema)', () => {
+    const { logger, lines } = makeCapture();
+    logger.info(
+      { cfg: { profiles: { p1: { auth: { token: 'tok_profile_secret' } } } } },
+      'profile auth',
+    );
+    assert.ok(!lines().join('\n').includes('tok_profile_secret'));
   });
 
   it('masks top-level `authorization` header', () => {
