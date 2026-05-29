@@ -12,6 +12,7 @@ import {
   loadConfig,
   paths,
   readSkybridgeConfig,
+  resolveActiveProfileDbPath,
 } from '@owl/core';
 import { Command } from 'commander';
 import { ConversationStore } from './ai/conversations.js';
@@ -59,7 +60,9 @@ program
     let db: ReturnType<typeof createDatabase>['db'];
     let sqlite: ReturnType<typeof createDatabase>['sqlite'];
     try {
-      ({ db, sqlite } = createDatabase({ dbPath: paths.dbPath() }));
+      // P5-d Phase 12 (B6): open the active profile's db. Pre-migration this
+      // resolves to the legacy global db, so daemon boot is unchanged today.
+      ({ db, sqlite } = createDatabase({ dbPath: resolveActiveProfileDbPath() }));
     } catch (err) {
       removePid();
       if (err instanceof MigrationRequiredError) {

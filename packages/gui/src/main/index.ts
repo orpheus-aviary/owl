@@ -1,4 +1,4 @@
-import { loadConfig, paths } from '@owl/core';
+import { loadConfig, resolveActiveProfileDbPath } from '@owl/core';
 import { BrowserWindow, app, ipcMain } from 'electron';
 import { detectCli } from './cli-detect.js';
 import { ensureDaemonRunning, getDaemonPort, stopDaemonGracefully } from './daemon.js';
@@ -70,7 +70,9 @@ function askRendererAboutUnsaved(): Promise<boolean> {
 }
 
 app.whenReady().then(async () => {
-  const dbPath = paths.dbPath();
+  // P5-d Phase 12 (B6): resolve the active profile's db; falls back to the
+  // legacy global db pre-migration, so this is behavior-preserving today.
+  const dbPath = resolveActiveProfileDbPath();
   const precheck = runMigrationPrecheck(dbPath);
   currentStartupMode = precheck.mode;
 

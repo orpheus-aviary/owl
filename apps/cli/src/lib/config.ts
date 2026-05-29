@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs';
-import { type OwlConfig, loadConfig, paths } from '@owl/core';
+import { type OwlConfig, loadConfig, paths, resolveActiveProfileDbPath } from '@owl/core';
 import { CliError } from './errors.js';
 
 export interface ResolvedConfig {
@@ -40,7 +40,10 @@ export function resolveConfig(overrides: ConfigOverrides = {}): ResolvedConfig {
   // explicitly passed --config we want the hard error above.
   const config = loadConfig(cfgPath);
   const daemonPort = config.daemon?.port ?? 47010;
-  const dbPath = overrides.dbPath ?? paths.dbPath();
+  // P5-d Phase 12 (B6): `--db` stays an explicit escape hatch; otherwise the
+  // direct-mode default resolves to the active profile's db (legacy fallback
+  // pre-migration, so behavior is unchanged today).
+  const dbPath = overrides.dbPath ?? resolveActiveProfileDbPath();
   return {
     config,
     configPath: cfgPath,
