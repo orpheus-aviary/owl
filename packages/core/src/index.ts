@@ -43,6 +43,14 @@ export type {
 } from './config/index.js';
 export * as paths from './config/paths.js';
 
+// Profile (P5-d Phase 12 — per-profile isolation foundation, blocker B6)
+export { normalizeServerUrl, computeProfileId, InvalidServerUrlError } from './profile/id.js';
+export {
+  readActiveProfileId,
+  isValidProfileId,
+  resolveActiveProfileDbPath,
+} from './profile/resolver.js';
+
 // Shortcuts (canonical → Electron accelerator conversion for main process)
 export { toElectronAccelerator } from './shortcuts/accelerator.js';
 

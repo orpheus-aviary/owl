@@ -32,9 +32,26 @@ export function configPath(): string {
   return join(owlDir(), 'owl_config.toml');
 }
 
-/** Owl database file path */
+/** Owl database file path (legacy global db; per-profile path resolution is
+ * P5-d Phase 12's `resolveActiveProfileDbPath` — this stays as the
+ * pre-migration / escape-hatch fallback). */
 export function dbPath(): string {
   return join(owlDir(), 'owl.db');
+}
+
+/** Per-profile data root: ~/orpheus-aviary-nest/owl/profiles/ (P5-d Phase 12) */
+export function profilesDir(): string {
+  return join(owlDir(), 'profiles');
+}
+
+/** Per-profile database file: profiles/<profileId>/owl.db (P5-d Phase 12) */
+export function profileDbPath(profileId: string): string {
+  return join(profilesDir(), profileId, 'owl.db');
+}
+
+/** Pure-local (never-logged-in) profile database: profiles/local/owl.db */
+export function localProfileDbPath(): string {
+  return join(profilesDir(), 'local', 'owl.db');
 }
 
 /** Owl sync database file path (for migration) */
