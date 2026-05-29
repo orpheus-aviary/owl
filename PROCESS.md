@@ -1,8 +1,143 @@
 # 开发进度
 
-## 当前阶段：P5-d Phase 2-5 完成 — 2026-05-27（skybridge SDK 配套 + npm latest @0.1.3）
+## 当前阶段：P5-d Phase 10 完成 — 2026-05-29（设备列表 GUI + daemon plaintext bootstrap 退役）
 
-**设计文档**：`docs/plans/2026-05-26-p5-d-design.md`（v1 → v2 → **v3 锁定 2026-05-26**）
+**设计文档**：`docs/plans/2026-05-29-p5-d-phase-10-design.md`（v 锁定 2026-05-29，已实施 + 手动 e2e 9/9 通过）；父框架 `docs/plans/2026-05-26-p5-d-design.md`（v3）。
+
+**Phase 10 commit 列表（3 个，本地 main，未 push）**：
+
+| Commit | Phase | 内容 |
+|---|---|---|
+| `e8106c6` | 10 (1) | shared `sync-devices-types.ts`（`SyncDeviceEntry` / `SyncDevicesReply` snake_case）+ daemon `RealSkybridgeClient` 加 `listDevices()` 结构方法 + daemon `manual.ts` **export** `translateSkybridgeError`（commit 1 仍带 `configPath`，commit 3 改签名）+ 新 `routes/sync.ts GET /sync/devices`（catch 走 `translateSkybridgeError` 再 status/code helper；401 时调 `invalidateSkybridgeSession` 跟 `doRunManualSync` 对齐）+ main `sync-ipc.ts buildDevices`（**显式 `new NetworkError(...)` 包裸 fetch reject**，避免落 unknown 分支）+ preload `owlAPI.sync.devices` + `owl-api.d.ts` 补 devices + test-setup / MigrationDialog.test mock 补 devices stub + 8 单测（daemon 3 + main 5） |
+| `44427b9` | 10 (2) | `DevicesCard.tsx`（collapsed by default + 首次展开 fetch + **缓存命中 collapse/expand 不 re-fetch** + 显式刷新按钮唯一 re-fetch 触发 + 是否当前 chip + `Intl.RelativeTimeFormat('zh-CN', { numeric: 'auto' })` 自然中文「前天 / 8 秒钟前」）+ `SyncSection.tsx` auth view 嵌入 DevicesCard（unauth view 不渲染）+ 12 单测（DevicesCard 10 + SyncSection 2）。**没加 radix Collapsible** 依赖（一个 sub-card 不值得新增 dep；`useState + 条件渲染 + aria-expanded` 即可） |
+| `6e9237b` | 10 (3) | `session.ts ensureSkybridgeSession` 收缩到「读 cached / 抛 `SkybridgeAuthRequiredError`」（删 `requireAuth` / `writeSkybridgeConfig` / `readSkybridgeConfig` / `skybridgeConfigPath` import + 删 `defaultDeviceName` + 删 lazy `registerDevice` / `ensureWorkspace` 路径 + 删第 243 行重复的 `persistSkybridgeIds`）+ `manual.ts translateSkybridgeError` 签名改 `(err)`（删 `configPath` 参数 + 401 副作用清空）+ 同步两个 caller（`doRunManualSync` + `/sync/devices`）+ 局部 `cfgPath` 删 + `scripts/check-daemon-no-toml-write.sh` 新增（`rg \b(writeSkybridgeConfig\|clearSkybridgeAuth)\s*\(` 排除 test/e2e/d.ts）+ justfile `check` 7 → 8 子任务 + 现有 `sync.test.ts POST /sync/run` 两个错误码用例改 Phase 10 语义（missing toml AND missing [auth] 都收敛到 401 `SKYBRIDGE_AUTH_REQUIRED`）+ 新 `session.ensure.test.ts` 4 case + 新 `manual.translate.test.ts` 10 case + `sync.dual.e2e.ts` 注释更新 |
+
+**测试基线**：
+- 单元 **1096/1096**（core 408 + daemon 255 + gui 299 + cli 134；1062 → 1096，+34）
+- `SKYBRIDGE_E2E=1 just test-skybridge-e2e` **16/16 重跑通过**（2026-05-29 post-Phase-10，1.45s）
+- `just check` **8 子任务**全过（lint + typecheck + 6 bash 守卫，baseline 7 → 8，新增 `daemon-no-toml-write`）
+
+**Phase 10 关键不变量**（编号续 Phase 8+9 §49 → 50-54）：
+
+50. **`ensureSkybridgeSession` 不读 toml** —— 仅返回 `ctx.skybridgeSession`，不存在抛 `SkybridgeAuthRequiredError`。Phase 6 起会话只通过 `POST /sync/session` 安装；Phase 10 起 daemon 没有 fallback 路径。daemon 无 Electron handle 无法解密 `encrypted_token` → 必须依赖 GUI main 注入
+51. **daemon source 不写 toml** —— `writeSkybridgeConfig` / `clearSkybridgeAuth` 在 `packages/daemon/src/**/*.ts`（非 test / 非 e2e / 非 d.ts）中全部禁止；bash 守卫 `daemon-no-toml-write` 拦截。两个 helper 仍由 `@owl/core` 导出（GUI main + 测试使用，Phase 11+ 顺手退）
+52. **`persistSkybridgeIds` 由 `installSkybridgeSession` 独占** —— `session.ts:320` 在 POST /sync/session 注入时执行 `local_metadata` 写入 + 一次性 backfill。Phase 10 commit 3 删 `ensureSkybridgeSession` 第 243 行重复调用；idempotent 保障
+53. **`/sync/devices` 路由不触发 lazy bootstrap** —— 直接读 `ctx.skybridgeSession`；未注入抛 `SkybridgeAuthRequiredError` → `translateSkybridgeError` → 401 + `SKYBRIDGE_AUTH_REQUIRED`，不静默给空数组。**SDK 原生 `ApiError` / `NetworkError` 必须先经 `translateSkybridgeError` 翻译再交错误码 helper**（否则裸 SDK error 落 500 / `SKYBRIDGE_SYNC_FAILED`）。翻译后若为 `SkybridgeAuthRequiredError` 调 `invalidateSkybridgeSession(ctx)` 与 `doRunManualSync` 对齐
+54. **设备列表 `is_current` 由 main IPC 计算** —— 不依赖 daemon 返回；main 读 toml `[device].id` + SDK 返回的设备 id 对比；toml device.id 缺失则全部 false
+
+**手动 e2e 9/9 全过（2026-05-29，post-commit `6e9237b`）**：
+
+| Step | 验证项 | 结果 |
+|---|---|---|
+| 1 | GUI 登录成功，三行 identity 渲染 | ✓ |
+| 2 | 「管理我的设备」collapsed by default | ✓ |
+| 3 | 展开 → loading → 6 行渲染 + 「当前」chip 准确（jay@local 现实 6 行同 hostname 重复 device 行 —— 验证 Phase 10.5+「重装防御」决策正确，真实数据已积出来）| ✓ |
+| 4 | collapse → expand 缓存命中 0 IPC | ✓ |
+| 5 | 刷新按钮 → 强制 fetch（skybridge server log `req-d` 200）| ✓ |
+| 6 | daemon kill → 「网络连接失败」+ 「重试」；daemon restart → 「skybridge session not installed; 请在设置中登录」（**不变量 50 现网验**）；GUI Cmd+Q + `just dev` → 完全恢复 | ✓ |
+| 7 | logout → 子卡片消失（auth view only）| ✓ |
+| 8 | 手工 plaintext `[auth].token` toml + restart daemon + POST /sync/run → 立即 401 + skybridge server **0** HTTP 请求 + toml `[auth].token` 保持原样 | ✓✓✓ |
+| 9 | TS daemon log **0** 命中 `writeSkybridgeConfig` / `clearSkybridgeAuth` | ✓ |
+
+Pre-Phase-10 行为对比（已退役）：Step 8 同样输入会让 daemon 读 plaintext token → 调 `/devices/register` → server 401 → daemon 调 `clearSkybridgeAuth` 抹掉 `[auth]`。Phase 10 三个动作都没了。
+
+**Phase 10 设计岔路（拍板归档）**：
+
+- **revoke 端点不在 Phase 10**：skybridge server `^0.1.3` 没 `DELETE /devices/:id` / `POST /devices/:id/revoke`；SDK 只暴露 `listDevices` + 当前 token 的 `logout`。要做需跨 3 repo + 2 npm publish (server + client) + owl 升级 dep。独立 Phase 10.5+
+- **重复 device row 防御不在 Phase 10**：原 brief「409 → listDevices → hostname 恢复」实际不触发（重装 owl → 新 token 未绑定 device → server 不返回 409，而是默默插入新 row）。手动 e2e 实测：jay@local 现有 6 行同 hostname 重复 device，正是该问题的真实数据 sample。要防御需前置 listDevices + 「复用 / 新建」弹窗。推后 Phase 10.6
+- **CLI `owl sync login`** 文案 `apps/cli/src/commands/sync.ts:248` 仍是 `owl sync login` 字样；`/sync/login` daemon 路由 Phase 6 已 retire（CLI 调 404 已 dead）。Phase 16 一并改文案
+
+**Phase 10 留尾 / 后续观察**：
+
+- **daemon 401 envelope 中英混排 UX 小坑**：main `buildDevices` 把 daemon `reply.message` 直接抛成 `Error` → `safe<T>()` unknown 分支 → 「同步出错：skybridge session not installed; 请在设置中登录」中英混排。Phase 11 顺手改：main 识别 `error_code === 'SKYBRIDGE_AUTH_REQUIRED'` 走 `syncErrorMessage({ kind: 'api', code: ... })` 输出纯中文
+- **mid-session daemon 重启 → GUI 不自动 re-restore**：Phase 7 `restoreSessionOnStartup` 只在 GUI app 启动时跑一次；daemon 被 kill 后重启不会自动恢复 session，必须 GUI 完全重启或 logout+login。Phase 11 可加 daemon-down 检测 + main 自动 re-POST `/sync/session`
+- **`@owl/core` 三 helper exports 暂留** —— `clearSkybridgeAuth` / `writeSkybridgeConfig` / `requireAuth` GUI main + 测试仍用；Phase 11+ 与 core 收尾一起清
+
+**用户 0.6 头牌 wish（记给后续，**不**塞 0.5.0）**：multi-profile 快速切换 —— 用户 2026-05-29 Phase 10 e2e 后明确 raise：save (server, account) 多组 + 快切。**别和 DevicesCard 混淆**（一个是「多 (server, account)」一个是「单 (server, account) 的多 device」）。详 memory `[[project_multi_profile_wish]]`。
+
+---
+
+## 历史：P5-d Phase 8 + Phase 9 完成 — 2026-05-29（GUI Settings 同步 tab + 守卫脚本）
+
+**设计文档**：`docs/plans/2026-05-28-p5-d-phase-8-9-design.md`（v4 锁定 2026-05-29，已实施）；父框架 `docs/plans/2026-05-26-p5-d-design.md`（v3 锁定 2026-05-26）。
+
+**Phase 8 + 9 commit 列表（3 个，本地 main，未 push）**：
+
+| Commit | Phase | 内容 |
+|---|---|---|
+| `191fd66` | 8 (1) | shared 三型 (`sync-auth-types` / `sync-status-types` / `sync-error-message`) + `main/sync-ipc.ts` (三 IPC handler，`extractSession` 与 `restoreSessionOnStartup` 同 gate：`safeStorage.isEncryptionAvailable + 试 decryptString`) + preload `owlAPI.sync` + `owl-api.d.ts` 只 import shared + `lib/api.ts` 去重 SyncStatusResult + tsconfig×2 + vitest include + gui dep `@orpheus-aviary/skybridge-proto@^0.1.3` + 32 单测 |
+| `5e4916a` | 8 (2) | `SyncSection.tsx` (未登录 form / 已登录三行 + inline 退出确认) + `SettingsPage.tsx` `useSearchParams` deep link + `SyncStatusBar.tsx` 替掉「`owl sync login`」+ "管理账号 →" link + `daemon manual.ts:172` 文案 + vitest react-router 别名/dedupe/inline + 14 单测 |
+| `ef6a7cd` | 9 (3) | 3 bash 守卫 (`check-daemon-no-electron-storage.sh` / `check-no-prod-env-token.sh` / **`check-session-body-not-logged.sh` `rg -U --multiline-dotall` 多行版**) + justfile 集成 (`just check` 4 → 7 子任务) + SyncSection.test 一处类型拓宽 |
+
+**测试基线**：
+- 单元 **1062/1062**（core 408 + daemon 238 + gui 282 + cli 134；1016 → 1062，+46）
+- `SKYBRIDGE_E2E=1 just test-skybridge-e2e` 16/16（未跑过，结构未变）
+- `just check` **7 子任务**全过（lint + typecheck + 5 bash 守卫，baseline 4 → 7）
+
+**v4 关键不变量在 Phase 8+9 实施后的当前形态**（编号续 Phase 7 §44 → 45-49）：
+
+45. **`owlAPI.sync` 是 renderer 唯一登录入口** —— Settings → 同步 tab 登录 / 退出 / 切账号；preload 暴露 `sync.{login, logout, status}` IPC，main `registerSyncIpc()` 注册三 handler，统一 `SyncIpcReply<T>` shape
+46. **single display truth** —— Settings 显示字段（email / workspace_slug / device_name）只从 `sync:status` 读；`sync:login` 成功 reply 锁 `{ ok: true, data: undefined }`（summary 丢弃），renderer `await refreshStatus()` 拿展示数据
+47. **`extractSession` 与 `restoreSessionOnStartup` 同 gate** —— `safeStorage.isEncryptionAvailable()` + 试 `decryptString(encrypted_token)`，任一失败回 null。Settings 永远不能比 startup restore "更乐观"（v4 关键 review finding 修复）
+48. **shared 类型物理边界** —— `LoginAndOpenSessionInput` / `SyncIpcReply<T>` / `SyncStatusReply` / `SyncStatusResult` 全部 own 在 `packages/gui/src/shared/`；renderer `types/owl-api.d.ts` 严禁 import `./main/*`（`tsconfig.web.json` include 不含 main）；main `sync-ipc.ts` import shared
+49. **5 个 bash 守卫**（baseline 2 → 5）—— `check-daemon-no-electron-storage.sh`（daemon 静/CJS/动态 三 import 形态）/ `check-no-prod-env-token.sh`（白名单 `dev-bootstrap.ts + cli.ts`）/ `check-session-body-not-logged.sh`（**多行 `rg -U --multiline-dotall`**，拦 `ctx.logger.*(…)` 含 `req.body` / `.token` / `token:` / `.password` / `password:` 形态，已自验 baseline 同款多行风格不漏报）
+
+**v4 review 三处修复对应**：
+
+| v4 调整 | 落地点 |
+|---|---|
+| A: session-body 多行 regex | `scripts/check-session-body-not-logged.sh` 用 `rg -U --multiline-dotall`，自验加多行 leak 样例 |
+| B: `extractSession` 加 safeStorage 试解密 | `packages/gui/src/main/sync-ipc.ts:67-90` + 2 条新单测 (`isEncryptionAvailable=false` / `decryptString throw`) |
+| C: shared 类型物理 owner | `packages/gui/src/shared/sync-auth-types.ts` + `sync-status-types.ts`（含 SyncIpcReply / SyncStatusReply 上移）；`owl-api.d.ts` 仅 import shared |
+
+**Phase 8 完成后顺手清掉的 Phase 7 留尾**：
+- `SyncStatusBar.tsx:102` 「在终端运行 owl sync login」→ `<Link to="/settings?tab=sync">` 进设置
+- `manual.ts:172` 401 「re-run `owl sync login`」→ 「请在设置中重新登录」
+- popover 配置区底加 "管理账号 →" 链接
+
+**手动验收（2026-05-29）**：金路径 1-5 + Step 7 全过：
+- Step 2 SyncStatusBar 灰点 / 已同步 + 「管理账号 →」popover 链接 + deep link 跳转 ✓
+- Step 3 form 渲染（v4 §47 invariant 现网验：daemon authenticated=true via legacy plaintext，Settings 仍展示 form 不示已登录）+ 错密码中文映射 ✓
+- Step 4 真密码 → 已登录三行 + toml 只写 encrypted_token + daemon log 无 token 泄漏 ✓ §39
+- Step 5 inline confirm（取消 / 确认退出）+ toml 清三段保留 `[server].url` + `pulled_seq=482` 不动 ✓ §37 + §3.6.2
+- Step 7 `?tab=...` 三种 case fallback 工作 ✓
+- Step 6 cold-start popover snapshot-null 分支跳过（mid-session 杀 daemon 不触发 null，已被单测覆盖）
+
+**手动测试中发现并修复**：`SyncSection.tsx:24` DEFAULT_SERVER_URL `18443` → `8443`（skybridge server 实际默认；设计文档 v4 抄错 → 落代码 → 1 个单测）。已修：tsx + 设计文档 + 1 单测 `getByDisplayValue` 字面量。基线仍 1062/1062。**未额外 commit**，待用户决定 fixup vs 新 commit。
+
+**手动测试中发现的正向 UX**（非 bug）：登出后 form 记住上次成功登录的 serverUrl + 邮箱，只清密码 —— 比设计暗示的「回退 DEFAULT」更友好。
+
+**Phase 8/9 留尾归属**（v4 收尾时锁定，不在 8/9 scope）：
+- daemon `writeSkybridgeConfig` 完全退役 + legacy plaintext bootstrap 整体退役 —— 需配 device-id 恢复路径（`registerDevice` 409 → `listDevices` → hostname 匹配 → 恢复 id；hostname 重名 / 用户改 name / 多设备同 host 边界拍板），适合到 Phase 11 watchdog 之后、0.5.0 GA 前
+- CLI `owl sync login` 文案 `apps/cli/src/commands/sync.ts:248` 「请使用 GUI 登录」—— 留 Phase 16 一起
+- `clearSkybridgeAuth(configPath)` 仍由 daemon `manual.ts:166` 在 401 path 调（401 self-heal 路径，不属 keychain 主线）
+
+---
+
+## 历史：P5-d Phase 6 + Phase 7 完成 — 2026-05-27（daemon /sync/session + GUI main 钥匙串落地）
+
+**设计文档**：`docs/plans/2026-05-26-p5-d-design.md`（v3 锁定 2026-05-26）
+
+**Phase 6 + 7 commit 列表（8 个，本地 main，未 push）**：
+
+| Commit | Phase | 内容 |
+|---|---|---|
+| `90993ec` | 6 (a) | `OWL_APP_VERSION` 0.4.2 → 0.5.0-dev signal commit |
+| `713825f` | 6 (b) | `POST /sync/session` replace 语义 + `installSkybridgeSession` + bridge-lifecycle ctx-cache short-circuit |
+| `58df287` | 6 (c) | `POST /sync/logout-local` + `clearSyncIdentity` + retire `POST /sync/login` |
+| `487c4bc` | 6 (d) | `OWL_GUI_PARENT_PID` 10s probe + dev 双 env gate + cold-start unauthenticated 日志 |
+| `9babaf6` | 7 (e) | `SkybridgeAuthSection.encrypted_token?` transitional schema + GUI `atomic-write.ts` + logger redact `*.encrypted_token` |
+| `4902704` | 7 (f) | GUI main `sync-auth.ts`（loginAndOpenSession / logout / restoreSessionOnStartup） |
+| `13f3547` | 7 (g) | `spawnDaemon` env 加 `OWL_GUI_PARENT_PID=<process.pid>` + `index.ts` whenReady 串 `restoreSessionOnStartup` |
+| `bfe2528` | 7 (h) | `OWL_APP_VERSION` 提到 `@owl/core/version.ts` 单源 |
+
+**Phase 6+7 测试基线（Phase 8 开工前）**：单元 **1016/1016**（core 408 + daemon 238 + gui 236 + cli 134；vs 957 +59）。`just check` 4 guards。
+
+**Phase 6+7 不变量（详见 §44）**：daemon 不读 prod env token；`/sync/session` replace 语义；bridge-lifecycle 优先 ctx 缓存；toml transitional schema；GUI main 是唯一 plaintext+ciphertext 持有者；atomic toml 写顺序锁死；`restoreSessionOnStartup` 拒 fallback plaintext；`OWL_GUI_PARENT_PID` 探测闭环；`OWL_APP_VERSION` 单源。
+
+---
+
+## 历史：P5-d Phase 2-5 完成 — 2026-05-27（skybridge SDK 配套 + npm latest @0.1.3）
 
 **Phase 2-5 已 ship 的内容**：
 
