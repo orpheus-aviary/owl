@@ -107,8 +107,8 @@ importers:
         specifier: ^11.2.0
         version: 11.2.0
       '@orpheus-aviary/skybridge-client':
-        specifier: ^0.1.3
-        version: 0.1.3
+        specifier: 0.1.4
+        version: 0.1.4
       '@owl/core':
         specifier: workspace:*
         version: link:../core
@@ -132,8 +132,8 @@ importers:
         version: 6.34.0(ws@8.20.0)
     devDependencies:
       '@orpheus-aviary/skybridge-server':
-        specifier: ^0.1.3
-        version: 0.1.3
+        specifier: 0.1.4
+        version: 0.1.4
       '@types/better-sqlite3':
         specifier: ^7.6.13
         version: 7.6.13
@@ -186,11 +186,11 @@ importers:
         specifier: ^1.2.3
         version: 1.2.3
       '@orpheus-aviary/skybridge-client':
-        specifier: ^0.1.3
-        version: 0.1.3
+        specifier: 0.1.4
+        version: 0.1.4
       '@orpheus-aviary/skybridge-proto':
-        specifier: ^0.1.3
-        version: 0.1.3
+        specifier: 0.1.4
+        version: 0.1.4
       '@owl/core':
         specifier: workspace:*
         version: link:../core
@@ -1479,16 +1479,16 @@ packages:
     engines: {node: ^12.13.0 || ^14.15.0 || >=16.0.0}
     deprecated: This functionality has been moved to @npmcli/fs
 
-  '@orpheus-aviary/skybridge-client@0.1.3':
-    resolution: {integrity: sha512-ARjnUYslKOp4p/CuvmhGcsQdT5KXQxfkKvK9WZECNHWWQwG+QzwhnPRq6rZLi5ZdXGEA2/mkMRSmT+Kx77daKQ==}
+  '@orpheus-aviary/skybridge-client@0.1.4':
+    resolution: {integrity: sha512-7Nd7CpTzfkHDiuFFDXPE6oweAw7z2QyPjDphAQAnUg8X9uVYDA5x8b+I8TPxBPbUubht+3ud5Lw5xmg/9/U1gw==}
     engines: {node: '>=22.0.0'}
 
-  '@orpheus-aviary/skybridge-proto@0.1.3':
-    resolution: {integrity: sha512-7vEvfi/GL1a/DVW4249Smf/y2HwQB0gOPtB1JoCEJn85/YHuDRh5XskQ5EvpxqYvZbRPi8TCPd6B2ZdV6LaNiA==}
+  '@orpheus-aviary/skybridge-proto@0.1.4':
+    resolution: {integrity: sha512-q1Yn+2Qz7zNUQz4aF8DB147j8gsLJCglK2YqMNr0IZbG0Ubz3Ejct2Pcn+9xVKKe3xCXn8ydqnJ3i4hbIBawpw==}
     engines: {node: '>=22.0.0'}
 
-  '@orpheus-aviary/skybridge-server@0.1.3':
-    resolution: {integrity: sha512-BeKdr4Wwl7taos8PR9XqP/VtkvopIQXz0Xmw+Hco0qrj69tFCdQs0ldbDxLIf8dTcGFiqvAtzAxJuqCdj6z4tA==}
+  '@orpheus-aviary/skybridge-server@0.1.4':
+    resolution: {integrity: sha512-z61h+ri/HATSclF3M/hfat7VOtayB5RU1OMV57tkeK66lfM4cYWz3HMBaKzpcABnPFDPPH1sEKSj41ibYiK1Zg==}
     engines: {node: '>=22.0.0'}
     hasBin: true
 
@@ -6483,16 +6483,16 @@ snapshots:
       mkdirp: 1.0.4
       rimraf: 3.0.2
 
-  '@orpheus-aviary/skybridge-client@0.1.3':
+  '@orpheus-aviary/skybridge-client@0.1.4':
     dependencies:
-      '@orpheus-aviary/skybridge-proto': 0.1.3
+      '@orpheus-aviary/skybridge-proto': 0.1.4
 
-  '@orpheus-aviary/skybridge-proto@0.1.3': {}
+  '@orpheus-aviary/skybridge-proto@0.1.4': {}
 
-  '@orpheus-aviary/skybridge-server@0.1.3':
+  '@orpheus-aviary/skybridge-server@0.1.4':
     dependencies:
       '@node-rs/argon2': 2.0.2
-      '@orpheus-aviary/skybridge-proto': 0.1.3
+      '@orpheus-aviary/skybridge-proto': 0.1.4
       better-sqlite3: 11.10.0
       fastify: 5.8.5
       smol-toml: 1.6.1
