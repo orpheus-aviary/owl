@@ -17,6 +17,15 @@ import { ensureSwitchGate } from './sync/switch-gate.js';
 /** HTTP methods the profile-switch gate quiesces during a db swap. */
 const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
+/**
+ * Routes that initiate a switch must not be counted as in-flight mutations —
+ * `switchProfile` drains tracked mutations before swapping, so tracking the
+ * switch-initiating request would deadlock it against itself (P5-d Phase 15).
+ * They still get a 503 if a switch is already running (the isSwitching check
+ * below runs first).
+ */
+const SWITCH_INITIATING_PATHS = new Set(['/sync/switch']);
+
 export function buildServer(ctx: AppContext) {
   const app = Fastify({
     logger: false, // We use our own pino logger
@@ -40,6 +49,8 @@ export function buildServer(ctx: AppContext) {
       fail(reply, 503, 'profile switch in progress', 'SWITCH_IN_PROGRESS');
       return reply;
     }
+    // Don't track the switch-initiating request — it would deadlock the drain.
+    if (SWITCH_INITIATING_PATHS.has(req.url.split('?')[0])) return;
     (req as { switchRelease?: () => void }).switchRelease = switchGate.trackMutation();
   });
   app.addHook('onResponse', async (req) => {

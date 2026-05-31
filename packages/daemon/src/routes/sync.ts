@@ -23,7 +23,16 @@
  * `codeForError`) so the §5.4 error_code matrix lives in one place.
  */
 
-import { SkybridgeAuthRequiredError, clearSyncIdentity } from '@owl/core';
+import { mkdirSync } from 'node:fs';
+import { dirname } from 'node:path';
+import {
+  LOCAL_PROFILE,
+  SkybridgeAuthRequiredError,
+  clearSyncIdentity,
+  isHexProfileId,
+  paths,
+  readSkybridgeDeviceId,
+} from '@owl/core';
 import type { FastifyInstance } from 'fastify';
 import type { AppContext } from '../context.js';
 import { fail, ok } from '../response.js';
@@ -36,6 +45,7 @@ import {
   statusForError,
   translateSkybridgeError,
 } from '../sync/manual.js';
+import { switchProfile } from '../sync/profile-switch.js';
 import {
   type InstallSessionInput,
   installSkybridgeSession,
@@ -98,6 +108,55 @@ export function registerSyncRoutes(app: FastifyInstance, ctx: AppContext): void 
         messageForError(translated),
         codeForError(translated),
       );
+    }
+  });
+
+  // P5-d Phase 15 — switch the daemon onto a profile's db (live login flip /
+  // logout-to-local). `profile_id` is `local` (→ owl/owl.db) or a 32-hex
+  // profile (→ profiles/<id>/owl.db). Returns the target db's stored
+  // skybridge_device_id (null for a fresh db) so GUI main can reuse the
+  // device (§5.3) instead of registering a new one.
+  //
+  // This route is EXEMPT from the switch gate's mutation tracking (server.ts):
+  // switchProfile drains tracked mutations before swapping, so counting the
+  // switch-initiating request would deadlock it against itself. A second
+  // /sync/switch arriving mid-switch still gets a 503 (the gate's isSwitching
+  // check runs first).
+  app.post('/sync/switch', async (req, reply) => {
+    const profileId = (req.body as { profile_id?: unknown } | undefined)?.profile_id;
+    if (typeof profileId !== 'string' || profileId.length === 0) {
+      fail(reply, 400, 'missing required field: profile_id', 'USAGE_ERROR');
+      return;
+    }
+    let targetDbPath: string;
+    if (profileId === LOCAL_PROFILE) {
+      targetDbPath = paths.localProfileDbPath();
+    } else if (isHexProfileId(profileId)) {
+      targetDbPath = paths.profileDbPath(profileId);
+      // createDatabase opens the file directly and won't mkdir — a first login
+      // to a new account has no profiles/<id>/ dir yet, so create it here or
+      // the open fails with SQLITE_CANTOPEN.
+      mkdirSync(dirname(targetDbPath), { recursive: true });
+    } else {
+      fail(reply, 400, `invalid profile_id: ${JSON.stringify(profileId)}`, 'USAGE_ERROR');
+      return;
+    }
+    try {
+      const { warnings } = await switchProfile(ctx, targetDbPath, ctx.logger);
+      const deviceId = readSkybridgeDeviceId(ctx.sqlite);
+      ctx.logger.info(
+        {
+          kind: 'sync-session',
+          op: 'switch',
+          profile_id: profileId,
+          device_id: deviceId,
+          warnings: warnings.length,
+        },
+        'profile switched',
+      );
+      ok(reply, { device_id: deviceId, warnings });
+    } catch (err) {
+      fail(reply, statusForError(err), messageForError(err), codeForError(err));
     }
   });
 
