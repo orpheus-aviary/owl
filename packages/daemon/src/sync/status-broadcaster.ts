@@ -40,6 +40,17 @@ export function getSyncStatusBroadcaster(ctx: AppContext): SyncStatusBroadcaster
   return made;
 }
 
+/**
+ * Drop the cached broadcaster for `ctx`. P5-d Phase 14 — a profile switch
+ * mutates `ctx` in place (same object identity), so the WeakMap entry would
+ * otherwise survive with a stale `current` snapshot (old server_url /
+ * device_id / seq). Evicting forces the next `getSyncStatusBroadcaster` to
+ * rebuild `initialSnapshot` off the freshly-swapped db.
+ */
+export function evictSyncStatusBroadcaster(ctx: AppContext): void {
+  cache.delete(ctx);
+}
+
 export function createSyncStatusBroadcaster(ctx: AppContext): SyncStatusBroadcaster {
   let current: SyncStatusSnapshot = initialSnapshot(ctx);
 

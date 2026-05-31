@@ -195,14 +195,34 @@ export async function ensureBackgroundHandles(
   logger: Logger,
   deps: EnsureBackgroundDeps = {},
 ): Promise<void> {
+  // P5-d Phase 14 — epoch guard against a profile switch racing this call.
+  // A switch mutates `ctx` in place and swaps the db; because we `await`
+  // before writing `ctx.sseBridge`, a bootstrap that entered before the
+  // switch could otherwise re-attach a stale (old-session) bridge afterwards.
+  // Bail entirely while switching, and re-check the generation across the
+  // await: if a switch ran, stop the now-stale handle. The stop is
+  // synchronous (subscribeEvents returns sync; onOpen is a later network
+  // macrotask), so the subscription is cancelled before onOpen →
+  // runManualSync can fire. The switch's own restart calls this from outside
+  // the lock (switching=false, generation already bumped).
+  const gate = ctx.switchGate;
+  if (gate?.isSwitching()) return;
+  const epoch = gate?.generation() ?? 0;
+  const stale = (): boolean => Boolean(gate?.isSwitching()) || (gate?.generation() ?? 0) !== epoch;
+
   const buildScheduler = deps.createSyncScheduler ?? defaultCreateSyncScheduler;
 
   if (!ctx.sseBridge) {
     const handle = await startSseBridgeIfBootstrapped(ctx, logger, deps);
+    if (stale()) {
+      handle?.stop();
+      return;
+    }
     ctx.sseBridge = handle;
   }
 
   if (!ctx.syncScheduler) {
+    if (stale()) return;
     ctx.syncScheduler = buildScheduler({ ctx, logger });
   }
 }

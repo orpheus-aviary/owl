@@ -20,6 +20,15 @@ export interface Coalescer<R> {
    * Otherwise schedules / reuses the single follow-up.
    */
   run(): Promise<R>;
+  /**
+   * Resolve once the currently in-flight round (and any already-scheduled
+   * follow-up) has settled, ignoring its result/rejection. Does NOT start a
+   * round. Callers that have first blocked new `run()` calls (the
+   * profile-switch gate stops triggers + 503s HTTP) can await this to drain
+   * the sync pipeline before closing the db. One pass suffices because no new
+   * round can begin while triggers are gated. P5-d Phase 14.
+   */
+  whenIdle(): Promise<void>;
   /** @internal — test reset to clear both slots between cases. */
   reset(): void;
 }
@@ -50,6 +59,11 @@ export function createCoalescer<R>(runner: () => Promise<R>): Coalescer<R> {
           return start();
         });
       return followUp;
+    },
+    whenIdle() {
+      const pending = [inflight, followUp].filter((p): p is Promise<R> => p !== null);
+      if (pending.length === 0) return Promise.resolve();
+      return Promise.allSettled(pending).then(() => undefined);
     },
     reset() {
       inflight = null;

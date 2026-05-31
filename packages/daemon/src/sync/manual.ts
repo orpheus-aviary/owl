@@ -216,6 +216,16 @@ export function runManualSync(ctx: AppContext): Promise<RunSyncResult> {
   return syncCoalescer.run();
 }
 
+/**
+ * Resolve once any in-flight sync round (and its already-scheduled follow-up)
+ * has settled, without starting a new one. P5-d Phase 14 — `switchProfile`
+ * awaits this in its QUIESCE phase, after `stopBackgroundHandles` has cut the
+ * sync triggers, so the db swap never closes sqlite under a live push/pull.
+ */
+export function drainManualSync(): Promise<void> {
+  return syncCoalescer.whenIdle();
+}
+
 async function doRunManualSync(ctx: AppContext): Promise<RunSyncResult> {
   const broadcaster = getSyncStatusBroadcaster(ctx);
   broadcaster.markSyncing();

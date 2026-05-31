@@ -27,6 +27,7 @@ import { ensureBackgroundHandles, stopBackgroundHandles } from './sync/bridge-li
 import { DevTokenInProductionError, tryConsumeDevSession } from './sync/dev-bootstrap.js';
 import { type ParentProbeHandle, startParentProbe } from './sync/parent-probe.js';
 import { installSkybridgeSession } from './sync/session.js';
+import { createSwitchGate } from './sync/switch-gate.js';
 
 const program = new Command();
 
@@ -110,6 +111,9 @@ program
       // post-boot login). Shutdown reads from ctx.
       sseBridge: null,
       syncScheduler: null,
+      // P5-d Phase 14 — serialises profile switches + quiesces mutating HTTP
+      // during a db swap (no live switch trigger until Phase 15).
+      switchGate: createSwitchGate(),
     };
     const server = buildServer(ctx);
 
@@ -120,7 +124,11 @@ program
     // Graceful shutdown
     const shutdown = async () => {
       logger.info('Daemon shutting down...');
-      scheduler.stop();
+      // P5-d Phase 14: read the *current* handles off ctx, not the boot-time
+      // locals — a profile switch replaces ctx.scheduler / ctx.sqlite, so the
+      // boot locals would stop an already-stopped scheduler and close an
+      // already-closed sqlite while leaking the live ones.
+      ctx.scheduler.stop();
       parentProbe?.stop();
       // P5-c §2.2-bis: bridge + sync scheduler live on ctx so mid-session
       // restart can swap them; stopBackgroundHandles reads + clears both.
@@ -131,7 +139,7 @@ program
       // so this call returns promptly instead of waiting out the SIGKILL.
       await server.close();
       eventsBus.close();
-      sqlite.close();
+      ctx.sqlite.close();
       process.exit(0);
     };
 

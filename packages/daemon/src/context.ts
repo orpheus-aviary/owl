@@ -9,6 +9,7 @@ import type { ReminderScheduler } from './scheduler.js';
 import type { BridgeHandle } from './sync/bridge-lifecycle.js';
 import type { SyncSchedulerHandle } from './sync/scheduler.js';
 import type { SkybridgeSession } from './sync/session.js';
+import type { SwitchGate } from './sync/switch-gate.js';
 
 /** Shared application context passed to all route handlers. */
 export interface AppContext {
@@ -57,4 +58,11 @@ export interface AppContext {
    * before re-creating.
    */
   syncScheduler?: SyncSchedulerHandle | null;
+  /**
+   * P5-d Phase 14: serialises profile switches + quiesces the daemon during
+   * the db-replace window. Populated at daemon boot (cli.ts) and lazily by
+   * `buildServer`. Optional so the inline test contexts that don't switch
+   * profiles compile unchanged.
+   */
+  switchGate?: SwitchGate;
 }

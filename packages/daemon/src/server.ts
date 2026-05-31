@@ -1,6 +1,7 @@
 import cors from '@fastify/cors';
 import Fastify, { type FastifyError } from 'fastify';
 import type { AppContext } from './context.js';
+import { fail } from './response.js';
 import { registerAiRoutes } from './routes/ai.js';
 import { registerConfigRoutes } from './routes/config.js';
 import { registerConflictsRoutes } from './routes/conflicts.js';
@@ -11,6 +12,10 @@ import { registerSyncRoutes } from './routes/sync.js';
 import { registerSystemRoutes } from './routes/system.js';
 import { registerTagRoutes } from './routes/tags.js';
 import { registerTodoRoutes } from './routes/todos.js';
+import { ensureSwitchGate } from './sync/switch-gate.js';
+
+/** HTTP methods the profile-switch gate quiesces during a db swap. */
+const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
 export function buildServer(ctx: AppContext) {
   const app = Fastify({
@@ -21,6 +26,24 @@ export function buildServer(ctx: AppContext) {
   app.register(cors, {
     origin: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  });
+
+  // P5-d Phase 14 — profile-switch gate. While `switchProfile` swaps the db
+  // (sub-second), reject mutating requests with 503 so nothing writes to a
+  // sqlite handle that's about to close; otherwise count the request so the
+  // switch can drain in-flight mutations before the swap. Must be registered
+  // BEFORE the routes — Fastify only applies a hook to routes added after it.
+  const switchGate = ensureSwitchGate(ctx);
+  app.addHook('preHandler', async (req, reply) => {
+    if (!MUTATING_METHODS.has(req.method)) return;
+    if (switchGate.isSwitching()) {
+      fail(reply, 503, 'profile switch in progress', 'SWITCH_IN_PROGRESS');
+      return reply;
+    }
+    (req as { switchRelease?: () => void }).switchRelease = switchGate.trackMutation();
+  });
+  app.addHook('onResponse', async (req) => {
+    (req as { switchRelease?: () => void }).switchRelease?.();
   });
 
   // Fastify swallows route-handler throws as a generic 500 without

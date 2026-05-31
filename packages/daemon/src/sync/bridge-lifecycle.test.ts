@@ -11,6 +11,17 @@ import {
 } from './bridge-lifecycle.js';
 import type { SkybridgeSession } from './session.js';
 import type { SseBridge } from './sse-bridge.js';
+import type { SwitchGate } from './switch-gate.js';
+
+/** A switch-gate stub whose switching/generation the test drives directly. */
+function fakeGate(state: { switching: boolean; generation: number }): SwitchGate {
+  return {
+    isSwitching: () => state.switching,
+    generation: () => state.generation,
+    trackMutation: () => () => {},
+    runExclusive: async (body) => body(),
+  };
+}
 
 // ─── Test doubles ────────────────────────────────────────────────────
 
@@ -418,5 +429,74 @@ describe('ensureBackgroundHandles', () => {
   it('stopBackgroundHandles tolerates a ctx whose fields are already null', () => {
     const ctx = emptyCtx();
     assert.doesNotThrow(() => stopBackgroundHandles(ctx));
+  });
+
+  // P5-d Phase 14 — epoch guard: a switch in progress must not let a stray
+  // bootstrap re-attach background handles.
+  it('no-ops entirely while a switch is in progress', async () => {
+    const ctx = emptyCtx();
+    ctx.switchGate = fakeGate({ switching: true, generation: 1 });
+    let bridgeFactoryCalls = 0;
+    let schedulerFactoryCalls = 0;
+
+    await ensureBackgroundHandles(ctx, silentLogger(), {
+      readSkybridgeConfig: () => fullyBootstrappedConfig(),
+      ensureSkybridgeSession: async () => fakeSession(),
+      createSseBridge: () => {
+        bridgeFactoryCalls += 1;
+        return makeFakeBridge();
+      },
+      createHealthProbe: () => ({ start: () => {}, stop: () => {} }),
+      createSyncScheduler: () => {
+        schedulerFactoryCalls += 1;
+        return { stop: () => {} };
+      },
+    });
+
+    assert.equal(ctx.sseBridge, null, 'no bridge attached during switch');
+    assert.equal(ctx.syncScheduler, null, 'no scheduler attached during switch');
+    assert.equal(bridgeFactoryCalls, 0);
+    assert.equal(schedulerFactoryCalls, 0);
+  });
+
+  it('discards a stale bridge when a switch bumps generation across the await', async () => {
+    const ctx = emptyCtx();
+    const state = { switching: false, generation: 0 };
+    ctx.switchGate = fakeGate(state);
+    const bridge = makeFakeBridge();
+
+    await ensureBackgroundHandles(ctx, silentLogger(), {
+      readSkybridgeConfig: () => fullyBootstrappedConfig(),
+      // a profile switch ran while we were awaiting the session
+      ensureSkybridgeSession: async () => {
+        state.generation = 1;
+        return fakeSession();
+      },
+      createSseBridge: () => bridge,
+      createHealthProbe: () => ({ start: () => {}, stop: () => {} }),
+      createSyncScheduler: () => ({ stop: () => {} }),
+    });
+
+    assert.equal(bridge.startCalls, 1, 'bridge was started inside startSseBridgeIfBootstrapped');
+    assert.equal(bridge.stopCalls, 1, 'then stopped because the epoch went stale');
+    assert.equal(ctx.sseBridge, null, 'stale handle not written to ctx');
+  });
+
+  it('attaches normally when no switch raced (epoch unchanged)', async () => {
+    const ctx = emptyCtx();
+    ctx.switchGate = fakeGate({ switching: false, generation: 3 });
+    const bridge = makeFakeBridge();
+
+    await ensureBackgroundHandles(ctx, silentLogger(), {
+      readSkybridgeConfig: () => fullyBootstrappedConfig(),
+      ensureSkybridgeSession: async () => fakeSession(),
+      createSseBridge: () => bridge,
+      createHealthProbe: () => ({ start: () => {}, stop: () => {} }),
+      createSyncScheduler: () => ({ stop: () => {} }),
+    });
+
+    assert.ok(ctx.sseBridge, 'bridge attached');
+    assert.ok(ctx.syncScheduler, 'scheduler attached');
+    assert.equal(bridge.stopCalls, 0);
   });
 });
