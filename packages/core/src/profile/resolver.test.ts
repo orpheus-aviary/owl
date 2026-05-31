@@ -1,9 +1,11 @@
 /**
- * Unit suite for `packages/core/src/profile/resolver.ts` (P5-d Phase 12).
+ * Unit suite for `packages/core/src/profile/resolver.ts` (P5-d Phase 12/13).
  *
  * Uses a per-test temp nest via `OWL_NEST_DIR`; never touches the real
- * `~/orpheus-aviary-nest/`. Phase 12 is behavior-preserving, so the headline
- * assertions are "resolves to legacy dbPath()" until a profile db exists.
+ * `~/orpheus-aviary-nest/`. Phase 13 remaps the local profile onto
+ * `owl/owl.db` (D10a) and adds the unified `resolveActiveProfile` three-way
+ * gate, but stays behavior-preserving: with no live profile db on disk the
+ * resolver still falls back to legacy `dbPath()`.
  */
 
 import assert from 'node:assert/strict';
@@ -18,9 +20,16 @@ import {
   profilesDir,
   skybridgeConfigPath,
 } from '../config/paths.js';
-import { isValidProfileId, readActiveProfileId, resolveActiveProfileDbPath } from './resolver.js';
+import {
+  isHexProfileId,
+  isValidProfileId,
+  readActiveProfileId,
+  resolveActiveProfile,
+  resolveActiveProfileDbPath,
+} from './resolver.js';
 
 const VALID_ID = 'a'.repeat(32);
+const OTHER_ID = 'b'.repeat(32);
 const originalNestDir = process.env.OWL_NEST_DIR;
 let nest: string;
 
@@ -39,10 +48,9 @@ afterEach(() => {
   rmSync(nest, { recursive: true, force: true });
 });
 
-function writeSkybridge(contents: string): void {
-  const p = skybridgeConfigPath();
-  mkdirSync(dirname(p), { recursive: true });
-  writeFileSync(p, contents);
+function writeSkybridge(contents: string, path = skybridgeConfigPath()): void {
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, contents);
 }
 
 function touchDb(path: string): void {
@@ -50,15 +58,27 @@ function touchDb(path: string): void {
   writeFileSync(path, '');
 }
 
-describe('paths profile helpers (Phase 12)', () => {
-  it('nests profiles dir under owlDir', () => {
+/** A v2 toml that activates `id` and (optionally) carries its section. */
+function v2(id: string, opts: { section?: boolean; url?: string } = {}): string {
+  const { section = true, url = 'http://x:8443' } = opts;
+  let out = `active_profile = "${id}"\n`;
+  if (section) out += `\n[profiles.${id}]\nserver_url = "${url}"\n`;
+  return out;
+}
+
+describe('paths profile helpers (Phase 13 — D10a remap)', () => {
+  it('localProfileDbPath() === dbPath() (local lives in place at owl/owl.db)', () => {
+    assert.equal(localProfileDbPath(), dbPath());
+    assert.equal(localProfileDbPath(), join(nest, 'owl', 'owl.db'));
+  });
+
+  it('profileDbPath / profilesDir unchanged', () => {
     assert.equal(profilesDir(), join(nest, 'owl', 'profiles'));
     assert.equal(profileDbPath(VALID_ID), join(nest, 'owl', 'profiles', VALID_ID, 'owl.db'));
-    assert.equal(localProfileDbPath(), join(nest, 'owl', 'profiles', 'local', 'owl.db'));
   });
 });
 
-describe('readActiveProfileId (Phase 12)', () => {
+describe('readActiveProfileId (Phase 12/13)', () => {
   it('null when no config file', () => {
     assert.equal(readActiveProfileId(), null);
   });
@@ -77,25 +97,88 @@ describe('readActiveProfileId (Phase 12)', () => {
     writeSkybridge('active_profile = =bad');
     assert.equal(readActiveProfileId(), null);
   });
+
+  it('reads from an explicit path (Phase 13 P2)', () => {
+    const custom = join(nest, 'custom.toml');
+    writeSkybridge(`active_profile = "${OTHER_ID}"\n`, custom);
+    assert.equal(readActiveProfileId(custom), OTHER_ID);
+    // The default path is untouched → null, proving isolation.
+    assert.equal(readActiveProfileId(), null);
+  });
 });
 
-describe('isValidProfileId (Phase 12)', () => {
-  it('accepts reserved local + 32 lowercase hex', () => {
+describe('isValidProfileId / isHexProfileId (Phase 12/13)', () => {
+  it('isValidProfileId accepts reserved local + 32 lowercase hex', () => {
     assert.ok(isValidProfileId('local'));
     assert.ok(isValidProfileId(VALID_ID));
   });
 
-  it('rejects path-escape / wrong length / non-hex / empty', () => {
+  it('isValidProfileId rejects path-escape / wrong length / non-hex / empty', () => {
     assert.ok(!isValidProfileId('../etc'));
     assert.ok(!isValidProfileId('local/../x'));
     assert.ok(!isValidProfileId('a'.repeat(16)));
     assert.ok(!isValidProfileId('A'.repeat(32)));
     assert.ok(!isValidProfileId(''));
   });
+
+  it('isHexProfileId is hex-only — rejects local', () => {
+    assert.ok(isHexProfileId(VALID_ID));
+    assert.ok(!isHexProfileId('local'));
+    assert.ok(!isHexProfileId('A'.repeat(32)));
+    assert.ok(!isHexProfileId(''));
+  });
 });
 
-describe('resolveActiveProfileDbPath (Phase 12, behavior-preserving)', () => {
-  it('legacy when no config', () => {
+describe('resolveActiveProfile (Phase 13 — three-way gate)', () => {
+  it('null when no config', () => {
+    assert.equal(resolveActiveProfile(), null);
+  });
+
+  it('null when active=local (local is not a hex profile)', () => {
+    writeSkybridge('active_profile = "local"\n');
+    assert.equal(resolveActiveProfile(), null);
+  });
+
+  it('null when active id invalid (path-escape guard)', () => {
+    writeSkybridge('active_profile = "../../etc/passwd"\n');
+    assert.equal(resolveActiveProfile(), null);
+  });
+
+  it('null when section present but db missing (gate ③)', () => {
+    writeSkybridge(v2(VALID_ID));
+    assert.equal(resolveActiveProfile(), null);
+  });
+
+  it('null when db present but [profiles.<id>] section missing (reverse split-brain, gate ②)', () => {
+    writeSkybridge(v2(VALID_ID, { section: false }));
+    touchDb(profileDbPath(VALID_ID));
+    assert.equal(resolveActiveProfile(), null);
+  });
+
+  it('resolves {id, dbPath} when id valid AND section present AND db exists', () => {
+    writeSkybridge(v2(VALID_ID));
+    touchDb(profileDbPath(VALID_ID));
+    assert.deepEqual(resolveActiveProfile(), {
+      id: VALID_ID,
+      dbPath: profileDbPath(VALID_ID),
+    });
+  });
+
+  it('reads from an explicit path, isolated from the default (P2)', () => {
+    const custom = join(nest, 'custom.toml');
+    writeSkybridge(v2(VALID_ID), custom);
+    touchDb(profileDbPath(VALID_ID));
+    assert.deepEqual(resolveActiveProfile(custom), {
+      id: VALID_ID,
+      dbPath: profileDbPath(VALID_ID),
+    });
+    // Default path has no config → null.
+    assert.equal(resolveActiveProfile(), null);
+  });
+});
+
+describe('resolveActiveProfileDbPath (Phase 13, behavior-preserving)', () => {
+  it('legacy dbPath() when no config', () => {
     assert.equal(resolveActiveProfileDbPath(), dbPath());
   });
 
@@ -104,25 +187,30 @@ describe('resolveActiveProfileDbPath (Phase 12, behavior-preserving)', () => {
     assert.equal(resolveActiveProfileDbPath(), dbPath());
   });
 
-  it('legacy when active_profile set but profile db missing (existence gate)', () => {
-    writeSkybridge(`active_profile = "${VALID_ID}"\n`);
+  it('legacy when active=local (now resolves to owl/owl.db = local in place)', () => {
+    writeSkybridge('active_profile = "local"\n');
     assert.equal(resolveActiveProfileDbPath(), dbPath());
   });
 
-  it('legacy when active_profile invalid (path-escape guard)', () => {
+  it('legacy when active set but profile db missing (existence gate ③)', () => {
+    writeSkybridge(v2(VALID_ID));
+    assert.equal(resolveActiveProfileDbPath(), dbPath());
+  });
+
+  it('legacy when db present but section missing (gate ② sync with adapter)', () => {
+    writeSkybridge(v2(VALID_ID, { section: false }));
+    touchDb(profileDbPath(VALID_ID));
+    assert.equal(resolveActiveProfileDbPath(), dbPath());
+  });
+
+  it('legacy when active id invalid (path-escape guard)', () => {
     writeSkybridge('active_profile = "../../etc/passwd"\n');
     assert.equal(resolveActiveProfileDbPath(), dbPath());
   });
 
-  it('profile path when active_profile valid AND db exists', () => {
-    writeSkybridge(`active_profile = "${VALID_ID}"\n`);
+  it('profile path when active valid AND section AND db exist', () => {
+    writeSkybridge(v2(VALID_ID));
     touchDb(profileDbPath(VALID_ID));
     assert.equal(resolveActiveProfileDbPath(), profileDbPath(VALID_ID));
-  });
-
-  it('local profile path when active=local AND db exists', () => {
-    writeSkybridge('active_profile = "local"\n');
-    touchDb(localProfileDbPath());
-    assert.equal(resolveActiveProfileDbPath(), localProfileDbPath());
   });
 });

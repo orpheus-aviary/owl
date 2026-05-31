@@ -49,9 +49,15 @@ export function profileDbPath(profileId: string): string {
   return join(profilesDir(), profileId, 'owl.db');
 }
 
-/** Pure-local (never-logged-in) profile database: profiles/local/owl.db */
+/**
+ * Local profile database = `owl/owl.db` in place (P5-d Phase 13, D10a).
+ *
+ * The never-logged-in / offline workspace. Phase 12 provisionally pointed
+ * this at `profiles/local/owl.db`; Phase 13 remaps it onto the legacy db so
+ * pure-local users need zero migration. Account sync never writes here.
+ */
 export function localProfileDbPath(): string {
-  return join(profilesDir(), 'local', 'owl.db');
+  return dbPath();
 }
 
 /** Owl sync database file path (for migration) */
