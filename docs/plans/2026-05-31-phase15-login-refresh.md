@@ -243,3 +243,18 @@ else if (cfg.auth?.encrypted_token 可解密): 走 15a 的 access 路径（兼�
 | 精确回滚到「上一个 active profile」（15a 失败只回 local） | Phase 17 |
 | daemon 自刷新（GUI 关闭也能续 access） | 0.6+（破 Phase 7 安全模型，不做；缓解=server access TTL 配宽） |
 | npm `promote-latest`（0.1.4 转 latest）+ 阿里云部署 | Phase 19 |
+
+---
+
+## 9. 实施记录（2026-06-01，已 ship）
+
+**落地照本设计，全绿**：owl 6 commit（`eff7e1e` bump / `1795b90` core / `c8308e4` daemon switch / `133af6c` gui login / `386388c` docs / `48e802f` 15b）落 owl main 未 push；skybridge bump `db50768` 落 skybridge main，**0.1.4 已 publish @next**（Phase S 漏 bump package.json version，补 bump 才发；详见 §2 实际多了这一步）。验收 core 474 / daemon 278 / gui 308 / cli 134 / `just check` 8 守卫 / gated e2e 16/16。
+
+**实现与设计的小偏差**（无碍）：
+- refresh 续期触发**确实用 proactive timer in main**（§4.2 拍板），未走 daemon event；`maybeRefreshNow` 接 `powerMonitor.resume` + `browser-window-focus`。
+- 15a 失败 unwind 回滚到 **local**（非精确上一个 active profile），精确回滚留 Phase 17（§8）。
+- device 复用 meta = `readProfileSection(profileId)?.device ?? 合成`（§3.3）。
+
+**真机 e2e 手测全过**（2026-06-01，隔离 nest + 真 0.1.4 server，access TTL 配 120s 观察续期）：per-profile 登录/隔离（local 库不污染）、device 复用（server 1 device 不堆积）、账号同步、**proactive 续期每 60s 免密**（daemon.log 4+ session install）、**refresh 轮换**（server 旧 family 撤销）、登出切 local、重登复用、重启免密 restore——全验过。**唯一粗糙点 = 切换后 renderer 需手刷**（受控 reload 缺 → Phase 16 首要项，手测印证）。
+
+**顺手 cleanup**：Settings tab 重排（外观→自定义→同步→快捷键→高级，default 外观）；删死代码 gui `atomic-write.ts`（login/logout 改走 core profile writer，唯一消费者消失）。

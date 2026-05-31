@@ -8,11 +8,13 @@ import { useSearchParams } from 'react-router-dom';
 
 type SettingsTab = 'shortcuts' | 'appearance' | 'custom' | 'sync' | 'advanced';
 
+// Order follows the common desktop-app convention: visual/content settings
+// first, account/sync in the middle, power-user (shortcuts) + advanced last.
 const TABS: { id: SettingsTab; label: string }[] = [
-  { id: 'shortcuts', label: '快捷键' },
   { id: 'appearance', label: '外观' },
   { id: 'custom', label: '自定义' },
   { id: 'sync', label: '同步' },
+  { id: 'shortcuts', label: '快捷键' },
   { id: 'advanced', label: '高级' },
 ];
 
@@ -29,7 +31,7 @@ export function SettingsPage() {
   // here without manual `window.location.hash` parsing.
   const [searchParams, setSearchParams] = useSearchParams();
   const requested = searchParams.get('tab');
-  const active: SettingsTab = isValidTab(requested) ? requested : 'shortcuts';
+  const active: SettingsTab = isValidTab(requested) ? requested : 'appearance';
 
   const onSelect = (id: SettingsTab) => {
     setSearchParams({ tab: id }, { replace: true });
