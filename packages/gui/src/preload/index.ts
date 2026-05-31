@@ -124,5 +124,17 @@ contextBridge.exposeInMainWorld('owlAPI', {
      * ^0.1.3). main computes `is_current` against toml `[device].id`.
      */
     devices: (): Promise<SyncIpcReply<SyncDevicesReply>> => ipcRenderer.invoke('sync:devices'),
+    /**
+     * P5-d Phase 16 (B7): subscribe to "a profile switch committed" (login /
+     * logout). MainApp mounts one listener and does a controlled full reload
+     * so the previous profile's renderer state (editor tabs / AI cache /
+     * conflict list / sync timer) can't bleed into the new one. Returns an
+     * unsubscribe function.
+     */
+    onProfileSwitched: (cb: () => void): (() => void) => {
+      const listener = () => cb();
+      ipcRenderer.on('profile:switched', listener);
+      return () => ipcRenderer.off('profile:switched', listener);
+    },
   },
 });

@@ -72,6 +72,7 @@ function installMigrationStub(): MigrationStub {
           data: { devices: [] },
         }),
       ),
+      onProfileSwitched: vi.fn(() => () => {}),
     },
   };
 

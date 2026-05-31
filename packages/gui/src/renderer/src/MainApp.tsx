@@ -261,6 +261,17 @@ export function MainApp() {
     void useConflictsStore.getState().refresh();
   }, []);
 
+  // P5-d Phase 16 (B7, design §5.4.4): a profile switch (login / logout)
+  // committed in main. Do a controlled full reload so no editor tab / AI
+  // cache / conflict list / sync timer from the previous profile survives
+  // into the new one. Defer one macrotask so the triggering sync:login/logout
+  // IPC reply has fully settled before the document tears down.
+  useEffect(() => {
+    return window.owlAPI.sync.onProfileSwitched(() => {
+      setTimeout(() => window.location.reload(), 0);
+    });
+  }, []);
+
   const panelOpen = useFolderStore((s) => s.panelOpen);
   const togglePanel = useFolderStore((s) => s.togglePanel);
 

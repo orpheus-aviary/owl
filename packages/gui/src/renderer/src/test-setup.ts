@@ -50,6 +50,7 @@ function defaultOwlAPI(): OwlAPI {
           data: { devices: [] },
         }),
       ),
+      onProfileSwitched: vi.fn(() => () => {}),
     },
   };
 }

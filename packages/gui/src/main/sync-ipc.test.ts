@@ -25,6 +25,12 @@ const safeStorageState = {
   available: true,
   decryptString: vi.fn((b: Buffer) => b.toString('utf-8')),
 };
+// Phase 16 (B7): drives `notifyProfileSwitched` — getAllWindows()[0].webContents.send.
+const windowState = {
+  hasWindow: true,
+  destroyed: false,
+  send: vi.fn(),
+};
 vi.mock('electron', () => ({
   ipcMain: {
     handle: (channel: string, handler: (...args: unknown[]) => unknown) => {
@@ -34,6 +40,12 @@ vi.mock('electron', () => ({
   safeStorage: {
     isEncryptionAvailable: () => safeStorageState.available,
     decryptString: (b: Buffer) => safeStorageState.decryptString(b),
+  },
+  BrowserWindow: {
+    getAllWindows: () =>
+      windowState.hasWindow
+        ? [{ isDestroyed: () => windowState.destroyed, webContents: { send: windowState.send } }]
+        : [],
   },
 }));
 
@@ -133,8 +145,14 @@ beforeEach(() => {
   coreState.readError = null;
   safeStorageState.available = true;
   safeStorageState.decryptString = vi.fn((b: Buffer) => b.toString('utf-8'));
+  windowState.hasWindow = true;
+  windowState.destroyed = false;
+  windowState.send = vi.fn();
   registerSyncIpc();
 });
+
+/** Flush the macrotask queue so `setImmediate`-deferred notifies run. */
+const flushImmediate = (): Promise<void> => new Promise((r) => setImmediate(r));
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -142,6 +160,46 @@ afterEach(() => {
 });
 
 // ─── tests ──────────────────────────────────────────────────────────
+
+describe('profile:switched notify (B7)', () => {
+  it('login success → sends profile:switched after the reply', async () => {
+    const reply = (await call('sync:login', {
+      serverUrl: 'http://srv',
+      email: 'a@test',
+      password: 'pw',
+    })) as IpcReply<void>;
+    expect(reply.ok).toBe(true);
+    // Deferred via setImmediate so the invoke reply returns first.
+    expect(windowState.send).not.toHaveBeenCalled();
+    await flushImmediate();
+    expect(windowState.send).toHaveBeenCalledWith('profile:switched');
+  });
+
+  it('logout success → sends profile:switched', async () => {
+    await call('sync:logout');
+    await flushImmediate();
+    expect(windowState.send).toHaveBeenCalledWith('profile:switched');
+  });
+
+  it('login failure → does NOT notify', async () => {
+    authState.loginError = new ApiError('INVALID_CREDENTIALS', 401, 'bad creds');
+    const reply = (await call('sync:login', {
+      serverUrl: 'http://srv',
+      email: 'a',
+      password: 'p',
+    })) as IpcReply<void>;
+    expect(reply.ok).toBe(false);
+    await flushImmediate();
+    expect(windowState.send).not.toHaveBeenCalled();
+  });
+
+  it('no window present → notify is a no-op (no throw)', async () => {
+    windowState.hasWindow = false;
+    await call('sync:logout');
+    await expect(flushImmediate()).resolves.toBeUndefined();
+    expect(windowState.send).not.toHaveBeenCalled();
+  });
+});
 
 describe('sync:login', () => {
   it('success → { ok: true, data: undefined } (summary discarded)', async () => {

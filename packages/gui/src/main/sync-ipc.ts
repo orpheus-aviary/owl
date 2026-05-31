@@ -21,7 +21,7 @@
 
 import { type ApiDevice, ApiError, NetworkError } from '@orpheus-aviary/skybridge-client';
 import { type SkybridgeConfig, readSkybridgeConfig } from '@owl/core';
-import { ipcMain, safeStorage } from 'electron';
+import { BrowserWindow, ipcMain, safeStorage } from 'electron';
 import type { LoginAndOpenSessionInput } from '../shared/sync-auth-types.js';
 import type { SyncDevicesReply } from '../shared/sync-devices-types.js';
 import { syncErrorMessage } from '../shared/sync-error-message.js';
@@ -34,17 +34,41 @@ import { getDaemonUrl } from './daemon.js';
 import { SafeStorageUnavailableError, loginAndOpenSession, logout } from './sync-auth.js';
 
 export function registerSyncIpc(): void {
-  ipcMain.handle('sync:login', async (_e, input: LoginAndOpenSessionInput) =>
-    safe<void>(async () => {
-      // Discard the summary on purpose: UI reads identity from sync:status
-      // (the single display truth). Keeping the summary out of the IPC
-      // shape means newly-added display fields only require one change.
+  ipcMain.handle('sync:login', async (_e, input: LoginAndOpenSessionInput) => {
+    // Discard the summary on purpose: UI reads identity from sync:status
+    // (the single display truth). Keeping the summary out of the IPC
+    // shape means newly-added display fields only require one change.
+    const reply = await safe<void>(async () => {
       await loginAndOpenSession(input);
-    }),
-  );
-  ipcMain.handle('sync:logout', async () => safe<void>(() => logout()));
+    });
+    if (reply.ok) notifyProfileSwitched();
+    return reply;
+  });
+  ipcMain.handle('sync:logout', async () => {
+    const reply = await safe<void>(() => logout());
+    if (reply.ok) notifyProfileSwitched();
+    return reply;
+  });
   ipcMain.handle('sync:status', async () => safe<SyncStatusReply>(buildStatus));
   ipcMain.handle('sync:devices', async () => safe<SyncDevicesReply>(buildDevices));
+}
+
+/**
+ * P5-d Phase 16 (B7, design §5.4.4) — a profile switch committed (login /
+ * logout). Tell the renderer to do a controlled full reload so no editor tab /
+ * AI conversation cache / conflict list / sync-status timer from the previous
+ * profile bleeds into the new one. We fire on the next macrotask (`setImmediate`)
+ * so the triggering `sync:login`/`sync:logout` invoke reply has fully returned
+ * before the window tears down — the renderer additionally defers a tick before
+ * `location.reload()` (double safety against racing the in-flight reply).
+ */
+function notifyProfileSwitched(): void {
+  setImmediate(() => {
+    const win = BrowserWindow.getAllWindows()[0];
+    if (win && !win.isDestroyed()) {
+      win.webContents.send('profile:switched');
+    }
+  });
 }
 
 async function buildStatus(): Promise<SyncStatusReply> {

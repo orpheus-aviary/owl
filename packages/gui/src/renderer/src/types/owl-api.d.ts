@@ -60,6 +60,7 @@ export interface OwlAPI {
     logout: () => Promise<SyncIpcReply<void>>;
     status: () => Promise<SyncIpcReply<SyncStatusReply>>;
     devices: () => Promise<SyncIpcReply<SyncDevicesReply>>;
+    onProfileSwitched: (cb: () => void) => () => void;
   };
 }
 
