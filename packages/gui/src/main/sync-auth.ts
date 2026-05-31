@@ -26,10 +26,14 @@
  *     clear the active profile's credentials (keeps device/workspace/server_id
  *     so a re-login reuses the device) → point active_profile at local.
  *
- *   - `restoreSessionOnStartup()` —— reads the active profile's
- *     encrypted_token and installs the session (daemon already booted into
- *     the active profile db via the resolver). Refresh-first restore +
- *     proactive renewal land in Phase 15b.
+ *   - `restoreSessionOnStartup()` —— refresh-first (Phase 15b): mint a fresh
+ *     short access token from the stored refresh token and install the session
+ *     (daemon already booted into the active profile db via the resolver);
+ *     falls back to a stored access token only for legacy refresh-less toml.
+ *
+ *   - proactive renewal (Phase 15b): a self-rescheduling timer refreshes ~1min
+ *     before `expiresAt`; `maybeRefreshNow()` (wired to powerMonitor resume +
+ *     window focus in the main entry) covers a machine that slept past it.
  *
  * `OWL_APP_VERSION` is imported from `@owl/core` so the daemon and GUI always
  * report the same app version through registerDevice.
@@ -38,6 +42,7 @@
 import { hostname } from 'node:os';
 import {
   ApiError,
+  type ApiRefreshResult,
   type AuthContext,
   CLIENT_VERSION,
   createSkybridgeClient,
@@ -56,6 +61,7 @@ import {
   readProfileSection,
   readSkybridgeConfig,
   setActiveProfile,
+  updateActiveProfileAuth,
   writeProfileConfig,
 } from '@owl/core';
 import { safeStorage } from 'electron';
@@ -86,6 +92,21 @@ export class SkybridgeServerTooOldError extends Error {
     this.name = 'SkybridgeServerTooOldError';
   }
 }
+
+// ─── proactive token renewal (Phase 15b) ────────────────────────────
+//
+// 0.1.4 access tokens are short-lived; GUI main keeps the daemon's session
+// alive by refreshing slightly before `expiresAt` (we own the refresh token
+// in the keychain — the daemon never sees it). The daemon never has to learn
+// about renewal: we just re-POST /sync/session with a fresh access token.
+
+const REFRESH_MARGIN_MS = 60_000; // refresh this long before expiry
+const REFRESH_MIN_DELAY_MS = 1_000; // never schedule a zero/negative timeout
+const REFRESH_RETRY_MS = 30_000; // back off after a transient (network) failure
+
+let refreshTimer: ReturnType<typeof setTimeout> | null = null;
+/** Expiry of the currently-installed access token, or null when none. */
+let currentExpiresAt: number | null = null;
 
 export async function loginAndOpenSession(
   input: LoginAndOpenSessionInput,
@@ -155,6 +176,8 @@ export async function loginAndOpenSession(
     if (encryptedRefresh) section.encrypted_refresh_token = encryptedRefresh;
     writeProfileConfig(profileId, section, { setActive: true });
 
+    scheduleRefresh(auth.expiresAt);
+
     return {
       server_url: auth.serverUrl,
       user_id: auth.user.id,
@@ -174,6 +197,9 @@ export async function loginAndOpenSession(
 }
 
 export async function logout(): Promise<void> {
+  // Stop renewing immediately — no timer should fire mid-logout.
+  clearRefreshTimer();
+
   const cfg = safeReadConfig();
 
   // 1. Full logout (D2): revoke the refresh-token family server-side. If the
@@ -198,47 +224,151 @@ export async function logout(): Promise<void> {
 
 export async function restoreSessionOnStartup(): Promise<SyncSessionSummary | null> {
   const cfg = safeReadConfig();
-  if (!cfg) return null;
-
-  // Encrypted-only — legacy plaintext [auth].token is never promoted through
-  // GUI startup (plaintext stays out of the keychain code path).
-  if (!cfg.auth?.encrypted_token) return null;
-  if (!cfg.auth.user_id || !cfg.auth.email) return null;
+  if (!cfg?.auth?.user_id || !cfg.auth.email) return null;
   if (!cfg.device?.id || !cfg.device.name) return null;
   if (!cfg.workspace?.id) return null;
-
   if (!safeStorage.isEncryptionAvailable()) return null;
 
-  let token: string;
-  try {
-    token = safeStorage.decryptString(Buffer.from(cfg.auth.encrypted_token, 'base64'));
-  } catch {
-    // Keychain entry the OS can't unlock (different login keychain, profile
-    // migration, etc.). Caller treats null as "no session restored"; the user
-    // sees the unauthenticated state and can re-login from Settings.
-    return null;
-  }
-
-  // The daemon already booted into the active profile db (resolver), so this
-  // only installs the session — no switch needed. (Refresh-first restore +
-  // proactive renewal arrive in Phase 15b.)
-  await postSyncSession({
-    token,
-    user_id: cfg.auth.user_id,
-    email: cfg.auth.email,
-    server_url: cfg.server.url,
-    device: cfg.device,
-    workspace: { id: cfg.workspace.id, slug: cfg.workspace.slug },
-  });
-
-  return {
+  // The daemon already booted into the active profile db (resolver), so we
+  // only install the session — no switch needed.
+  const summary: SyncSessionSummary = {
     server_url: cfg.server.url,
     user_id: cfg.auth.user_id,
     email: cfg.auth.email,
     device_id: cfg.device.id,
     workspace_id: cfg.workspace.id,
   };
-  // token falls out of scope here.
+  const sessionBase = {
+    user_id: cfg.auth.user_id,
+    email: cfg.auth.email,
+    server_url: cfg.server.url,
+    device: cfg.device,
+    workspace: { id: cfg.workspace.id, slug: cfg.workspace.slug },
+  };
+
+  // Refresh-first: 0.1.4 access tokens are short-lived, so mint a fresh one
+  // from the stored refresh token and start the renewal timer.
+  const refreshTok = decryptB64(cfg.auth.encrypted_refresh_token);
+  if (refreshTok) {
+    let rotated: ApiRefreshResult;
+    try {
+      rotated = await skybridgeRefresh(cfg.server.url, refreshTok);
+    } catch (err) {
+      // Dead refresh token → drop the stale creds so the user gets a clean
+      // re-login (the device memory in the db is kept). Network / unknown →
+      // stay offline but keep the token; a focus/resume retries.
+      if (isRefreshDead(err)) clearSkybridgeAuth();
+      return null;
+    }
+    persistRotated(rotated);
+    await postSyncSession({ token: rotated.token, ...sessionBase });
+    scheduleRefresh(rotated.expiresAt);
+    return summary;
+  }
+
+  // Legacy access path — encrypted_token only, no refresh token (predates D2).
+  // No renewal timer (we can't refresh); the session lives until the token
+  // expires, then the user re-logs in.
+  const token = decryptB64(cfg.auth.encrypted_token);
+  if (!token) return null;
+  await postSyncSession({ token, ...sessionBase });
+  return summary;
+}
+
+/**
+ * Refresh the access token now and re-install the session (daemon stays on the
+ * active profile db — no switch). Rotates the stored refresh token and
+ * reschedules the next renewal. Shared by the timer and the resume/focus
+ * triggers. A dead refresh token stops renewal (user re-logs in); a transient
+ * network failure backs off and retries.
+ */
+async function refreshSession(): Promise<void> {
+  const cfg = safeReadConfig();
+  const refreshTok = decryptB64(cfg?.auth?.encrypted_refresh_token);
+  if (
+    !cfg?.auth?.user_id ||
+    !cfg.auth.email ||
+    !cfg.device?.id ||
+    !cfg.workspace?.id ||
+    !refreshTok
+  ) {
+    clearRefreshTimer();
+    return;
+  }
+
+  let rotated: ApiRefreshResult;
+  try {
+    rotated = await skybridgeRefresh(cfg.server.url, refreshTok);
+  } catch (err) {
+    if (isRefreshDead(err)) {
+      clearRefreshTimer(); // refresh token gone → user must log in again
+      return;
+    }
+    scheduleRefreshIn(REFRESH_RETRY_MS); // transient → back off + retry
+    return;
+  }
+
+  persistRotated(rotated);
+  await postSyncSession({
+    token: rotated.token,
+    user_id: cfg.auth.user_id,
+    email: cfg.auth.email,
+    server_url: cfg.server.url,
+    device: cfg.device,
+    workspace: { id: cfg.workspace.id, slug: cfg.workspace.slug },
+  });
+  scheduleRefresh(rotated.expiresAt);
+}
+
+/**
+ * Renew now if the installed access token is at/near expiry. Wired to
+ * `powerMonitor` resume + window focus in the main entry, so a machine that
+ * slept past a scheduled timer recovers as soon as the user comes back.
+ */
+export async function maybeRefreshNow(): Promise<void> {
+  if (currentExpiresAt === null) return; // no renewable session
+  if (Date.now() < currentExpiresAt - REFRESH_MARGIN_MS) return; // still fresh
+  await refreshSession();
+}
+
+/** Cancel any pending renewal (logout / dead refresh / no session). */
+export function clearRefreshTimer(): void {
+  if (refreshTimer) {
+    clearTimeout(refreshTimer);
+    refreshTimer = null;
+  }
+  currentExpiresAt = null;
+}
+
+function scheduleRefresh(expiresAt?: number): void {
+  if (refreshTimer) clearTimeout(refreshTimer);
+  refreshTimer = null;
+  currentExpiresAt = expiresAt ?? null;
+  if (expiresAt === undefined) return;
+  const delay = Math.max(REFRESH_MIN_DELAY_MS, expiresAt - Date.now() - REFRESH_MARGIN_MS);
+  scheduleRefreshIn(delay);
+}
+
+function scheduleRefreshIn(delayMs: number): void {
+  if (refreshTimer) clearTimeout(refreshTimer);
+  refreshTimer = setTimeout(() => {
+    void refreshSession();
+  }, delayMs);
+  // Don't keep the process alive just for the renewal timer.
+  refreshTimer.unref?.();
+}
+
+function persistRotated(rotated: ApiRefreshResult): void {
+  updateActiveProfileAuth({
+    encrypted_token: safeStorage.encryptString(rotated.token).toString('base64'),
+    encrypted_refresh_token: safeStorage.encryptString(rotated.refreshToken).toString('base64'),
+  });
+}
+
+function isRefreshDead(err: unknown): boolean {
+  return (
+    err instanceof ApiError && (err.code === 'REFRESH_INVALID' || err.code === 'REFRESH_REPLAYED')
+  );
 }
 
 // ─── helpers ─────────────────────────────────────────────────────────

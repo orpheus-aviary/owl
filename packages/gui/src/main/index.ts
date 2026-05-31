@@ -1,12 +1,12 @@
 import { loadConfig, resolveActiveProfileDbPath } from '@owl/core';
-import { BrowserWindow, app, ipcMain } from 'electron';
+import { BrowserWindow, app, ipcMain, powerMonitor } from 'electron';
 import { detectCli } from './cli-detect.js';
 import { ensureDaemonRunning, getDaemonPort, stopDaemonGracefully } from './daemon.js';
 import { setGlobalShortcut, unregisterGlobalShortcut } from './global-shortcut.js';
 import { registerMigrationIpc } from './migration-ipc.js';
 import type { StartupMode } from './migration-precheck.js';
 import { runMigrationPrecheck } from './migration-precheck.js';
-import { restoreSessionOnStartup } from './sync-auth.js';
+import { maybeRefreshNow, restoreSessionOnStartup } from './sync-auth.js';
 import { registerSyncIpc } from './sync-ipc.js';
 import { createWindow } from './window.js';
 
@@ -127,6 +127,17 @@ app.whenReady().then(async () => {
     const win = createWindow({ startupMode: precheck, daemonPort, onClose: onWindowClose });
     registerMigrationIpc(win, dbPath, () => createWindow({ daemonPort, onClose: onWindowClose }));
   }
+
+  // P5-d Phase 15b — keep the short-lived access token fresh. A scheduled
+  // timer renews ~1min before expiry; these cover the gap when the machine
+  // slept past the timer or the user returns after a long idle. maybeRefreshNow
+  // is a cheap no-op unless the token is actually at/near expiry.
+  powerMonitor.on('resume', () => {
+    void maybeRefreshNow();
+  });
+  app.on('browser-window-focus', () => {
+    void maybeRefreshNow();
+  });
 
   app.on('activate', () => {
     const existing = BrowserWindow.getAllWindows();

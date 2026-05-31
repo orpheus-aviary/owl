@@ -121,6 +121,7 @@ const coreState = {
   }>,
   setActiveCalls: [] as string[],
   clearAuthCalls: 0,
+  updateAuthCalls: [] as Array<Record<string, unknown>>,
 };
 vi.mock('@owl/core', () => ({
   OWL_APP_VERSION: '0.5.0-dev',
@@ -143,6 +144,9 @@ vi.mock('@owl/core', () => ({
   clearSkybridgeAuth: vi.fn(() => {
     coreState.clearAuthCalls += 1;
   }),
+  updateActiveProfileAuth: vi.fn((patch: Record<string, unknown>) => {
+    coreState.updateAuthCalls.push(patch);
+  }),
 }));
 
 vi.mock('./daemon.js', () => ({
@@ -153,8 +157,10 @@ vi.mock('./daemon.js', () => ({
 import {
   SafeStorageUnavailableError,
   SkybridgeServerTooOldError,
+  clearRefreshTimer,
   loginAndOpenSession,
   logout,
+  maybeRefreshNow,
   restoreSessionOnStartup,
 } from './sync-auth.js';
 
@@ -196,16 +202,33 @@ function profileCfg(over: Record<string, unknown> = {}) {
   };
 }
 
+// Fixed clock so `expiresAt` math + the renewal timer are deterministic.
+const BASE = 1_700_000_000_000;
+const FAR = BASE + 3_600_000; // 1h ahead → "fresh"
+
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.useFakeTimers();
+  vi.setSystemTime(BASE);
+  clearRefreshTimer(); // module-level singleton — reset between tests
+  // clearAllMocks resets call counts but NOT implementations, so re-establish
+  // the default safeStorage behavior (a test may have stubbed it to throw).
+  safeStorageState.encryptString.mockImplementation((s: string) =>
+    Buffer.from(`enc:${s}`, 'utf-8'),
+  );
+  safeStorageState.decryptString.mockImplementation((b: Buffer) =>
+    b.toString('utf-8').replace(/^enc:/, ''),
+  );
   safeStorageState.available = true;
   sdkState.loginReturn.serverId = 'srv-1';
+  sdkState.loginReturn.expiresAt = FAR;
   sdkState.loginError = null;
   sdkState.registerDeviceError = null;
   sdkState.ensureWorkspaceError = null;
   sdkState.logoutCalls = 0;
   sdkState.refreshCalls = 0;
   sdkState.refreshError = null;
+  sdkState.refreshReturn = { token: 'tk-new', refreshToken: 'rt-new', expiresAt: FAR };
   sdkState.expiredTokens = new Set();
   coreState.cfgRead = null;
   coreState.cfgReadError = null;
@@ -213,12 +236,15 @@ beforeEach(() => {
   coreState.writeProfileCalls = [];
   coreState.setActiveCalls = [];
   coreState.clearAuthCalls = 0;
+  coreState.updateAuthCalls = [];
   switchDeviceId = null;
   sessionResp = { ok: true, status: 200 };
   fetchMock.mockClear();
   vi.stubGlobal('fetch', fetchMock);
 });
 afterEach(() => {
+  clearRefreshTimer();
+  vi.useRealTimers();
   vi.unstubAllGlobals();
 });
 
@@ -380,20 +406,52 @@ describe('logout (Phase 15 — full logout / D2)', () => {
 
 // ─── restoreSessionOnStartup ─────────────────────────────────────────
 
-describe('restoreSessionOnStartup (Phase 15a — access path)', () => {
-  it('decrypts encrypted_token and installs the session (no switch)', async () => {
+describe('restoreSessionOnStartup (Phase 15b — refresh-first)', () => {
+  it('refreshes the access token, rotates, installs (no switch), schedules renewal', async () => {
     coreState.cfgRead = profileCfg();
     const result = await restoreSessionOnStartup();
     expect(result?.device_id).toBe('dev-A');
 
+    expect(sdkState.refreshCalls).toBe(1);
+    expect(coreState.updateAuthCalls).toHaveLength(1); // rotation persisted
+    expect(coreState.updateAuthCalls[0]).toMatchObject({
+      encrypted_token: b64('tk-new'),
+      encrypted_refresh_token: b64('rt-new'),
+    });
     const sessionCalls = fetchMock.mock.calls.filter(([u]) => String(u).endsWith('/sync/session'));
     expect(sessionCalls).toHaveLength(1);
-    expect(JSON.parse((sessionCalls[0]![1] as RequestInit).body as string).token).toBe('tk-access');
-    // restore must not switch — the daemon already booted into the active profile.
+    expect(JSON.parse((sessionCalls[0]![1] as RequestInit).body as string).token).toBe('tk-new');
+    // no switch — daemon already booted into the active profile.
     expect(fetchMock.mock.calls.some(([u]) => String(u).endsWith('/sync/switch'))).toBe(false);
   });
 
-  it('returns null for plaintext-only toml (no encrypted_token)', async () => {
+  it('falls back to the stored access token when there is no refresh token (legacy)', async () => {
+    coreState.cfgRead = profileCfg({
+      auth: { user_id: 'u-A', email: 'a@test', encrypted_token: b64('tk-access') },
+    });
+    const result = await restoreSessionOnStartup();
+    expect(result?.device_id).toBe('dev-A');
+    expect(sdkState.refreshCalls).toBe(0);
+    const sessionCalls = fetchMock.mock.calls.filter(([u]) => String(u).endsWith('/sync/session'));
+    expect(JSON.parse((sessionCalls[0]![1] as RequestInit).body as string).token).toBe('tk-access');
+  });
+
+  it('drops creds + returns null on a dead refresh token (REFRESH_REPLAYED)', async () => {
+    coreState.cfgRead = profileCfg();
+    sdkState.refreshError = new MockApiError('REFRESH_REPLAYED');
+    expect(await restoreSessionOnStartup()).toBeNull();
+    expect(coreState.clearAuthCalls).toBe(1);
+    expect(fetchMock.mock.calls.some(([u]) => String(u).endsWith('/sync/session'))).toBe(false);
+  });
+
+  it('keeps creds + returns null on a transient refresh failure (network)', async () => {
+    coreState.cfgRead = profileCfg();
+    sdkState.refreshError = new Error('network down');
+    expect(await restoreSessionOnStartup()).toBeNull();
+    expect(coreState.clearAuthCalls).toBe(0); // token preserved for a later retry
+  });
+
+  it('returns null for plaintext-only toml (no ciphertext at all)', async () => {
     coreState.cfgRead = profileCfg({
       auth: { user_id: 'u-A', email: 'a@test', token: 'legacy-plaintext' },
     });
@@ -414,9 +472,9 @@ describe('restoreSessionOnStartup (Phase 15a — access path)', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it('returns null when decryptString throws', async () => {
+  it('returns null when the keychain cannot decrypt', async () => {
     coreState.cfgRead = profileCfg();
-    safeStorageState.decryptString.mockImplementationOnce(() => {
+    safeStorageState.decryptString.mockImplementation(() => {
       throw new Error('keychain locked');
     });
     expect(await restoreSessionOnStartup()).toBeNull();
@@ -427,5 +485,41 @@ describe('restoreSessionOnStartup (Phase 15a — access path)', () => {
     coreState.cfgRead = profileCfg({ workspace: undefined });
     expect(await restoreSessionOnStartup()).toBeNull();
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+// ─── proactive renewal ───────────────────────────────────────────────
+
+describe('proactive renewal (Phase 15b)', () => {
+  async function loginFresh(): Promise<void> {
+    coreState.cfgRead = profileCfg();
+    await loginAndOpenSession({ serverUrl: 'http://x', email: 'a@test', password: 'p' });
+    sdkState.refreshCalls = 0; // ignore any refresh during setup
+  }
+
+  it('maybeRefreshNow is a no-op when there is no session', async () => {
+    await maybeRefreshNow();
+    expect(sdkState.refreshCalls).toBe(0);
+  });
+
+  it('maybeRefreshNow is a no-op while the access token is still fresh', async () => {
+    await loginFresh(); // installs a FAR-future expiry
+    await maybeRefreshNow();
+    expect(sdkState.refreshCalls).toBe(0);
+  });
+
+  it('maybeRefreshNow renews once the token is at/near expiry', async () => {
+    sdkState.loginReturn.expiresAt = BASE + 1_000; // inside the 60s margin
+    await loginFresh();
+    await maybeRefreshNow();
+    expect(sdkState.refreshCalls).toBe(1);
+  });
+
+  it('logout stops renewal (maybeRefreshNow no longer fires)', async () => {
+    await loginFresh();
+    await logout();
+    sdkState.refreshCalls = 0;
+    await maybeRefreshNow();
+    expect(sdkState.refreshCalls).toBe(0);
   });
 });
