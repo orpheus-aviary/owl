@@ -1,6 +1,6 @@
 # 开发进度
 
-## 当前阶段：P5-d per-profile 隔离 — **Phase 12 完成 2026-05-30**（设计 v6 定稿，D1-D11+W1-W13 拍板）
+## 当前阶段：P5-d per-profile 隔离 — **Phase 12 + Phase S + Phase 13（存储+迁移 plumbing-only）完成**（设计 v6 定稿）；下一步 **Phase 14（daemon switch）**
 
 **设计文档**：`docs/plans/2026-05-29-account-profile-isolation-design.md`（**v6 定稿，以 §0.5 决策总账为准**）+ `2026-05-29-phase12-profile-foundation.md`（Phase 12 子设计）。
 
@@ -16,15 +16,27 @@
 
 **Phase 12 验收**：core 435 · CLI 134 · daemon 255 · GUI main 74 · **SKYBRIDGE_E2E 16/16** · `just check` 8 子任务全绿。**运行时行为 diff=0**（resolver 全程回退 legacy）。
 
-**⚠️ Phase 12 provisional（后续决策修订，实现时以设计稿为准）**：`computeProfileId(url,user)` → D11 改 server_id（Phase 15）；`localProfileDbPath()=profiles/local` → D10a 重映射 owl/owl.db（Phase 13）。
+**⚠️ Phase 12 provisional（后续决策修订，实现时以设计稿为准）**：`computeProfileId(url,user)` → D11 改 server_id（Phase 15）；~~`localProfileDbPath()=profiles/local` → D10a 重映射 owl/owl.db~~（**Phase 13 已落**）。
 
-**0.5.0 新增依赖：skybridge 0.1.4 server（跨仓，设计稿 §14）** = server_id 暴露 + 同步回 server 时间 + `/auth/refresh`(带轮换) + device revoke 端点。Phase 15/17 前 ready。
+**✅ Phase 13（存储+迁移，plumbing-only）2026-05-31 完成（落 owl main，未 push）** —— 照 `docs/plans/2026-05-30-phase13-storage-migration.md` v2。**运行时行为 diff=0**（无 live profile db → 全程回退 legacy `owl/owl.db` + 顶层 `[auth]` 视图；真机 legacy toml 读取一致）。
+| 任务 | 内容 |
+|---|---|
+| T1 | `paths.localProfileDbPath()` 重映射 `owl/owl.db`（D10a）；`profile/resolver.ts` 抽出**单一 `resolveActiveProfile()` 三重一致 gate**（① active 是 hex ② `[profiles.<id>]` 段存在 ③ profile db 存在；缺一 → null=legacy）+ `isHexProfileId` + `readActiveProfileId(path?)` 加可选 path；`resolveActiveProfileDbPath()` 委托之，行为等价 |
+| T2 | `skybridge/config.ts` adapter：`readSkybridgeConfig` 经**同一 `resolveActiveProfile` gate** 返回 active-profile 视图 / 否则 legacy（抽 `assembleConfig` 公共组装；active 非 null 但 section 缺 → **fail-closed throw**，杜绝反向 split-brain）。写侧全走 **raw read-modify-write**（`mutateConfigFile`，保 sibling profiles + `active_profile`）：`writeProfileConfig`（hex 校验 + setActive 前 db 存在闸）/ `setActiveProfile`（hex 或 local + 同闸）/ `removeProfile` / `clearSkybridgeAuth` 改为只清 active profile auth。**dormant**：v2 writer 有能力+测试但无 live 调用（login flip 留 Phase 15） |
+| T3 | redact glob `*.profiles.*.encrypted_token` Phase 12 已覆盖 flat-fields 机密路径 → **无需新增** |
+| T4 | W2 迁移 = **no-op**：`owl/owl.db` 原地留 local，不搬库、0 迁移动作；`migrate.mjs` / GUI precheck 已走 resolver，确认无改动 |
 
-**重排路线（设计稿 §11）**：Phase 12 ✅ → **Phase S(skybridge 0.1.4)** ∥ 13(存储+迁移,W2 简化) → 14(switch) → 15(登录/refresh/server_id) → 16(import 守卫+reset+W3) → 17(GUI 快切+移除设备+手动同步) → 18-23(全链路/阿里云/soak/CLI/发版/收尾)。
+**Phase 13 验收**：core 464（+29）· CLI 134 · daemon 255 · GUI 299 · **SKYBRIDGE_E2E 16/16** · `just check` 8 守卫全绿。新错误类型 `InvalidProfileIdError` / `ProfileDbMissingError`；新导出 `resolveActiveProfile`/`isHexProfileId`/`LOCAL_PROFILE`/`writeProfileConfig`/`setActiveProfile`/`removeProfile`/`ProfileConfigSection`。
 
-**下个对话**：开工 **Phase S（skybridge 0.1.4 server）** ∥ **Phase 13（存储+迁移）**。
+**⚠️ Phase 13 登记给 Phase 15**：profile 段 `server_id` 留空占位（R2，无 live writer）；机密字段沿用 `encrypted_token`，refresh 落地若改 `encrypted_refresh_token` 需补 writer/reader/redact glob（R1）；version negotiation 硬要求 0.1.4 server，`server_id` 缺失报错不静默回退 url-key（R5）。
 
-**Push 状态**：Phase 12 三 commit（`45eef1e`/`a4c61bd`/`d15c9cd`）在本地 main，**未 push**。设计文档 + PROCESS/MEMORY 为工作树改动，未 commit。
+**✅ skybridge 0.1.4（Phase S）已实施落 skybridge main 2026-05-31**（7 commit 未 push/未 publish，`just check` + 109 tests 全绿）= server_id（db `server_meta`+config 覆盖）+ 权威时间 + refresh 轮换（replaced_by 区分 replay/invalid）+ device revoke + lazy-bind。Phase 15 对接 ready；npm publish 留 Phase 19。详见 skybridge `docs/plans/2026-05-30-phase-S-skybridge-0.1.4.md` 与 skybridge PROCESS.md。
+
+**重排路线（设计稿 §11）**：Phase 12 ✅ + Phase S ✅ + Phase 13 ✅ → **14(switch：db replace 完整重建 §5.4.2-bis 含 ConversationStore + switch mutex)** → 15(登录/refresh/server_id, 依赖 Phase S) → 16(import 守卫+reset+W3) → 17(GUI 快切+移除设备+手动同步) → 18-23(全链路/阿里云部署 0.1.4/soak/CLI/发版/收尾)。
+
+**下个对话**：开工 **Phase 14（daemon switch）** —— §5.4.2-bis：profile 切换走 db replace 完整重建（rebuild ReminderScheduler + **ConversationStore**（持 sqlite）/ evict broadcaster WeakMap / drain coalescer / 重设 ctx.deviceId）+ switch mutex。Phase S 已 ready，Phase 15 前不需回 skybridge（除非 soak/部署）。
+
+**Push 状态**：Phase 12 三 commit（`45eef1e`/`a4c61bd`/`d15c9cd`）+ Phase 13 三 commit（`c4da3f1` refactor T1 / `9b61ae0` feat T2 / 本 docs commit = plan+PROCESS）在本地 main，**未 push**。MEMORY 为工作树改动（不入 git）。
 
 ---
 

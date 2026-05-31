@@ -24,7 +24,7 @@ owl 当前是**单租户**模型：`owl.db` / `toml` / `sync_cursor` / `local_me
 
 **身份模型（终态）**
 - `profile = (server_id, user_id)`，`profileId = sha256(server_id + "\n" + user_id)` 前 32 位（128-bit）。**D11**：锚点是 **server_id**，不是 url —— 换 server 部署位置/换 url 不影响找回工作区。
-- **server_id**：skybridge server **配置文件**里的长随机标识，首次 init 自动生成 + 持久化 + **可在 config 显式覆盖**（迁移/换部署时带过去 → 客户端按 server_id 认旧 profile，只更新存的 url）。安全网：server_id 变了但 user_id 命中既有 profile → 提示"换服务器了，关联到既有 profile？"
+- **server_id**：skybridge server 端长随机标识，首次 init 自动生成 + **持久化于 server db `server_meta`** + **可在 config 文件显式覆盖**（迁移/换部署时带过去 → 客户端按 server_id 认旧 profile，只更新存的 url；config≠db 时 server 打 loud warning）。存储细节见 Phase S 子设计 §2（`2026-05-30-phase-S-skybridge-0.1.4.md`，跨仓 skybridge）。安全网：server_id 变了但 user_id 命中既有 profile → 提示"换服务器了，关联到既有 profile？"
 - **local profile = `~/orpheus-aviary-nest/owl/owl.db` 原地**（**D10a**，Option B）。纯本地用户零迁移；账号在 `profiles/<id>/owl.db`。
 - 设备名仅显示；device_id 存 profile db、跨 logout 复用（§5.3）。
 
@@ -147,7 +147,7 @@ P5-d Phase 10.6 本来只想解决"同名设备堆积"，但讨论中浮现 8 �
 > **profile = (`server_id`, `user_id`)**，`profileId = sha256(server_id + "\n" + user_id).hex 前 32 位（128-bit）`。（**D11**，2026-05-30 定）
 
 - **锚点是 server_id 不是 url**：server 换部署位置/换 url，只要 server_id 不变 → 仍命中同一 profile、找回工作区（见 §0.5 / §14）。
-- `server_id` = skybridge server **配置文件**里的长随机标识（首次 init 自动生成 + 持久化 + 可显式覆盖以便迁移带过去）。client 登录时从 server 拿到并存进 profile。
+- `server_id` = skybridge server 端长随机标识（首次 init 自动生成 + **持久化于 server db `server_meta`** + **config 文件可显式覆盖以迁移带走**，见 Phase S 子设计 §2）。client 登录时从 server 拿到并存进 profile。
 - **`server_url` 不再进 profileId**，降级为 profile 内的连接地址（可变）。仍归一化它（`new URL`、仅 http/https、小写 scheme+host、默认端口剥离/非默认保留、path 去尾斜杠保留非根前缀、丢 query/hash）**仅用于存储/显示/去重**。⚠️ Phase 12 的 `computeProfileId(url,user)` 是 **provisional**，Phase 15 改为 `computeProfileId(server_id,user)`。
 - 确定性 → 再次登录同一账号自然命中同一 profile（原则 4）。
 - 不含 device → 同账号在本机始终一个 profile（device 复用见 §5.3）。
@@ -547,7 +547,7 @@ toml 从单 `[auth]` 改 `[profiles.X]` + `active_profile`。**采用低风险�
 
 > 原 v5 "profile 不需 server 能力" 作废。以下 4 项须在 skybridge 仓实现 + 发 0.1.4 SDK + owl 对接，**Phase 15/17 前 ready、Phase 19 部署**。
 
-1. **server_id 暴露**：server **配置文件**里的长随机标识（首次 init 自动生成 + 持久化 + 可显式覆盖以便迁移带过去）。经登录响应 + `GET /server-info` 返回。client 存进 `[profiles.X].server_id`，作 profileId 锚点（D11/W1）。
+1. **server_id 暴露**：server 端长随机标识（首次 init 自动生成 + **持久化于 server db `server_meta`** + **config 文件可显式覆盖以迁移带走**；config≠db 时打 loud warning。存储决策详见 Phase S 子设计 §2）。经登录响应 + `GET /server-info` 返回。client 存进 `[profiles.X].server_id`，作 profileId 锚点（D11/W1）。
 2. **权威 server 时间**：同步响应（或 `/time`）回 server 当前时间，供 client 算 `offset` 做 LWW 归一化（W3）。
 3. **`/auth/refresh`（带轮换）**：登录发 短 access + 长 refresh_token；refresh 换新 access **并轮换 refresh**（旧作废，防重放）。支撑免密快切（W4/D2）。logout/移除设备时作废 refresh。
 4. **device revoke/delete 端点**：吊销/删除某 device（^0.1.3 缺，sync.ts:64 已注）。支撑"移除设备"(W9) + "删除账号本地副本"远端清理。
