@@ -51,6 +51,8 @@ function defaultOwlAPI(): OwlAPI {
         }),
       ),
       onProfileSwitched: vi.fn(() => () => {}),
+      onClaimPrompt: vi.fn(() => () => {}),
+      respondClaim: vi.fn(),
     },
   };
 }

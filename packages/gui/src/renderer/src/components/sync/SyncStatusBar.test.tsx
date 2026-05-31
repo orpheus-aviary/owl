@@ -283,3 +283,30 @@ describe('formatRelativeTime', () => {
     expect(formatRelativeTime(NOW + 1_000, NOW)).toBe('刚刚');
   });
 });
+
+describe('SyncStatusBar — W6 local profile (server_url null)', () => {
+  it('popover shows 本地独立工作区 when the snapshot is local', () => {
+    snapshotHolder.value = makeSnapshot({ server_url: null });
+    render(
+      <MemoryRouter>
+        <SyncStatusBar />
+      </MemoryRouter>,
+    );
+    const content = screen.getByTestId('popover-content');
+    expect(within(content).getByText('本地独立工作区')).toBeTruthy();
+    // The account detail grid (服务器/设备/工作区 rows) is NOT rendered.
+    expect(within(content).queryByText('服务器')).toBeNull();
+  });
+
+  it('popover shows the account detail grid when server_url is set', () => {
+    snapshotHolder.value = makeSnapshot({ server_url: 'http://srv' });
+    render(
+      <MemoryRouter>
+        <SyncStatusBar />
+      </MemoryRouter>,
+    );
+    const content = screen.getByTestId('popover-content');
+    expect(within(content).queryByText('本地独立工作区')).toBeNull();
+    expect(within(content).getByText('服务器')).toBeTruthy();
+  });
+});

@@ -35,6 +35,23 @@ vi.mock('electron', () => ({
   },
 }));
 
+// Phase 16: existsSync(profileDbPath) drives the return-visit vs first-login
+// split; mkdirSync is a no-op (the claim copy is mocked). Records nothing.
+const fsState = { profileDbExists: false };
+vi.mock('node:fs', async (orig) => {
+  const actual = await orig<typeof import('node:fs')>();
+  return { ...actual, existsSync: vi.fn(() => fsState.profileDbExists), mkdirSync: vi.fn() };
+});
+
+// Phase 16: the claim prompt is exercised without electron/BrowserWindow.
+const claimState = { choice: 'independent' as 'merge' | 'independent', calls: 0 };
+vi.mock('./claim-prompt.js', () => ({
+  promptClaim: vi.fn(async () => {
+    claimState.calls += 1;
+    return claimState.choice;
+  }),
+}));
+
 // vi.hoisted so the class exists when the (hoisted) mock factory runs — a
 // `class` declaration would otherwise be in the temporal dead zone, since the
 // SUT import hoists above it.
@@ -72,6 +89,13 @@ const sdkState = {
   refreshError: null as Error | null,
   /** Tokens whose logout() should throw TOKEN_EXPIRED (simulates short access). */
   expiredTokens: new Set<string>(),
+  /** Phase 16: pull probe result. Default = empty account (latestSeq 0). */
+  pullReturn: {
+    changes: [] as unknown[],
+    hasMore: false,
+    latestSeq: 0,
+    serverTime: 0,
+  },
 };
 
 vi.mock('@orpheus-aviary/skybridge-client', () => ({
@@ -103,7 +127,7 @@ vi.mock('@orpheus-aviary/skybridge-client', () => ({
       }),
       listDevices: vi.fn(),
       pushChanges: vi.fn(),
-      pullChanges: vi.fn(),
+      pullChanges: vi.fn(async () => sdkState.pullReturn),
       subscribeEvents: vi.fn(),
       revokeDevice: vi.fn(),
     };
@@ -122,6 +146,9 @@ const coreState = {
   setActiveCalls: [] as string[],
   clearAuthCalls: 0,
   updateAuthCalls: [] as Array<Record<string, unknown>>,
+  // Phase 16
+  localInspect: { noteCount: 0, hasSyncTraces: false },
+  copyCalls: [] as string[],
 };
 vi.mock('@owl/core', () => ({
   OWL_APP_VERSION: '0.5.0-dev',
@@ -147,6 +174,16 @@ vi.mock('@owl/core', () => ({
   updateActiveProfileAuth: vi.fn((patch: Record<string, unknown>) => {
     coreState.updateAuthCalls.push(patch);
   }),
+  // Phase 16
+  paths: {
+    profileDbPath: (id: string) => `/nest/owl/profiles/${id}/owl.db`,
+    localProfileDbPath: () => '/nest/owl/owl.db',
+  },
+  inspectLocalProfile: vi.fn(() => coreState.localInspect),
+  copyLocalProfileDbInto: vi.fn(async (target: string) => {
+    coreState.copyCalls.push(target);
+    callLog.push('copy');
+  }),
 }));
 
 vi.mock('./daemon.js', () => ({
@@ -168,9 +205,13 @@ import {
 
 let switchDeviceId: string | null = null;
 let sessionResp = { ok: true, status: 200 };
+// Phase 16: orders the claim copy vs the daemon switch (B9: copy must precede
+// switch). Pushed by the copy mock ('copy') and the switch fetch ('switch').
+let callLog: string[] = [];
 const fetchMock = vi.fn(async (url: string | URL, _init?: RequestInit) => {
   const u = String(url);
   if (u.endsWith('/sync/switch')) {
+    callLog.push('switch');
     return {
       ok: true,
       status: 200,
@@ -237,6 +278,13 @@ beforeEach(() => {
   coreState.setActiveCalls = [];
   coreState.clearAuthCalls = 0;
   coreState.updateAuthCalls = [];
+  coreState.localInspect = { noteCount: 0, hasSyncTraces: false };
+  coreState.copyCalls = [];
+  sdkState.pullReturn = { changes: [], hasMore: false, latestSeq: 0, serverTime: 0 };
+  fsState.profileDbExists = false;
+  claimState.choice = 'independent';
+  claimState.calls = 0;
+  callLog = [];
   switchDeviceId = null;
   sessionResp = { ok: true, status: 200 };
   fetchMock.mockClear();
@@ -300,6 +348,7 @@ describe('loginAndOpenSession (Phase 15)', () => {
   });
 
   it('reuses the remembered device (stored meta) — no registerDevice', async () => {
+    fsState.profileDbExists = true; // return visit
     switchDeviceId = 'dev-existing';
     coreState.profileSection = {
       device: {
@@ -328,6 +377,7 @@ describe('loginAndOpenSession (Phase 15)', () => {
   });
 
   it('reuses by synthesising device meta when no stored section exists', async () => {
+    fsState.profileDbExists = true; // return visit
     switchDeviceId = 'dev-existing';
     coreState.profileSection = null;
     const result = await loginAndOpenSession({
@@ -363,6 +413,67 @@ describe('loginAndOpenSession (Phase 15)', () => {
     const switchCalls = fetchMock.mock.calls.filter(([u]) => String(u).endsWith('/sync/switch'));
     const last = JSON.parse((switchCalls.at(-1)![1] as RequestInit).body as string);
     expect(last.profile_id).toBe('local');
+  });
+});
+
+// ─── claim-empty-account (Phase 16, D10b) ───────────────────────────
+
+describe('loginAndOpenSession — claim empty account (Phase 16)', () => {
+  const login = () =>
+    loginAndOpenSession({ serverUrl: 'http://127.0.0.1:18443', email: 'a@test', password: 'pw' });
+
+  it('first login + empty account + local has notes + merge → copies BEFORE switch', async () => {
+    fsState.profileDbExists = false; // first login
+    coreState.localInspect = { noteCount: 5, hasSyncTraces: false };
+    claimState.choice = 'merge';
+
+    await login();
+
+    expect(claimState.calls).toBe(1);
+    expect(coreState.copyCalls).toEqual(['/nest/owl/profiles/pid-srv-1-u-A/owl.db']);
+    // B9: the claim copy must land before the daemon switches onto the target.
+    expect(callLog).toEqual(['copy', 'switch']);
+  });
+
+  it('first login + empty account + local has notes + independent → no copy', async () => {
+    coreState.localInspect = { noteCount: 5, hasSyncTraces: false };
+    claimState.choice = 'independent';
+
+    await login();
+
+    expect(claimState.calls).toBe(1);
+    expect(coreState.copyCalls).toHaveLength(0);
+    expect(callLog).toEqual(['switch']); // switch still creates an empty db
+  });
+
+  it('first login + empty account + local empty → no prompt, no copy', async () => {
+    coreState.localInspect = { noteCount: 0, hasSyncTraces: false };
+
+    await login();
+
+    expect(claimState.calls).toBe(0);
+    expect(coreState.copyCalls).toHaveLength(0);
+  });
+
+  it('first login + NON-empty account → no prompt (pure pull), never merges local', async () => {
+    coreState.localInspect = { noteCount: 5, hasSyncTraces: false };
+    sdkState.pullReturn = { changes: [{}], hasMore: false, latestSeq: 7, serverTime: 0 };
+
+    await login();
+
+    expect(claimState.calls).toBe(0);
+    expect(coreState.copyCalls).toHaveLength(0);
+  });
+
+  it('return visit (profile db exists) → no probe, no prompt', async () => {
+    fsState.profileDbExists = true;
+    switchDeviceId = 'dev-existing';
+    coreState.localInspect = { noteCount: 5, hasSyncTraces: false };
+
+    await login();
+
+    expect(claimState.calls).toBe(0);
+    expect(coreState.copyCalls).toHaveLength(0);
   });
 });
 

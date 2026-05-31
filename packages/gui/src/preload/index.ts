@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type { LoginAndOpenSessionInput } from '../shared/sync-auth-types.js';
+import type { ClaimChoice, ClaimPromptInput } from '../shared/sync-claim-types.js';
 import type { SyncDevicesReply } from '../shared/sync-devices-types.js';
 import type { SyncIpcReply, SyncStatusReply } from '../shared/sync-status-types.js';
 import { daemonUrlFromArgv, parseStartupMode } from './args.js';
@@ -135,6 +136,20 @@ contextBridge.exposeInMainWorld('owlAPI', {
       const listener = () => cb();
       ipcRenderer.on('profile:switched', listener);
       return () => ipcRenderer.off('profile:switched', listener);
+    },
+    /**
+     * P5-d Phase 16 (D10b): subscribe to a "claim local into this empty
+     * account?" prompt from the login flow. The ClaimAccountDialog renders
+     * the choice and replies via `respondClaim`. Returns an unsubscribe fn.
+     */
+    onClaimPrompt: (cb: (input: ClaimPromptInput) => void): (() => void) => {
+      const listener = (_: unknown, input: ClaimPromptInput) => cb(input);
+      ipcRenderer.on('sync:claim-prompt', listener);
+      return () => ipcRenderer.off('sync:claim-prompt', listener);
+    },
+    /** Reply to the most recent claim prompt. */
+    respondClaim: (choice: ClaimChoice): void => {
+      ipcRenderer.send('sync:claim-response', choice);
     },
   },
 });

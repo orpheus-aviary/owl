@@ -1,3 +1,4 @@
+import { ClaimAccountDialog } from '@/components/ClaimAccountDialog';
 import { DeleteConfirmDialog } from '@/components/DeleteConfirmDialog';
 import { EventsSubscriber } from '@/components/EventsSubscriber';
 import { FolderPanel } from '@/components/FolderPanel';
@@ -416,6 +417,7 @@ export function MainApp() {
       <NoteAppliedToast />
       <ConflictDialog />
       <UnsavedTabsDialog />
+      <ClaimAccountDialog />
     </HashRouter>
   );
 }

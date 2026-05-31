@@ -73,6 +73,8 @@ function installMigrationStub(): MigrationStub {
         }),
       ),
       onProfileSwitched: vi.fn(() => () => {}),
+      onClaimPrompt: vi.fn(() => () => {}),
+      respondClaim: vi.fn(),
     },
   };
 

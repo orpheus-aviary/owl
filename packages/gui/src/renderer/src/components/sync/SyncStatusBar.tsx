@@ -109,6 +109,23 @@ function SyncStatusDetails({
     );
   }
 
+  // W6: snapshot reported AND server_url null → local profile (not an account).
+  // Surface it plainly instead of a wall of "未配置 / 未注册" rows.
+  if (snapshot.server_url === null) {
+    return (
+      <PopoverHeader>
+        <PopoverTitle>本地独立工作区</PopoverTitle>
+        <PopoverDescription>
+          笔记仅存储在本地，不会同步到其他设备。可在{' '}
+          <Link to="/settings?tab=sync" className="underline">
+            设置 → 同步
+          </Link>{' '}
+          登录账号以启用多设备同步。
+        </PopoverDescription>
+      </PopoverHeader>
+    );
+  }
+
   return (
     <div className="flex flex-col gap-3 text-xs">
       <PopoverHeader>

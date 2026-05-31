@@ -19,7 +19,7 @@ type SnapshotShape = SyncStatusReply['snapshot'];
 
 type View =
   | { kind: 'loading' }
-  | { kind: 'unauth' }
+  | { kind: 'unauth'; snapshot: SnapshotShape }
   | { kind: 'auth'; session: SessionShape; snapshot: SnapshotShape };
 
 // Skybridge server's actual default port is 8443
@@ -51,7 +51,7 @@ export function SyncSection() {
       // → re-login flow doesn't lose the last-used host.
       setServerUrl(session.server_url);
     } else {
-      setView({ kind: 'unauth' });
+      setView({ kind: 'unauth', snapshot });
     }
   }, []);
 
@@ -108,6 +108,17 @@ export function SyncSection() {
         <div className="text-sm text-muted-foreground flex items-center gap-2 px-3 py-4">
           <Loader2 className="size-4 animate-spin" />
           正在读取同步状态…
+        </div>
+      )}
+
+      {view.kind === 'unauth' && view.snapshot !== null && view.snapshot.server_url === null && (
+        // W6: explicitly mark the local profile. Only when the daemon HAS
+        // reported (snapshot !== null) and it's local (server_url === null) —
+        // not for daemon-down (snapshot null) nor a keychain-broken account
+        // profile (session null but server_url present).
+        <div className="text-sm text-muted-foreground bg-muted/50 px-3 py-2 rounded">
+          当前为<span className="font-medium text-foreground">本地独立工作区</span>
+          ，笔记仅存储在本地。登录账号可在多设备间同步。
         </div>
       )}
 

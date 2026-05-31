@@ -54,6 +54,8 @@ export {
   LOCAL_PROFILE,
 } from './profile/resolver.js';
 export type { ActiveProfile } from './profile/resolver.js';
+export { inspectLocalProfile, copyLocalProfileDbInto } from './profile/local-inspect.js';
+export type { LocalProfileInspection } from './profile/local-inspect.js';
 
 // Shortcuts (canonical → Electron accelerator conversion for main process)
 export { toElectronAccelerator } from './shortcuts/accelerator.js';

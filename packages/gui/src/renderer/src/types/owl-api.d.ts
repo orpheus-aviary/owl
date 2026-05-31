@@ -9,6 +9,7 @@
 // come from `src/shared/`.
 
 import type { LoginAndOpenSessionInput } from '../../../shared/sync-auth-types.js';
+import type { ClaimChoice, ClaimPromptInput } from '../../../shared/sync-claim-types.js';
 import type { SyncDevicesReply } from '../../../shared/sync-devices-types.js';
 import type { SyncIpcReply, SyncStatusReply } from '../../../shared/sync-status-types.js';
 
@@ -61,6 +62,8 @@ export interface OwlAPI {
     status: () => Promise<SyncIpcReply<SyncStatusReply>>;
     devices: () => Promise<SyncIpcReply<SyncDevicesReply>>;
     onProfileSwitched: (cb: () => void) => () => void;
+    onClaimPrompt: (cb: (input: ClaimPromptInput) => void) => () => void;
+    respondClaim: (choice: ClaimChoice) => void;
   };
 }
 

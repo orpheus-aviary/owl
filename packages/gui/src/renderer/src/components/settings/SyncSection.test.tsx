@@ -216,3 +216,42 @@ describe('SyncSection — DevicesCard wiring', () => {
     expect(screen.queryByRole('button', { name: /管理我的设备/ })).toBeNull();
   });
 });
+
+describe('SyncSection — W6 local-workspace banner', () => {
+  const LOCAL_SNAPSHOT = {
+    configured: false,
+    authenticated: false,
+    server_url: null as string | null,
+    device_id: null as string | null,
+    workspace_id: null as string | null,
+    pending_count: 0,
+    pulled_seq: 0,
+    pushed_seq: 0,
+    last_sync_at: null as number | null,
+  };
+  const statusWith = (snapshot: typeof LOCAL_SNAPSHOT | null) =>
+    Promise.resolve({ ok: true as const, data: { session: null, snapshot } });
+
+  it('shows the banner when daemon reports a local profile (server_url null)', async () => {
+    window.owlAPI.sync.status = vi.fn(() => statusWith(LOCAL_SNAPSHOT));
+    render(<SyncSection />);
+    await waitFor(() => screen.getByRole('button', { name: '登录' }));
+    expect(screen.getByText(/本地独立工作区/)).toBeTruthy();
+  });
+
+  it('hides the banner when the daemon has not reported (snapshot null)', async () => {
+    window.owlAPI.sync.status = vi.fn(() => statusWith(null));
+    render(<SyncSection />);
+    await waitFor(() => screen.getByRole('button', { name: '登录' }));
+    expect(screen.queryByText(/本地独立工作区/)).toBeNull();
+  });
+
+  it('hides the banner for a broken account profile (session null but server_url set)', async () => {
+    window.owlAPI.sync.status = vi.fn(() =>
+      statusWith({ ...LOCAL_SNAPSHOT, server_url: 'http://srv' }),
+    );
+    render(<SyncSection />);
+    await waitFor(() => screen.getByRole('button', { name: '登录' }));
+    expect(screen.queryByText(/本地独立工作区/)).toBeNull();
+  });
+});

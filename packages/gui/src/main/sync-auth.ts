@@ -39,12 +39,15 @@
  * report the same app version through registerDevice.
  */
 
+import { existsSync, mkdirSync } from 'node:fs';
 import { hostname } from 'node:os';
+import { dirname } from 'node:path';
 import {
   ApiError,
   type ApiRefreshResult,
   type AuthContext,
   CLIENT_VERSION,
+  type SkybridgeClient,
   createSkybridgeClient,
   login as skybridgeLogin,
   refresh as skybridgeRefresh,
@@ -57,7 +60,10 @@ import {
   type SkybridgeDeviceSection,
   clearSkybridgeAuth,
   computeProfileId,
+  copyLocalProfileDbInto,
+  inspectLocalProfile,
   normalizeServerUrl,
+  paths,
   readProfileSection,
   readSkybridgeConfig,
   setActiveProfile,
@@ -66,6 +72,7 @@ import {
 } from '@owl/core';
 import { safeStorage } from 'electron';
 import type { LoginAndOpenSessionInput } from '../shared/sync-auth-types.js';
+import { promptClaim } from './claim-prompt.js';
 import { getDaemonUrl } from './daemon.js';
 
 export interface SyncSessionSummary {
@@ -129,19 +136,31 @@ export async function loginAndOpenSession(
   const profileId = computeProfileId(auth.serverId, auth.user.id);
 
   try {
-    // Step 3 — switch the daemon onto this profile's db (created if first
-    // login). Returns the remembered device id (null on a fresh db).
-    const { device_id: existingDeviceId } = await postSyncSwitch(profileId);
+    // Steps 3–4 split on whether this machine already holds a copy of the
+    // account (Phase 16, B9). A first login is the only time a local→account
+    // claim is possible, and the claim copy must land on the target db
+    // BEFORE the daemon switches onto it — so for a first login we register
+    // the device + ensure the workspace (remote-only, daemon db untouched)
+    // up front, decide the claim, then switch.
+    let device: SkybridgeDeviceSection;
+    let workspace: { id: string; slug: string };
 
-    // Step 4 — reuse the remembered device (§5.3) or register a new one.
-    const device = existingDeviceId
-      ? reuseDevice(profileId, existingDeviceId)
-      : await registerNewDevice(auth);
-    const withDevice = createSkybridgeClient({ authContext: auth, deviceId: device.id });
-    const ws = await withDevice.ensureWorkspace('owl', 'default');
-    // ApiWorkspace exposes tool + name, not slug; synthesise the owl-shaped
-    // "<tool>/<name>" slug so toml + daemon stay in the pre-Phase-7 format.
-    const workspace = { id: ws.id, slug: `${ws.tool}/${ws.name}` };
+    if (existsSync(paths.profileDbPath(profileId))) {
+      // Return visit — switch first, reuse the remembered device (§5.3). No
+      // claim: the account already has a local copy here.
+      const { device_id: existingDeviceId } = await postSyncSwitch(profileId);
+      device = existingDeviceId
+        ? reuseDevice(profileId, existingDeviceId)
+        : await registerNewDevice(auth);
+      workspace = await ensureOwlWorkspace(auth, device.id);
+    } else {
+      // First login on this machine.
+      device = await registerNewDevice(auth);
+      const client = createSkybridgeClient({ authContext: auth, deviceId: device.id });
+      workspace = await ensureOwlWorkspace(auth, device.id, client);
+      await maybeClaimLocalInto(client, workspace.id, profileId, auth.user.email);
+      await postSyncSwitch(profileId); // opens the claimed copy, or creates empty
+    }
 
     // Step 5 — encrypt access (+ refresh) before any HTTP / disk write, so a
     // keychain failure surfaces before the token travels and the toml never
@@ -183,7 +202,7 @@ export async function loginAndOpenSession(
       user_id: auth.user.id,
       email: auth.user.email,
       device_id: device.id,
-      workspace_id: ws.id,
+      workspace_id: workspace.id,
     };
   } catch (err) {
     // Unwind: revoke the freshly-issued token, and return the daemon to local
@@ -372,6 +391,56 @@ function isRefreshDead(err: unknown): boolean {
 }
 
 // ─── helpers ─────────────────────────────────────────────────────────
+
+/**
+ * ensureWorkspace('owl','default') → the owl-shaped `{ id, slug }`. ApiWorkspace
+ * exposes tool + name (not slug); synthesise "<tool>/<name>" so toml + daemon
+ * stay in the pre-Phase-7 format. Reuses `client` when the caller already built
+ * a device-bound one (avoids a second client).
+ */
+async function ensureOwlWorkspace(
+  auth: AuthContext,
+  deviceId: string,
+  client?: SkybridgeClient,
+): Promise<{ id: string; slug: string }> {
+  const c = client ?? createSkybridgeClient({ authContext: auth, deviceId });
+  const ws = await c.ensureWorkspace('owl', 'default');
+  return { id: ws.id, slug: `${ws.tool}/${ws.name}` };
+}
+
+/**
+ * Phase 16 (D10b): on a first login to an *empty* account that has local
+ * notes, ask the user to merge (whole-db claim) or stay independent. On
+ * "merge" copy `owl/owl.db` → the target profile db BEFORE the switch (B9),
+ * so `switchProfile` opens the claimed copy. No-op for a non-empty account
+ * (pure pull, never merges local) or an empty local. Account sync never
+ * writes the local db (D10b invariant).
+ */
+async function maybeClaimLocalInto(
+  client: SkybridgeClient,
+  workspaceId: string,
+  profileId: string,
+  email: string,
+): Promise<void> {
+  if (!(await isAccountEmpty(client, workspaceId))) return;
+  const local = inspectLocalProfile();
+  if (local.noteCount === 0) return;
+  const choice = await promptClaim({
+    email,
+    localCount: local.noteCount,
+    hasSyncTraces: local.hasSyncTraces,
+  });
+  if (choice !== 'merge') return;
+  const target = paths.profileDbPath(profileId);
+  mkdirSync(dirname(target), { recursive: true });
+  await copyLocalProfileDbInto(target);
+}
+
+/** An account is empty when its change-log has nothing (latestSeq 0, no rows). */
+async function isAccountEmpty(client: SkybridgeClient, workspaceId: string): Promise<boolean> {
+  const res = await client.pullChanges(workspaceId, 0, 1);
+  return res.latestSeq === 0 && res.changes.length === 0;
+}
 
 /** Reuse a remembered device: read its stored meta, else synth (§5.3). */
 function reuseDevice(profileId: string, deviceId: string): SkybridgeDeviceSection {
