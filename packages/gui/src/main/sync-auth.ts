@@ -1,59 +1,65 @@
 /**
- * P5-d Phase 7 — GUI main's sole owner of plaintext skybridge tokens.
+ * P5-d Phase 7/15 — GUI main's sole owner of plaintext skybridge tokens and
+ * the only writer of `skybridge_config.toml`.
  *
- * Three flows:
+ * Phase 15 makes login per-profile (design §5.4.1, D11):
  *
  *   - `loginAndOpenSession(input)` —— user submits server URL + email +
  *      password from Settings. We:
- *        1. POST /auth/login via the SDK (token only lives in local scope)
- *        2. registerDevice + ensureWorkspace
- *        3. safeStorage.encryptString(token) → base64
- *        4. POST 127.0.0.1:<daemon>/sync/session with the plaintext token
- *           (localhost only; daemon never persists it)
- *        5. atomic write skybridge_config.toml with [auth].encrypted_token
- *           (NEVER [auth].token — plaintext stays in memory only)
- *      Order matters: §3.1.2 "失败 unwind ... 不写 toml" — any failure
- *      between login and the atomic-write triggers best-effort remote
- *      /auth/logout and leaves the on-disk toml untouched.
+ *        1. POST /auth/login via the SDK (0.1.4 returns refreshToken +
+ *           serverId; token only lives in local scope)
+ *        2. require serverId (R5 — a 0.1.4 server); profileId =
+ *           hash(server_id, user_id)
+ *        3. POST /sync/switch → daemon swaps onto profiles/<id>/owl.db
+ *           (created if first login) and returns the remembered
+ *           skybridge_device_id (null on a fresh db)
+ *        4. reuse that device (§5.3) or registerDevice; ensureWorkspace
+ *        5. encrypt access + refresh tokens (safeStorage)
+ *        6. POST /sync/session (installs on the switched db)
+ *        7. writeProfileConfig([profiles.<id>], setActive) — encrypted_token
+ *           + encrypted_refresh_token + device/workspace/server_id
+ *      Unwind on any failure: best-effort remote logout + return the daemon
+ *      to local; never write toml.
  *
- *   - `logout()` —— Settings logout button:
- *        1. read existing toml, decrypt encrypted_token locally
- *        2. best-effort remote /auth/logout
- *        3. POST 127.0.0.1:<daemon>/sync/logout-local (clears daemon
- *           in-memory session + sqlite identity rows)
- *        4. atomic write toml clearing [auth] + [device] + [workspace],
- *           preserving [server].url for the next login default
+ *   - `logout()` —— full logout (D2): remote-revoke (refresh-then-logout if
+ *     the access token has expired) → switch the daemon back to local →
+ *     clear the active profile's credentials (keeps device/workspace/server_id
+ *     so a re-login reuses the device) → point active_profile at local.
  *
- *   - `restoreSessionOnStartup()` —— GUI main entry post-daemon-ready:
- *        Read toml [auth].encrypted_token; decrypt locally; POST
- *        /sync/session. Returns null when no session is restorable.
- *        **Deliberately refuses to fallback to plaintext [auth].token** —
- *        per user ruling on Q2/§3.2.1: the new GUI startup path only
- *        trusts encrypted_token. Legacy plaintext toml still works via
- *        the daemon's own toml-bootstrap path (session.ts requireAuth);
- *        we just don't promote it through GUI restore.
+ *   - `restoreSessionOnStartup()` —— reads the active profile's
+ *     encrypted_token and installs the session (daemon already booted into
+ *     the active profile db via the resolver). Refresh-first restore +
+ *     proactive renewal land in Phase 15b.
  *
- * `OWL_APP_VERSION` is imported from `@owl/core` so the daemon and GUI
- * always report the same app version through registerDevice.
+ * `OWL_APP_VERSION` is imported from `@owl/core` so the daemon and GUI always
+ * report the same app version through registerDevice.
  */
 
 import { hostname } from 'node:os';
 import {
+  ApiError,
   type AuthContext,
   CLIENT_VERSION,
   createSkybridgeClient,
   login as skybridgeLogin,
+  refresh as skybridgeRefresh,
 } from '@orpheus-aviary/skybridge-client';
 import {
+  LOCAL_PROFILE,
   OWL_APP_VERSION,
+  type ProfileConfigSection,
   type SkybridgeConfig,
+  type SkybridgeDeviceSection,
+  clearSkybridgeAuth,
+  computeProfileId,
+  normalizeServerUrl,
+  readProfileSection,
   readSkybridgeConfig,
-  skybridgeConfigPath,
+  setActiveProfile,
+  writeProfileConfig,
 } from '@owl/core';
 import { safeStorage } from 'electron';
-import { stringify } from 'smol-toml';
 import type { LoginAndOpenSessionInput } from '../shared/sync-auth-types.js';
-import { atomicWriteFile, cleanupStaleTmp } from './atomic-write.js';
 import { getDaemonUrl } from './daemon.js';
 
 export interface SyncSessionSummary {
@@ -72,78 +78,82 @@ export class SafeStorageUnavailableError extends Error {
   }
 }
 
+/** The server didn't return a `server_id` → it's older than 0.1.4 (R5). */
+export class SkybridgeServerTooOldError extends Error {
+  readonly code = 'SKYBRIDGE_SERVER_TOO_OLD';
+  constructor() {
+    super('this server is too old — owl needs a skybridge 0.1.4+ server (no server_id returned)');
+    this.name = 'SkybridgeServerTooOldError';
+  }
+}
+
 export async function loginAndOpenSession(
   input: LoginAndOpenSessionInput,
 ): Promise<SyncSessionSummary> {
-  // safeStorage is a process-wide module; checking once up-front avoids
-  // doing the entire login round-trip just to fail at encryption.
+  // safeStorage is process-wide; check once up-front instead of doing the
+  // whole login round-trip just to fail at encryption.
   if (!safeStorage.isEncryptionAvailable()) {
     throw new SafeStorageUnavailableError();
   }
 
-  // Step 1: remote login — auth.token is plaintext, scoped to this fn.
+  // Step 1 — remote login. auth.token is plaintext, scoped to this fn.
   const auth = await skybridgeLogin(input.serverUrl, input.email, input.password);
 
+  // Step 2 — require a 0.1.4 server: server_id anchors the profile id (D11/R5).
+  // No silent fallback to a url-keyed id.
+  if (!auth.serverId) {
+    await bestEffortRemoteLogout(auth);
+    throw new SkybridgeServerTooOldError();
+  }
+  const profileId = computeProfileId(auth.serverId, auth.user.id);
+
   try {
-    // Step 2: registerDevice + ensureWorkspace.
-    const seed = createSkybridgeClient({ authContext: auth });
-    const device = await seed.registerDevice({
-      name: defaultDeviceName(),
-      appVersion: `owl ${OWL_APP_VERSION}`,
-      clientVersion: CLIENT_VERSION,
-    });
-    const deviceMeta = {
-      id: device.id,
-      name: device.name,
-      app_version: `owl ${OWL_APP_VERSION}`,
-      client_version: CLIENT_VERSION,
-    };
+    // Step 3 — switch the daemon onto this profile's db (created if first
+    // login). Returns the remembered device id (null on a fresh db).
+    const { device_id: existingDeviceId } = await postSyncSwitch(profileId);
+
+    // Step 4 — reuse the remembered device (§5.3) or register a new one.
+    const device = existingDeviceId
+      ? reuseDevice(profileId, existingDeviceId)
+      : await registerNewDevice(auth);
     const withDevice = createSkybridgeClient({ authContext: auth, deviceId: device.id });
     const ws = await withDevice.ensureWorkspace('owl', 'default');
-    // ApiWorkspace exposes tool + name, not slug; we synthesise the
-    // owl-shaped slug here so toml + daemon stay in sync with the
-    // pre-Phase-7 format ("<tool>/<name>").
-    const workspaceMeta = { id: ws.id, slug: `${ws.tool}/${ws.name}` };
+    // ApiWorkspace exposes tool + name, not slug; synthesise the owl-shaped
+    // "<tool>/<name>" slug so toml + daemon stay in the pre-Phase-7 format.
+    const workspace = { id: ws.id, slug: `${ws.tool}/${ws.name}` };
 
-    // Step 3: encrypt token into ciphertext while still in this scope.
-    // We do the encryption BEFORE the daemon POST so the `.tmp` write in
-    // step 5 never has to hold plaintext, and so we surface
-    // encryption failures (e.g. keychain locked) before sending the
-    // token over HTTP.
-    const ciphertext = safeStorage.encryptString(auth.token).toString('base64');
+    // Step 5 — encrypt access (+ refresh) before any HTTP / disk write, so a
+    // keychain failure surfaces before the token travels and the toml never
+    // holds plaintext.
+    const encryptedToken = safeStorage.encryptString(auth.token).toString('base64');
+    const encryptedRefresh = auth.refreshToken
+      ? safeStorage.encryptString(auth.refreshToken).toString('base64')
+      : undefined;
 
-    // Step 4: hand the plaintext token to daemon over localhost. This
-    // is intentionally BEFORE the atomic-write — per design §3.1.2
-    // "失败 unwind ... 不写 toml": if /sync/session fails (network,
-    // daemon down, bad payload), we unwind via remote /auth/logout and
-    // leave the existing on-disk toml untouched. Putting the toml
-    // write first would leave a token-bearing toml on disk pointing at
-    // a daemon that never accepted the session.
+    // Step 6 — install the session on the (already-switched) profile db.
     await postSyncSession({
       token: auth.token,
       user_id: auth.user.id,
       email: auth.user.email,
       server_url: auth.serverUrl,
-      device: deviceMeta,
-      workspace: workspaceMeta,
+      device,
+      workspace,
     });
 
-    // Step 5: atomic-write toml. Daemon already has the session in
-    // memory; this persists the encrypted handle for next startup's
-    // restoreSessionOnStartup.
-    const cfg: SkybridgeConfig = {
-      server: { url: auth.serverUrl },
-      auth: {
-        user_id: auth.user.id,
-        email: auth.user.email,
-        encrypted_token: ciphertext,
-      },
-      device: deviceMeta,
-      workspace: workspaceMeta,
+    // Step 7 — persist [profiles.<id>] + active_profile (GUI main is the sole
+    // toml writer; the daemon never writes toml). The profile db now exists
+    // (step 3), so setActive passes its existence guard.
+    const section: ProfileConfigSection = {
+      server_id: auth.serverId,
+      server_url: normalizeServerUrl(auth.serverUrl),
+      user_id: auth.user.id,
+      email: auth.user.email,
+      encrypted_token: encryptedToken,
+      device,
+      workspace,
     };
-    const cfgPath = skybridgeConfigPath();
-    cleanupStaleTmp(cfgPath);
-    atomicWriteFile(cfgPath, stringify(serializableConfig(cfg)));
+    if (encryptedRefresh) section.encrypted_refresh_token = encryptedRefresh;
+    writeProfileConfig(profileId, section, { setActive: true });
 
     return {
       server_url: auth.serverUrl,
@@ -153,10 +163,11 @@ export async function loginAndOpenSession(
       workspace_id: ws.id,
     };
   } catch (err) {
-    // Unwind: try to revoke the freshly-issued token so it doesn't sit
-    // valid on the server. Do NOT write toml — caller's state is the
-    // pre-login one (or whatever was there before).
+    // Unwind: revoke the freshly-issued token, and return the daemon to local
+    // (15a rolls back to local; precise rollback to the prior profile is
+    // Phase 17). Never write toml — the caller's persisted state is unchanged.
     await bestEffortRemoteLogout(auth);
+    await bestEffortSwitchLocal();
     throw err;
   }
   // auth.token falls out of scope here.
@@ -165,53 +176,32 @@ export async function loginAndOpenSession(
 export async function logout(): Promise<void> {
   const cfg = safeReadConfig();
 
-  // 1. Best-effort remote logout — decrypt token locally for one HTTP
-  //    call, never re-persisted, never logged.
-  if (cfg?.auth?.encrypted_token && safeStorage.isEncryptionAvailable()) {
-    let token: string | null = null;
-    try {
-      token = safeStorage.decryptString(Buffer.from(cfg.auth.encrypted_token, 'base64'));
-    } catch {
-      token = null;
-    }
-    if (token) {
-      await bestEffortRemoteLogout({
-        serverUrl: cfg.server.url,
-        token,
-        // ApiUser requires `displayName`. We don't carry it on the toml
-        // (non-essential display field); pass null — server doesn't
-        // need it for /auth/logout.
-        user: { id: cfg.auth.user_id, email: cfg.auth.email, displayName: null },
-      });
-    }
+  // 1. Full logout (D2): revoke the refresh-token family server-side. If the
+  //    stored access token has expired, refresh once to mint a fresh access
+  //    and revoke with that — otherwise the family would survive locally-only.
+  if (cfg?.auth) {
+    await remoteRevoke(cfg);
   }
 
-  // 2. Daemon teardown — clears ctx.skybridgeSession + clearSyncIdentity
-  //    on sqlite. Survives a daemon that's already down.
-  try {
-    await fetch(`${getDaemonUrl()}/sync/logout-local`, { method: 'POST' });
-  } catch {
-    // best-effort
-  }
+  // 2. Return the daemon to local — switchProfile clears its in-memory
+  //    session as part of the swap. Survives a daemon that's already down.
+  await bestEffortSwitchLocal();
 
-  // 3. Atomic clear of [auth] + [device] + [workspace]. [server].url
-  //    survives so the next login form pre-fills.
-  if (cfg) {
-    const cleared: SkybridgeConfig = { server: cfg.server };
-    const cfgPath = skybridgeConfigPath();
-    cleanupStaleTmp(cfgPath);
-    atomicWriteFile(cfgPath, stringify(serializableConfig(cleared)));
-  }
+  // 3. Clear the active profile's credentials (keeps device/workspace/server_id
+  //    so a re-login reuses the device, §5.3) and repoint active_profile at
+  //    local. We do NOT clearSyncIdentity (that would drop the db's remembered
+  //    skybridge_device_id) and do NOT remove the [profiles.<id>] section
+  //    (deleting the local copy is a separate destructive action, Phase 17).
+  clearSkybridgeAuth();
+  setActiveProfile(LOCAL_PROFILE);
 }
 
 export async function restoreSessionOnStartup(): Promise<SyncSessionSummary | null> {
   const cfg = safeReadConfig();
   if (!cfg) return null;
 
-  // The new path is encrypted-only. Legacy plaintext [auth].token still
-  // works via the daemon's own bootstrap (session.ts requireAuth); we
-  // refuse to promote it through GUI startup so plaintext never travels
-  // through the keychain code path.
+  // Encrypted-only — legacy plaintext [auth].token is never promoted through
+  // GUI startup (plaintext stays out of the keychain code path).
   if (!cfg.auth?.encrypted_token) return null;
   if (!cfg.auth.user_id || !cfg.auth.email) return null;
   if (!cfg.device?.id || !cfg.device.name) return null;
@@ -223,13 +213,15 @@ export async function restoreSessionOnStartup(): Promise<SyncSessionSummary | nu
   try {
     token = safeStorage.decryptString(Buffer.from(cfg.auth.encrypted_token, 'base64'));
   } catch {
-    // Most commonly: keychain entry the OS can't unlock (different
-    // login keychain, profile migration, etc.). Caller treats null as
-    // "no session restored"; user will see the unauthenticated state
-    // and can re-login from Settings.
+    // Keychain entry the OS can't unlock (different login keychain, profile
+    // migration, etc.). Caller treats null as "no session restored"; the user
+    // sees the unauthenticated state and can re-login from Settings.
     return null;
   }
 
+  // The daemon already booted into the active profile db (resolver), so this
+  // only installs the session — no switch needed. (Refresh-first restore +
+  // proactive renewal arrive in Phase 15b.)
   await postSyncSession({
     token,
     user_id: cfg.auth.user_id,
@@ -251,6 +243,35 @@ export async function restoreSessionOnStartup(): Promise<SyncSessionSummary | nu
 
 // ─── helpers ─────────────────────────────────────────────────────────
 
+/** Reuse a remembered device: read its stored meta, else synth (§5.3). */
+function reuseDevice(profileId: string, deviceId: string): SkybridgeDeviceSection {
+  const stored = readProfileSection(profileId)?.device;
+  if (stored) return stored;
+  // No stored section (e.g. db remembered the id but toml was cleared) → synth.
+  // The name is display-only and hostname-deterministic, so it stays stable.
+  return {
+    id: deviceId,
+    name: defaultDeviceName(),
+    app_version: `owl ${OWL_APP_VERSION}`,
+    client_version: CLIENT_VERSION,
+  };
+}
+
+async function registerNewDevice(auth: AuthContext): Promise<SkybridgeDeviceSection> {
+  const seed = createSkybridgeClient({ authContext: auth });
+  const device = await seed.registerDevice({
+    name: defaultDeviceName(),
+    appVersion: `owl ${OWL_APP_VERSION}`,
+    clientVersion: CLIENT_VERSION,
+  });
+  return {
+    id: device.id,
+    name: device.name,
+    app_version: `owl ${OWL_APP_VERSION}`,
+    client_version: CLIENT_VERSION,
+  };
+}
+
 interface SyncSessionPayload {
   token: string;
   user_id: string;
@@ -271,12 +292,86 @@ async function postSyncSession(payload: SyncSessionPayload): Promise<void> {
   }
 }
 
+/** Switch the daemon onto a profile db; returns the remembered device id. */
+async function postSyncSwitch(profileId: string): Promise<{ device_id: string | null }> {
+  const res = await fetch(`${getDaemonUrl()}/sync/switch`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ profile_id: profileId }),
+  });
+  if (!res.ok) {
+    throw new Error(`daemon /sync/switch returned HTTP ${res.status}`);
+  }
+  const body = (await res.json()) as { data?: { device_id?: string | null } };
+  return { device_id: body.data?.device_id ?? null };
+}
+
+async function bestEffortSwitchLocal(): Promise<void> {
+  try {
+    await postSyncSwitch(LOCAL_PROFILE);
+  } catch {
+    // best-effort — daemon may be down; the toml's active_profile (set to
+    // local by the caller on logout) wins on the next boot.
+  }
+}
+
 async function bestEffortRemoteLogout(auth: AuthContext): Promise<void> {
   try {
     const client = createSkybridgeClient({ authContext: auth });
     await client.logout();
   } catch {
     // best-effort; server may be unreachable or token already revoked
+  }
+}
+
+/**
+ * Revoke the refresh-token family server-side for a full logout (D2). Tries
+ * the stored access token first; if it has expired, refreshes once to mint a
+ * fresh access token and revokes with that. Network failures are tolerated
+ * (best-effort — local cleanup proceeds regardless, since the user is logging
+ * out); only TOKEN_EXPIRED routes to the refresh path.
+ */
+async function remoteRevoke(cfg: SkybridgeConfig): Promise<void> {
+  if (!cfg.auth) return;
+  const serverUrl = cfg.server.url;
+  const user = { id: cfg.auth.user_id, email: cfg.auth.email, displayName: null };
+
+  const access = decryptB64(cfg.auth.encrypted_token);
+  if (access) {
+    try {
+      await createSkybridgeClient({ authContext: { serverUrl, token: access, user } }).logout();
+      return; // access logout revokes the family
+    } catch (err) {
+      // Not expired (network / already-revoked / other) → best-effort, stop.
+      if (!isTokenExpired(err)) return;
+      // Expired → fall through to the refresh path.
+    }
+  }
+
+  const refreshToken = decryptB64(cfg.auth.encrypted_refresh_token);
+  if (!refreshToken) return;
+  try {
+    const rotated = await skybridgeRefresh(serverUrl, refreshToken);
+    await createSkybridgeClient({
+      authContext: { serverUrl, token: rotated.token, user },
+    }).logout();
+  } catch {
+    // REFRESH_INVALID / REFRESH_REPLAYED → family already dead; network →
+    // best-effort. Either way, local cleanup proceeds.
+  }
+}
+
+function isTokenExpired(err: unknown): boolean {
+  return err instanceof ApiError && err.code === 'TOKEN_EXPIRED';
+}
+
+/** Decrypt a base64 safeStorage ciphertext, or null on any failure. */
+function decryptB64(ciphertext?: string): string | null {
+  if (!ciphertext || !safeStorage.isEncryptionAvailable()) return null;
+  try {
+    return safeStorage.decryptString(Buffer.from(ciphertext, 'base64'));
+  } catch {
+    return null;
   }
 }
 
@@ -291,18 +386,4 @@ function safeReadConfig(): SkybridgeConfig | null {
   } catch {
     return null;
   }
-}
-
-/**
- * `smol-toml` drops `undefined`-valued keys, but it also rejects keys
- * whose value is literally `undefined` at the top level of the object.
- * Build the serialisable object by only including sections that are
- * defined, matching the writer contract from `writeSkybridgeConfig`.
- */
-function serializableConfig(cfg: SkybridgeConfig): Record<string, unknown> {
-  const out: Record<string, unknown> = { server: cfg.server };
-  if (cfg.auth) out.auth = cfg.auth;
-  if (cfg.device) out.device = cfg.device;
-  if (cfg.workspace) out.workspace = cfg.workspace;
-  return out;
 }
