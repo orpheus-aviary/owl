@@ -22,9 +22,11 @@ import {
   ProfileDbMissingError,
   SkybridgeServerUrlMissingError,
   clearSkybridgeAuth,
+  readProfileSection,
   readSkybridgeConfig,
   removeProfile,
   setActiveProfile,
+  updateActiveProfileAuth,
   writeProfileConfig,
 } from './config.js';
 
@@ -258,5 +260,107 @@ describe('writeProfileConfig — round-trip + file mode (Phase 13)', () => {
   it('chmods the toml to 0600', { skip: process.platform === 'win32' }, () => {
     writeProfileConfig(ID_A, { server_url: URL_A });
     assert.equal(statSync(skybridgeConfigPath()).mode & 0o777, 0o600);
+  });
+});
+
+// ─── Phase 15: refresh-token + raw helpers ──────────────
+
+const sectionWithRefresh: ProfileConfigSection = {
+  server_id: 'srv-xyz',
+  server_url: URL_A,
+  user_id: 'usr_a',
+  email: 'a@local',
+  encrypted_token: 'cipher-access',
+  encrypted_refresh_token: 'cipher-refresh',
+  device: { id: 'dev_a', name: 'mb (owl)', app_version: 'owl 0.5.0-dev', client_version: '0.1.4' },
+  workspace: { id: 'ws_a', slug: 'owl/default' },
+};
+
+describe('encrypted_refresh_token — adapter round-trip + gate (Phase 15)', () => {
+  it('round-trips encrypted_refresh_token through readSkybridgeConfig', () => {
+    touchDb(profileDbPath(ID_A));
+    writeProfileConfig(ID_A, sectionWithRefresh, { setActive: true });
+    const cfg = readSkybridgeConfig();
+    assert.equal(cfg.auth?.encrypted_token, 'cipher-access');
+    assert.equal(cfg.auth?.encrypted_refresh_token, 'cipher-refresh');
+  });
+
+  it('keeps auth when only encrypted_refresh_token is present (gate includes refresh)', () => {
+    touchDb(profileDbPath(ID_A));
+    writeProfileConfig(
+      ID_A,
+      {
+        server_id: 'srv-xyz',
+        server_url: URL_A,
+        user_id: 'usr_a',
+        email: 'a@local',
+        encrypted_refresh_token: 'only-refresh',
+      },
+      { setActive: true },
+    );
+    const cfg = readSkybridgeConfig();
+    assert.ok(cfg.auth, 'auth survives with refresh-only');
+    assert.equal(cfg.auth?.encrypted_token, undefined);
+    assert.equal(cfg.auth?.encrypted_refresh_token, 'only-refresh');
+  });
+});
+
+describe('updateActiveProfileAuth (Phase 15)', () => {
+  it('rotates only the secret fields, preserving server_id/device/workspace/sibling', () => {
+    touchDb(profileDbPath(ID_A));
+    touchDb(profileDbPath(ID_B));
+    writeProfileConfig(ID_A, sectionWithRefresh, { setActive: true });
+    writeProfileConfig(ID_B, { server_url: URL_B, user_id: 'usr_b', encrypted_token: 'cipher-b' });
+
+    updateActiveProfileAuth({
+      encrypted_token: 'new-access',
+      encrypted_refresh_token: 'new-refresh',
+    });
+
+    const profiles = readRaw().profiles as Record<string, Record<string, unknown>>;
+    assert.equal(profiles[ID_A].encrypted_token, 'new-access', 'access rotated');
+    assert.equal(profiles[ID_A].encrypted_refresh_token, 'new-refresh', 'refresh rotated');
+    assert.equal(profiles[ID_A].server_id, 'srv-xyz', 'server_id preserved');
+    assert.ok(profiles[ID_A].device, 'device preserved');
+    assert.ok(profiles[ID_A].workspace, 'workspace preserved');
+    assert.equal(profiles[ID_B].encrypted_token, 'cipher-b', 'sibling untouched');
+  });
+
+  it('is a no-op when there is no active profile', () => {
+    setActiveProfile('local');
+    updateActiveProfileAuth({ encrypted_token: 'x' }); // no throw, nothing to patch
+    assert.equal(readRaw().active_profile, 'local');
+  });
+});
+
+describe('clearSkybridgeAuth clears encrypted_refresh_token (Phase 15 / D2)', () => {
+  it('drops the refresh ciphertext too, keeps server_id/device/workspace', () => {
+    touchDb(profileDbPath(ID_A));
+    writeProfileConfig(ID_A, sectionWithRefresh, { setActive: true });
+    clearSkybridgeAuth();
+    const section = (readRaw().profiles as Record<string, Record<string, unknown>>)[ID_A];
+    assert.equal(section.encrypted_token, undefined);
+    assert.equal(section.encrypted_refresh_token, undefined, 'refresh ciphertext gone');
+    assert.equal(section.server_id, 'srv-xyz', 'server_id survives');
+    assert.ok(section.device, 'device survives (reuse memory)');
+    assert.ok(section.workspace, 'workspace survives');
+  });
+});
+
+describe('readProfileSection — read a specific (non-active) profile (Phase 15)', () => {
+  it('reads a profile that is not the active one (for device reuse)', () => {
+    touchDb(profileDbPath(ID_A));
+    // A is written but NOT active (active stays unset / local).
+    writeProfileConfig(ID_A, sectionWithRefresh);
+    const sec = readProfileSection(ID_A);
+    assert.equal(sec?.device?.id, 'dev_a');
+    assert.equal(sec?.device?.name, 'mb (owl)');
+    assert.equal(sec?.server_id, 'srv-xyz');
+  });
+
+  it('returns null for a missing profile / missing file', () => {
+    assert.equal(readProfileSection(ID_A), null, 'no file → null');
+    writeToml(`[server]\nurl = "${LEGACY_URL}"\n`);
+    assert.equal(readProfileSection(ID_A), null, 'no [profiles] table → null');
   });
 });

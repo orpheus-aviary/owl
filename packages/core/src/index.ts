@@ -174,6 +174,7 @@ export type {
 // Skybridge client config (P5-a Step 6 — TOML read/write)
 export {
   clearSkybridgeAuth,
+  readProfileSection,
   readSkybridgeConfig,
   removeProfile,
   removeSkybridgeConfig,
@@ -185,6 +186,7 @@ export {
   SkybridgeAuthRequiredError,
   SkybridgeNotConfiguredError,
   SkybridgeServerUrlMissingError,
+  updateActiveProfileAuth,
   writeProfileConfig,
   writeSkybridgeConfig,
 } from './skybridge/config.js';
@@ -196,7 +198,11 @@ export type {
   SkybridgeServerSection,
   SkybridgeWorkspaceSection,
 } from './skybridge/config.js';
-export { clearSyncIdentity, persistSkybridgeIds } from './skybridge/identity.js';
+export {
+  clearSyncIdentity,
+  persistSkybridgeIds,
+  readSkybridgeDeviceId,
+} from './skybridge/identity.js';
 export { redactToken } from './skybridge/redact.js';
 export type { RedactTokenOptions } from './skybridge/redact.js';
 export { OWL_APP_VERSION } from './version.js';

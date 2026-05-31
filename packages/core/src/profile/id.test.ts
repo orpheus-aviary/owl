@@ -38,24 +38,31 @@ describe('normalizeServerUrl (Phase 12)', () => {
   });
 });
 
-describe('computeProfileId (Phase 12)', () => {
+describe('computeProfileId (Phase 15 — D11 server_id anchor)', () => {
   it('is 32 lowercase hex chars', () => {
-    assert.match(computeProfileId('https://x:8443', 'user-1'), /^[0-9a-f]{32}$/);
+    assert.match(computeProfileId('srv-abc123', 'user-1'), /^[0-9a-f]{32}$/);
   });
 
   it('is deterministic', () => {
-    assert.equal(computeProfileId('https://x:8443', 'u'), computeProfileId('https://x:8443', 'u'));
+    assert.equal(computeProfileId('srv-abc123', 'u'), computeProfileId('srv-abc123', 'u'));
   });
 
-  it('collapses :8443 vs :8443/ to the same id (normalization)', () => {
-    assert.equal(computeProfileId('http://x:8443', 'u'), computeProfileId('http://x:8443/', 'u'));
+  it('is independent of the server url (url not in the id)', () => {
+    // Same server_id + user → same profile, regardless of how the url is spelled.
+    // (The caller passes a server_id, never a url; this just pins "url plays no role".)
+    assert.equal(computeProfileId('srv-1', 'u'), computeProfileId('srv-1', 'u'));
   });
 
   it('differs by user', () => {
-    assert.notEqual(computeProfileId('https://x', 'a'), computeProfileId('https://x', 'b'));
+    assert.notEqual(computeProfileId('srv-1', 'a'), computeProfileId('srv-1', 'b'));
   });
 
-  it('differs by server', () => {
-    assert.notEqual(computeProfileId('https://a', 'u'), computeProfileId('https://b', 'u'));
+  it('differs by server_id', () => {
+    assert.notEqual(computeProfileId('srv-a', 'u'), computeProfileId('srv-b', 'u'));
+  });
+
+  it('treats server_id verbatim (no normalization)', () => {
+    // server_id is opaque — different spellings are different profiles.
+    assert.notEqual(computeProfileId('SRV-1', 'u'), computeProfileId('srv-1', 'u'));
   });
 });

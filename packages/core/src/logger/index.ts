@@ -35,6 +35,9 @@ export interface LoggerOptions {
  *                                shape `cfg.profiles.<id>.encrypted_token`
  *   - `*.profiles.*.auth.token` — per-profile legacy token under
  *                                `cfg.profiles.<id>.auth.token`
+ *   - `*.encrypted_refresh_token` / `*.auth.encrypted_refresh_token` /
+ *     `*.profiles.*.encrypted_refresh_token` — P5-d Phase 15: rotating
+ *                                refresh-token ciphertext (D2)
  *   - `authorization`         — top-level header
  *   - `headers.authorization` — http req object shape
  *   - `req.headers.authorization` — fastify req shape
@@ -46,6 +49,9 @@ export const DEFAULT_LOG_REDACT_PATHS: readonly string[] = [
   '*.auth.encrypted_token',
   '*.profiles.*.encrypted_token',
   '*.profiles.*.auth.token',
+  '*.encrypted_refresh_token',
+  '*.auth.encrypted_refresh_token',
+  '*.profiles.*.encrypted_refresh_token',
   'authorization',
   'headers.authorization',
   'req.headers.authorization',

@@ -1,10 +1,16 @@
 /**
- * P5-d Phase 12 — profile identity helpers (blocker B6).
+ * P5-d Phase 12/15 — profile identity helpers (blocker B6 / D11).
  *
- * A profile = (server_url, user_id). `profileId` is a deterministic hash so
+ * A profile = (server_id, user_id). `profileId` is a deterministic hash so
  * logging into the same account always lands on the same local copy
  * (design §5.1). Pure functions; consumed at login (Phase 15) to compute the
- * id and at storage layout time (Phase 13). Landed + tested in Phase 12.
+ * id and at storage layout time (Phase 13).
+ *
+ * Phase 15 (D11): the anchor is **server_id** — a long random identity minted
+ * by the skybridge server (0.1.4 `login`/`/server-info`), persisted server-side
+ * and migratable. The server's url is *not* part of the id, so moving the
+ * deployment / changing the url keeps the same profile. `normalizeServerUrl`
+ * stays for url storage / dedup / display only (no longer feeds the id).
  */
 
 import { createHash } from 'node:crypto';
@@ -47,13 +53,14 @@ export function normalizeServerUrl(input: string): string {
 
 /**
  * Deterministic profile id = first 32 hex chars (128-bit) of
- * `sha256(normalizeServerUrl(serverUrl) + "\n" + userId)`.
+ * `sha256(serverId + "\n" + userId)` (D11).
  *
- * `userId` is an opaque server-issued id, used verbatim. The 32-hex width is
- * a persisted directory name + `active_profile` value — frozen once any
+ * Both `serverId` and `userId` are opaque server-issued ids, used verbatim
+ * (no normalization — the server owns their canonical form). The 32-hex width
+ * is a persisted directory name + `active_profile` value — frozen once any
  * profile exists on disk (changing it would orphan existing profiles).
  */
-export function computeProfileId(serverUrl: string, userId: string): string {
-  const canonical = `${normalizeServerUrl(serverUrl)}\n${userId}`;
+export function computeProfileId(serverId: string, userId: string): string {
+  const canonical = `${serverId}\n${userId}`;
   return createHash('sha256').update(canonical).digest('hex').slice(0, 32);
 }

@@ -69,6 +69,13 @@ export interface SkybridgeAuthSection {
    * main's local scope between decrypt and the POST /sync/session call.
    */
   encrypted_token?: string;
+  /**
+   * P5-d Phase 15 (D2) — `safeStorage.encryptString(refresh_token)` → base64.
+   * The long-lived, rotating refresh token; GUI main exchanges it for a fresh
+   * short-lived access token on startup / before expiry (it never reaches the
+   * daemon). Hits the redact glob `*.profiles.*.encrypted_refresh_token`.
+   */
+  encrypted_refresh_token?: string;
 }
 
 export interface SkybridgeDeviceSection {
@@ -105,6 +112,7 @@ export interface ProfileConfigSection {
   email?: string;
   token?: string;
   encrypted_token?: string;
+  encrypted_refresh_token?: string;
   device?: SkybridgeDeviceSection;
   workspace?: SkybridgeWorkspaceSection;
 }
@@ -117,6 +125,7 @@ interface RawProfileSection {
   email?: string;
   token?: string;
   encrypted_token?: string;
+  encrypted_refresh_token?: string;
   device?: Partial<SkybridgeDeviceSection>;
   workspace?: Partial<SkybridgeWorkspaceSection>;
 }
@@ -125,7 +134,13 @@ interface RawProfileSection {
 interface RawConfig {
   active_profile?: string;
   server?: { url?: string };
-  auth?: { user_id?: string; email?: string; token?: string; encrypted_token?: string };
+  auth?: {
+    user_id?: string;
+    email?: string;
+    token?: string;
+    encrypted_token?: string;
+    encrypted_refresh_token?: string;
+  };
   device?: Partial<SkybridgeDeviceSection>;
   workspace?: Partial<SkybridgeWorkspaceSection>;
   profiles?: Record<string, RawProfileSection>;
@@ -138,7 +153,13 @@ interface RawConfig {
  */
 interface ConfigSource {
   server?: { url?: string };
-  auth?: { user_id?: string; email?: string; token?: string; encrypted_token?: string };
+  auth?: {
+    user_id?: string;
+    email?: string;
+    token?: string;
+    encrypted_token?: string;
+    encrypted_refresh_token?: string;
+  };
   device?: Partial<SkybridgeDeviceSection>;
   workspace?: Partial<SkybridgeWorkspaceSection>;
 }
@@ -202,6 +223,7 @@ function profileSrc(section: RawProfileSection): ConfigSource {
       email: section.email,
       token: section.token,
       encrypted_token: section.encrypted_token,
+      encrypted_refresh_token: section.encrypted_refresh_token,
     },
     device: section.device,
     workspace: section.workspace,
@@ -211,6 +233,25 @@ function profileSrc(section: RawProfileSection): ConfigSource {
 /** Map the legacy top-level sections onto the normalized source shape. */
 function legacySrc(raw: RawConfig): ConfigSource {
   return { server: raw.server, auth: raw.auth, device: raw.device, workspace: raw.workspace };
+}
+
+/** Normalize a raw `[device]` into the public section (or drop it if no id). */
+function toDeviceSection(d?: Partial<SkybridgeDeviceSection>): SkybridgeDeviceSection | undefined {
+  if (!d?.id) return undefined;
+  return {
+    id: d.id,
+    name: d.name ?? '',
+    app_version: d.app_version ?? '',
+    client_version: d.client_version ?? '',
+  };
+}
+
+/** Normalize a raw `[workspace]` into the public section (or drop it if no id). */
+function toWorkspaceSection(
+  w?: Partial<SkybridgeWorkspaceSection>,
+): SkybridgeWorkspaceSection | undefined {
+  if (!w?.id) return undefined;
+  return { id: w.id, slug: w.slug ?? '' };
 }
 
 /**
@@ -224,25 +265,26 @@ function assembleConfig(src: ConfigSource, filePath: string): SkybridgeConfig {
     throw new SkybridgeServerUrlMissingError(filePath);
   }
   const config: SkybridgeConfig = { server: { url } };
-  // Accept either the legacy plaintext `token` or the new `encrypted_token`;
+  // Accept the legacy plaintext `token`, the `encrypted_token`, OR (Phase 15)
+  // an `encrypted_refresh_token` alone — a profile may legitimately keep only
+  // the refresh token (access cleared / expired) and still be restorable.
   // user_id + email remain required (non-secret display fields).
-  const hasAnyToken = Boolean(src.auth?.token) || Boolean(src.auth?.encrypted_token);
+  const hasAnyToken =
+    Boolean(src.auth?.token) ||
+    Boolean(src.auth?.encrypted_token) ||
+    Boolean(src.auth?.encrypted_refresh_token);
   if (src.auth?.user_id && src.auth?.email && hasAnyToken) {
     config.auth = { user_id: src.auth.user_id, email: src.auth.email };
     if (src.auth.token) config.auth.token = src.auth.token;
     if (src.auth.encrypted_token) config.auth.encrypted_token = src.auth.encrypted_token;
+    if (src.auth.encrypted_refresh_token) {
+      config.auth.encrypted_refresh_token = src.auth.encrypted_refresh_token;
+    }
   }
-  if (src.device?.id) {
-    config.device = {
-      id: src.device.id,
-      name: src.device.name ?? '',
-      app_version: src.device.app_version ?? '',
-      client_version: src.device.client_version ?? '',
-    };
-  }
-  if (src.workspace?.id) {
-    config.workspace = { id: src.workspace.id, slug: src.workspace.slug ?? '' };
-  }
+  const device = toDeviceSection(src.device);
+  if (device) config.device = device;
+  const workspace = toWorkspaceSection(src.workspace);
+  if (workspace) config.workspace = workspace;
   return config;
 }
 
@@ -447,6 +489,7 @@ export function clearSkybridgeAuth(path?: string): void {
       ];
       if (section) {
         section.encrypted_token = undefined;
+        section.encrypted_refresh_token = undefined;
         section.token = undefined;
         section.user_id = undefined;
         section.email = undefined;
@@ -455,6 +498,70 @@ export function clearSkybridgeAuth(path?: string): void {
       raw.auth = undefined;
     }
   });
+}
+
+/**
+ * Patch only the active profile's secret fields (raw read-modify-write),
+ * preserving `server_id` / `device` / `workspace` / sibling profiles. Used by
+ * Phase 15 refresh-token rotation: `readSkybridgeConfig` doesn't surface
+ * `server_id`, and `writeProfileConfig` replaces the whole section, so neither
+ * can safely rewrite just the rotated ciphertext. Only the keys present in
+ * `patch` are written (others left untouched). No-op if there's no active
+ * profile (refresh only applies to an account profile).
+ */
+export function updateActiveProfileAuth(
+  patch: { encrypted_token?: string; encrypted_refresh_token?: string },
+  path?: string,
+): void {
+  const filePath = path ?? skybridgeConfigPath();
+  if (!existsSync(filePath)) return;
+  const active = resolveActiveProfile(filePath);
+  if (!active) return;
+  mutateConfigFile(filePath, (raw) => {
+    const profiles = raw.profiles as Record<string, Record<string, unknown>> | undefined;
+    const section = profiles?.[active.id];
+    if (!section) return;
+    if ('encrypted_token' in patch) section.encrypted_token = patch.encrypted_token;
+    if ('encrypted_refresh_token' in patch) {
+      section.encrypted_refresh_token = patch.encrypted_refresh_token;
+    }
+  });
+}
+
+/**
+ * Read a *specific* profile's `[profiles.<id>]` section (not necessarily the
+ * active one), mapped onto the public `ProfileConfigSection` shape. Returns
+ * null if the file / `[profiles]` table / the section is missing.
+ *
+ * Phase 15 device reuse needs this: at login the target profile isn't yet the
+ * `active_profile`, so `readSkybridgeConfig` (which reads the active view)
+ * can't fetch its stored `[device]` — we read it by id here instead.
+ */
+export function readProfileSection(profileId: string, path?: string): ProfileConfigSection | null {
+  const filePath = path ?? skybridgeConfigPath();
+  if (!existsSync(filePath)) return null;
+  let raw: RawConfig;
+  try {
+    raw = parse(readFileSync(filePath, 'utf-8')) as RawConfig;
+  } catch {
+    return null;
+  }
+  const section = raw.profiles?.[profileId];
+  if (section == null) return null;
+  const out: ProfileConfigSection = { server_url: section.server_url ?? '' };
+  if (section.server_id) out.server_id = section.server_id;
+  if (section.user_id) out.user_id = section.user_id;
+  if (section.email) out.email = section.email;
+  if (section.token) out.token = section.token;
+  if (section.encrypted_token) out.encrypted_token = section.encrypted_token;
+  if (section.encrypted_refresh_token) {
+    out.encrypted_refresh_token = section.encrypted_refresh_token;
+  }
+  const device = toDeviceSection(section.device);
+  if (device) out.device = device;
+  const workspace = toWorkspaceSection(section.workspace);
+  if (workspace) out.workspace = workspace;
+  return out;
 }
 
 /** Delete the file entirely. Used by integration tests, not production. */

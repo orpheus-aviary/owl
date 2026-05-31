@@ -55,6 +55,9 @@ describe('logger default redact paths (P5-c §6.27)', () => {
         '*.auth.encrypted_token',
         '*.profiles.*.encrypted_token',
         '*.profiles.*.auth.token',
+        '*.encrypted_refresh_token',
+        '*.auth.encrypted_refresh_token',
+        '*.profiles.*.encrypted_refresh_token',
         'authorization',
         'headers.authorization',
         'req.headers.authorization',
@@ -86,6 +89,21 @@ describe('logger default redact paths (P5-c §6.27)', () => {
     );
     const out = lines().join('\n');
     assert.ok(!out.includes('enc_secret_p1'), `encrypted_token leaked: ${out}`);
+    assert.ok(out.includes('a@b.c'), 'sibling fields stay visible');
+  });
+
+  it('masks per-profile `*.profiles.*.encrypted_refresh_token` (P5-d Phase 15 / D2)', () => {
+    const { logger, lines } = makeCapture();
+    logger.info(
+      {
+        cfg: {
+          profiles: { p1: { encrypted_refresh_token: 'enc_refresh_p1', email: 'a@b.c' } },
+        },
+      },
+      'profile cfg',
+    );
+    const out = lines().join('\n');
+    assert.ok(!out.includes('enc_refresh_p1'), `encrypted_refresh_token leaked: ${out}`);
     assert.ok(out.includes('a@b.c'), 'sibling fields stay visible');
   });
 
