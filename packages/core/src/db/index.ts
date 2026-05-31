@@ -42,36 +42,41 @@ export function createDatabase(options: DatabaseOptions): {
 
   const sqlite = new BetterSqlite3(dbPath);
 
-  if (wal) {
-    sqlite.pragma('journal_mode = WAL');
-  }
-  if (foreignKeys) {
-    sqlite.pragma('foreign_keys = ON');
-  }
-  sqlite.pragma('busy_timeout = 5000');
-
-  const v = sqlite.pragma('user_version', { simple: true }) as number;
-
-  if (v > LATEST_KNOWN_VERSION) {
-    sqlite.close();
-    throw new IncompatibleDbError(dbPath, v);
-  }
-
-  if (v === 0) {
-    if (isSchemaEmpty(sqlite)) {
-      applyInitialSchema(sqlite);
-    } else {
-      sqlite.close();
-      throw new MigrationRequiredError(dbPath);
+  // Any failure past the open — refused version, a mid-migration throw from
+  // applyInitialSchema / applyForwardMigrations — must close the handle, or
+  // a caller that retries (e.g. profile switch's PREPARE) leaks an open fd /
+  // a WAL lock on the file. P5-d Phase 14 (P3).
+  try {
+    if (wal) {
+      sqlite.pragma('journal_mode = WAL');
     }
-  } else if (v < LATEST_KNOWN_VERSION) {
-    applyForwardMigrations(sqlite, v, LATEST_KNOWN_VERSION);
+    if (foreignKeys) {
+      sqlite.pragma('foreign_keys = ON');
+    }
+    sqlite.pragma('busy_timeout = 5000');
+
+    const v = sqlite.pragma('user_version', { simple: true }) as number;
+
+    if (v > LATEST_KNOWN_VERSION) {
+      throw new IncompatibleDbError(dbPath, v);
+    }
+
+    if (v === 0) {
+      if (isSchemaEmpty(sqlite)) {
+        applyInitialSchema(sqlite);
+      } else {
+        throw new MigrationRequiredError(dbPath);
+      }
+    } else if (v < LATEST_KNOWN_VERSION) {
+      applyForwardMigrations(sqlite, v, LATEST_KNOWN_VERSION);
+    }
+    // else v === LATEST_KNOWN_VERSION: open as-is
+
+    return { db: drizzle(sqlite, { schema }), sqlite };
+  } catch (err) {
+    sqlite.close();
+    throw err;
   }
-  // else v === LATEST_KNOWN_VERSION: open as-is
-
-  const db = drizzle(sqlite, { schema });
-
-  return { db, sqlite };
 }
 
 export { schema };

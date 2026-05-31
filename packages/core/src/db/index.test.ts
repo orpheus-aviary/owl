@@ -1,5 +1,9 @@
 import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { after, before, describe, it } from 'node:test';
+import BetterSqlite3 from 'better-sqlite3';
 import { eq } from 'drizzle-orm';
 import { v4 as uuidv4 } from 'uuid';
 import { createDatabase } from './index.js';
@@ -206,6 +210,33 @@ describe('device ID', () => {
 
     const id2 = ensureDeviceId(db);
     assert.equal(id1, id2, 'should return same UUID on second call');
+  });
+});
+
+describe('createDatabase — closes the handle on a mid-migration throw (P5-d Phase 14)', () => {
+  let tmp: string;
+  before(() => {
+    tmp = mkdtempSync(join(tmpdir(), 'owl-db-close-'));
+  });
+  after(() => {
+    rmSync(tmp, { recursive: true, force: true });
+  });
+
+  it('rethrows (after closing) when a forward migration re-applies onto existing schema', () => {
+    const p = join(tmp, 'rollback.db');
+    const fresh = createDatabase({ dbPath: p }); // fresh db at LATEST_KNOWN_VERSION
+    fresh.sqlite.pragma('user_version = 1'); // pretend it's older; tables already exist
+    fresh.sqlite.close();
+
+    // Reopen → applyForwardMigrations(1 → LATEST) re-runs migrations onto an
+    // already-migrated schema → throws. The Phase 14 try/catch must close the
+    // handle before rethrowing, not leak it.
+    assert.throws(() => createDatabase({ dbPath: p }));
+
+    // Sanity: the path is reusable afterward (the internal handle was released).
+    const re = new BetterSqlite3(p);
+    assert.doesNotThrow(() => re.pragma('user_version'));
+    re.close();
   });
 });
 
