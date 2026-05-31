@@ -48,8 +48,12 @@ export { normalizeServerUrl, computeProfileId, InvalidServerUrlError } from './p
 export {
   readActiveProfileId,
   isValidProfileId,
+  isHexProfileId,
+  resolveActiveProfile,
   resolveActiveProfileDbPath,
+  LOCAL_PROFILE,
 } from './profile/resolver.js';
+export type { ActiveProfile } from './profile/resolver.js';
 
 // Shortcuts (canonical → Electron accelerator conversion for main process)
 export { toElectronAccelerator } from './shortcuts/accelerator.js';
@@ -171,15 +175,21 @@ export type {
 export {
   clearSkybridgeAuth,
   readSkybridgeConfig,
+  removeProfile,
   removeSkybridgeConfig,
   requireAuth,
+  setActiveProfile,
   skybridgeConfigPath,
+  InvalidProfileIdError,
+  ProfileDbMissingError,
   SkybridgeAuthRequiredError,
   SkybridgeNotConfiguredError,
   SkybridgeServerUrlMissingError,
+  writeProfileConfig,
   writeSkybridgeConfig,
 } from './skybridge/config.js';
 export type {
+  ProfileConfigSection,
   SkybridgeAuthSection,
   SkybridgeConfig,
   SkybridgeDeviceSection,
