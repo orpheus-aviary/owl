@@ -37,6 +37,13 @@ function PopoverAnchor({ ...props }: React.ComponentProps<typeof PopoverPrimitiv
   return <PopoverPrimitive.Anchor data-slot="popover-anchor" {...props} />;
 }
 
+// Closes the popover when activated; wrap an `asChild` Link so navigating away
+// (e.g. the sidebar「+ 添加账号」into Settings) also dismisses the popover —
+// the popover is otherwise uncontrolled and a bare Link wouldn't close it.
+function PopoverClose({ ...props }: React.ComponentProps<typeof PopoverPrimitive.Close>) {
+  return <PopoverPrimitive.Close data-slot="popover-close" {...props} />;
+}
+
 function PopoverHeader({ className, ...props }: React.ComponentProps<'div'>) {
   return (
     <div
@@ -66,6 +73,7 @@ export {
   PopoverTrigger,
   PopoverContent,
   PopoverAnchor,
+  PopoverClose,
   PopoverHeader,
   PopoverTitle,
   PopoverDescription,

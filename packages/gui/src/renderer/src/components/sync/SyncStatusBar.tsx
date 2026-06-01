@@ -1,6 +1,7 @@
 import { Button } from '@/components/ui/button';
 import {
   Popover,
+  PopoverClose,
   PopoverContent,
   PopoverDescription,
   PopoverHeader,
@@ -9,7 +10,7 @@ import {
 } from '@/components/ui/popover';
 import type { SyncState, SyncStatusSnapshot } from '@/lib/api';
 import { useSyncStatus } from '@/stores/sync-status';
-import { Check, Loader2 } from 'lucide-react';
+import { Check, Loader2, Plus } from 'lucide-react';
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import type { ProfileSummary, SyncProfilesReply } from '../../../../shared/sync-profiles-types.js';
@@ -282,6 +283,18 @@ export function ProfileSwitcher({
         ))}
       </ul>
       {error && <p className="px-1 text-xs text-destructive break-words">{error}</p>}
+      {/* Add another account — deep-links into Settings with the add form open.
+          PopoverClose dismisses this (uncontrolled) popover on navigate. Logging
+          in there adds + switches to the new account; the current one stays. */}
+      <PopoverClose asChild>
+        <Link
+          to="/settings?tab=sync&action=add"
+          className="flex items-center gap-2 rounded px-1 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
+        >
+          <Plus className="size-3 shrink-0" />
+          添加账号
+        </Link>
+      </PopoverClose>
     </div>
   );
 }

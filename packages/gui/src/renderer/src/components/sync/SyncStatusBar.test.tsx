@@ -27,6 +27,7 @@ vi.mock('@/components/ui/popover', () => {
         {children}
       </div>
     ),
+    PopoverClose: ({ children }: { children?: ReactNode; asChild?: boolean }) => <>{children}</>,
     PopoverHeader: (props: ComponentProps<'div'>) => <div {...props} />,
     PopoverTitle: (props: ComponentProps<'div'>) => <div {...props} />,
     PopoverDescription: (props: ComponentProps<'p'>) => <p {...props} />,
@@ -454,8 +455,26 @@ describe('ProfileSwitcher — W4 quick switch list', () => {
     expect(screen.queryByRole('button', { name: /pid-ghost@test/ })).toBeNull();
     expect(screen.getByText('本地副本缺失')).toBeTruthy();
     expect(screen.getByText('需重新登录')).toBeTruthy();
-    const links = screen.getAllByRole('link');
-    expect(links.every((l) => l.getAttribute('href') === '/settings?tab=sync')).toBe(true);
+    // The two hint links point at Settings (excluding the always-present
+    //「+ 添加账号」row, which carries `&action=add`).
+    const hintLinks = screen
+      .getAllByRole('link')
+      .filter((l) => l.getAttribute('href') !== '/settings?tab=sync&action=add');
+    expect(hintLinks).toHaveLength(2);
+    expect(hintLinks.every((l) => l.getAttribute('href') === '/settings?tab=sync')).toBe(true);
+  });
+
+  it('renders a「添加账号」row that deep-links into Settings with the add form open', () => {
+    render(
+      <MemoryRouter>
+        <ProfileSwitcher
+          data={makeData([local({ is_active: true, can_quick_switch: false })])}
+          loading={false}
+        />
+      </MemoryRouter>,
+    );
+    const addLink = screen.getByRole('link', { name: /添加账号/ });
+    expect(addLink.getAttribute('href')).toBe('/settings?tab=sync&action=add');
   });
 
   it('surfaces an error message when switchProfile fails', async () => {

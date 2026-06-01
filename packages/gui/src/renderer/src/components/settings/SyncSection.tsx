@@ -1,9 +1,10 @@
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { Loader2 } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import type { SyncStatusReply } from '../../../../shared/sync-status-types.js';
 import { DevicesCard } from './DevicesCard';
+import { DEFAULT_SERVER_URL, LoginForm, type LoginFormValues } from './LoginForm';
 import { SavedProfilesCard } from './SavedProfilesCard';
 
 /**
@@ -13,6 +14,13 @@ import { SavedProfilesCard } from './SavedProfilesCard';
  * always comes from `sync:status` IPC. Login success drops the
  * IPC-returned summary on purpose and re-fetches status — so new
  * display fields only require one IPC change, not two.
+ *
+ * P5-d (multi-account add): logging in while already on an account is allowed —
+ * it adds the new account and switches to it (the prior account stays saved for
+ * quick-switch). The auth view exposes an「添加账号」action; the form itself is
+ * the shared `<LoginForm>`. The add form's visibility is driven by the URL
+ * (`?action=add`), so the sidebar「+ 添加账号」deep-link and the in-page button
+ * share one source of truth and cancel just clears the param.
  */
 
 type SessionShape = NonNullable<SyncStatusReply['session']>;
@@ -23,20 +31,28 @@ type View =
   | { kind: 'unauth'; snapshot: SnapshotShape }
   | { kind: 'auth'; session: SessionShape; snapshot: SnapshotShape };
 
-// Skybridge server's actual default port is 8443
-// (`skybridge/packages/server/src/config.ts`). The earlier `18443` in the
-// Phase 8 design doc was a typo that survived into the form default and
-// was caught during manual testing 2026-05-29.
-const DEFAULT_SERVER_URL = 'http://127.0.0.1:8443';
+/**
+ * Prefill the login form's server with the best known host so same-server
+ * account switching doesn't retype it: the active session's server (auth /
+ * add), else a keychain-broken account's snapshot server, else the default.
+ */
+function rememberedServer(view: View): string {
+  if (view.kind === 'auth') return view.session.server_url;
+  if (view.kind === 'unauth') return view.snapshot?.server_url ?? DEFAULT_SERVER_URL;
+  return DEFAULT_SERVER_URL;
+}
 
 export function SyncSection() {
+  // The add form is URL-driven: `?action=add` opens it (in-page button + sidebar
+  // deep-link share one source of truth); cancel clears the param.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const adding = searchParams.get('action') === 'add';
+
   const [view, setView] = useState<View>({ kind: 'loading' });
-  const [serverUrl, setServerUrl] = useState(DEFAULT_SERVER_URL);
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [confirmingLogout, setConfirmingLogout] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null); // page-level: status / logout
+  const [loginError, setLoginError] = useState<string | null>(null); // form-level: login
 
   const refreshStatus = useCallback(async () => {
     const reply = await window.owlAPI.sync.status();
@@ -48,9 +64,6 @@ export function SyncSection() {
     const { session, snapshot } = reply.data;
     if (session) {
       setView({ kind: 'auth', session, snapshot });
-      // Pre-fill server URL with the active session's server, so logout
-      // → re-login flow doesn't lose the last-used host.
-      setServerUrl(session.server_url);
     } else {
       setView({ kind: 'unauth', snapshot });
     }
@@ -60,23 +73,28 @@ export function SyncSection() {
     refreshStatus();
   }, [refreshStatus]);
 
-  const handleLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!serverUrl.trim() || !email.trim() || !password) return;
-    setError(null);
+  const handleLogin = async (values: LoginFormValues) => {
+    setLoginError(null);
     setSubmitting(true);
-    const reply = await window.owlAPI.sync.login({
-      serverUrl: serverUrl.trim(),
-      email: email.trim(),
-      password,
-    });
+    const reply = await window.owlAPI.sync.login(values);
     setSubmitting(false);
     if (!reply.ok) {
-      setError(reply.message);
+      setLoginError(reply.message);
       return;
     }
-    setPassword('');
+    // Success → main fires `profile:switched` → the window reloads onto the new
+    // profile (16a). Refresh status anyway so the identity updates even if the
+    // reload is deferred — the "single display truth" loop (login → status).
     await refreshStatus();
+  };
+
+  const openAdd = () => {
+    setLoginError(null);
+    setSearchParams({ tab: 'sync', action: 'add' }, { replace: true });
+  };
+  const cancelAdd = () => {
+    setLoginError(null);
+    setSearchParams({ tab: 'sync' }, { replace: true });
   };
 
   const handleLogout = async () => {
@@ -124,48 +142,12 @@ export function SyncSection() {
       )}
 
       {view.kind === 'unauth' && (
-        <form
+        <LoginForm
+          initialServerUrl={rememberedServer(view)}
+          submitting={submitting}
+          error={loginError}
           onSubmit={handleLogin}
-          className="border border-border rounded-md divide-y divide-border"
-        >
-          <SettingRow label="服务器地址">
-            <Input
-              type="text"
-              className="w-72 h-8"
-              value={serverUrl}
-              onChange={(e) => setServerUrl(e.target.value)}
-              placeholder={DEFAULT_SERVER_URL}
-              autoComplete="off"
-              spellCheck={false}
-            />
-          </SettingRow>
-          <SettingRow label="邮箱">
-            <Input
-              type="email"
-              className="w-72 h-8"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              autoComplete="username"
-              required
-            />
-          </SettingRow>
-          <SettingRow label="密码">
-            <Input
-              type="password"
-              className="w-72 h-8"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              autoComplete="current-password"
-              required
-            />
-          </SettingRow>
-          <div className="px-4 py-3 flex justify-end">
-            <Button type="submit" disabled={submitting || !email || !password || !serverUrl.trim()}>
-              {submitting && <Loader2 className="size-4 animate-spin" />}
-              登录
-            </Button>
-          </div>
-        </form>
+        />
       )}
 
       {view.kind === 'auth' && (
@@ -209,6 +191,30 @@ export function SyncSection() {
           <p className="text-xs text-muted-foreground px-1">
             ⏰ 提醒仅在当前账号激活时触发；切换到其他账号或本地独立工作区时，此账号的提醒不会响起。
           </p>
+
+          {/* Multi-account add — log in to another account from here. The new
+              account becomes active; this one stays saved for quick-switch. */}
+          {adding ? (
+            <div className="flex flex-col gap-2">
+              <p className="text-sm text-muted-foreground px-1">
+                登录另一个账号；当前账号会保留在列表中，可随时切换。
+              </p>
+              <LoginForm
+                initialServerUrl={rememberedServer(view)}
+                submitting={submitting}
+                error={loginError}
+                onSubmit={handleLogin}
+                onCancel={cancelAdd}
+              />
+            </div>
+          ) : (
+            <div className="flex justify-start">
+              <Button variant="outline" size="sm" onClick={openAdd}>
+                添加账号
+              </Button>
+            </div>
+          )}
+
           <DevicesCard />
         </>
       )}

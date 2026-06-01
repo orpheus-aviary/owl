@@ -12,8 +12,20 @@
  */
 
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SyncSection } from './SyncSection';
+
+// SyncSection reads `useSearchParams` (the `?action=add` add-form switch), so
+// every render needs a Router. `route` seeds the URL (e.g. a deep-linked
+// `?action=add`).
+function renderSection(route = '/settings?tab=sync') {
+  return render(
+    <MemoryRouter initialEntries={[route]}>
+      <SyncSection />
+    </MemoryRouter>,
+  );
+}
 
 // shared/SyncStatusReply shape used in fixtures.
 type Session = {
@@ -56,7 +68,7 @@ afterEach(() => {
 
 describe('SyncSection — unauth → login → auth flow', () => {
   it('renders the form after initial sync.status returns no session', async () => {
-    render(<SyncSection />);
+    renderSection();
     await waitFor(() => {
       expect(screen.getByRole('button', { name: '登录' })).toBeTruthy();
     });
@@ -69,7 +81,7 @@ describe('SyncSection — unauth → login → auth flow', () => {
       calledStatusTimes += 1;
       return calledStatusTimes === 1 ? okStatus(null) : okStatus(FULL_SESSION);
     });
-    render(<SyncSection />);
+    renderSection();
     await waitFor(() => screen.getByRole('button', { name: '登录' }));
 
     fireEvent.change(screen.getByDisplayValue('http://127.0.0.1:8443'), {
@@ -104,7 +116,7 @@ describe('SyncSection — unauth → login → auth flow', () => {
 
   it('surfaces 邮箱或密码不正确 on INVALID_CREDENTIALS reply, keeps form mounted', async () => {
     window.owlAPI.sync.login = vi.fn(() => failVoid('邮箱或密码不正确'));
-    render(<SyncSection />);
+    renderSection();
     await waitFor(() => screen.getByRole('button', { name: '登录' }));
 
     const emailInput = screen
@@ -126,7 +138,7 @@ describe('SyncSection — unauth → login → auth flow', () => {
 
   it('surfaces 系统钥匙串不可用 for SafeStorageUnavailable replies', async () => {
     window.owlAPI.sync.login = vi.fn(() => failVoid('系统钥匙串不可用，无法安全存储登录凭证'));
-    render(<SyncSection />);
+    renderSection();
     await waitFor(() => screen.getByRole('button', { name: '登录' }));
 
     const emailInput = screen
@@ -150,7 +162,7 @@ describe('SyncSection — auth → logout flow', () => {
   });
 
   it('renders identity fields from sync.status', async () => {
-    render(<SyncSection />);
+    renderSection();
     await waitFor(() => {
       expect(screen.getByText('a@test')).toBeTruthy();
       expect(screen.getByText('owl/default')).toBeTruthy();
@@ -160,7 +172,7 @@ describe('SyncSection — auth → logout flow', () => {
 
   it('falls back to workspace_id when workspace_slug is null', async () => {
     window.owlAPI.sync.status = vi.fn(() => okStatus({ ...FULL_SESSION, workspace_slug: null }));
-    render(<SyncSection />);
+    renderSection();
     await waitFor(() => {
       expect(screen.getByText('ws-A')).toBeTruthy();
     });
@@ -172,7 +184,7 @@ describe('SyncSection — auth → logout flow', () => {
       calledStatusTimes += 1;
       return calledStatusTimes === 1 ? okStatus(FULL_SESSION) : okStatus(null);
     });
-    render(<SyncSection />);
+    renderSection();
     await waitFor(() => screen.getByText('a@test'));
 
     fireEvent.click(screen.getByRole('button', { name: '退出登录' }));
@@ -189,7 +201,7 @@ describe('SyncSection — auth → logout flow', () => {
   });
 
   it('cancel button in logout confirm leaves session intact', async () => {
-    render(<SyncSection />);
+    renderSection();
     await waitFor(() => screen.getByText('a@test'));
 
     fireEvent.click(screen.getByRole('button', { name: '退出登录' }));
@@ -200,7 +212,7 @@ describe('SyncSection — auth → logout flow', () => {
   });
 
   it('renders DevicesCard collapsed header in auth view, does NOT fetch devices', async () => {
-    render(<SyncSection />);
+    renderSection();
     await waitFor(() => screen.getByText('a@test'));
     // Sub-card header is present + collapsed (no device row rendered yet)
     expect(screen.getByRole('button', { name: /管理我的设备/ })).toBeTruthy();
@@ -210,16 +222,100 @@ describe('SyncSection — auth → logout flow', () => {
   // P5-d Phase 17 (W5) — the auth view notes that reminders only fire for
   // the active profile (single-active acceptance, design §13 W5).
   it('shows the active-profile reminder note in auth view', async () => {
-    render(<SyncSection />);
+    renderSection();
     await waitFor(() => screen.getByText('a@test'));
     expect(screen.getByText(/提醒仅在当前账号激活时触发/)).toBeTruthy();
+  });
+});
+
+// P5-d (multi-account add) — logging in while already on an account adds the
+// new account from the auth view's「添加账号」action (URL-driven `?action=add`).
+describe('SyncSection — multi-account add', () => {
+  beforeEach(() => {
+    window.owlAPI.sync.status = vi.fn(() => okStatus(FULL_SESSION));
+  });
+
+  it('auth view shows 添加账号 (and no login form) until the action opens it', async () => {
+    renderSection();
+    await waitFor(() => screen.getByText('a@test'));
+    expect(screen.getByRole('button', { name: '添加账号' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: '登录' })).toBeNull();
+  });
+
+  it('clicking 添加账号 reveals the login form: server prefilled, email empty, note shown', async () => {
+    renderSection();
+    await waitFor(() => screen.getByText('a@test'));
+
+    fireEvent.click(screen.getByRole('button', { name: '添加账号' }));
+
+    // Form appears with the current account's server prefilled (same-server
+    // account switching) and the keep-current-account note.
+    expect(screen.getByRole('button', { name: '登录' })).toBeTruthy();
+    expect(screen.getByDisplayValue('http://srv')).toBeTruthy(); // session.server_url, not DEFAULT
+    expect(screen.getByText(/当前账号会保留在列表中/)).toBeTruthy();
+    // Fresh form → email/password empty → 登录 disabled.
+    expect(screen.getByRole('button', { name: '登录' }).hasAttribute('disabled')).toBe(true);
+    // The 添加账号 trigger is replaced by the form.
+    expect(screen.queryByRole('button', { name: '添加账号' })).toBeNull();
+  });
+
+  it('cancel returns to the account view (form gone, 添加账号 back)', async () => {
+    renderSection();
+    await waitFor(() => screen.getByText('a@test'));
+    fireEvent.click(screen.getByRole('button', { name: '添加账号' }));
+    await waitFor(() => screen.getByRole('button', { name: '登录' }));
+
+    fireEvent.click(screen.getByRole('button', { name: '取消' }));
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '添加账号' })).toBeTruthy();
+    });
+    expect(screen.queryByRole('button', { name: '登录' })).toBeNull();
+  });
+
+  it('deep link ?action=add opens the add form directly in the auth view', async () => {
+    renderSection('/settings?tab=sync&action=add');
+    await waitFor(() => screen.getByText('a@test'));
+    expect(screen.getByRole('button', { name: '登录' })).toBeTruthy();
+    expect(screen.getByText(/当前账号会保留在列表中/)).toBeTruthy();
+  });
+
+  it('login submits the form values via sync.login', async () => {
+    renderSection();
+    await waitFor(() => screen.getByText('a@test'));
+    fireEvent.click(screen.getByRole('button', { name: '添加账号' }));
+    await waitFor(() => screen.getByRole('button', { name: '登录' }));
+
+    const emailInput = screen
+      .getAllByRole('textbox')
+      .find((el) => el.getAttribute('type') === 'email');
+    fireEvent.change(emailInput as HTMLElement, { target: { value: 'b@test' } });
+    fireEvent.change(document.querySelector('input[type="password"]') as HTMLInputElement, {
+      target: { value: 'pw2' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '登录' }));
+
+    await waitFor(() => {
+      expect(window.owlAPI.sync.login).toHaveBeenCalledWith({
+        serverUrl: 'http://srv',
+        email: 'b@test',
+        password: 'pw2',
+      });
+    });
+  });
+
+  it('the keep-current-account note does NOT show in the unauth view (even with ?action=add)', async () => {
+    window.owlAPI.sync.status = vi.fn(() => okStatus(null)); // local / unauth
+    renderSection('/settings?tab=sync&action=add');
+    await waitFor(() => screen.getByRole('button', { name: '登录' }));
+    expect(screen.queryByText(/当前账号会保留在列表中/)).toBeNull();
   });
 });
 
 describe('SyncSection — DevicesCard wiring', () => {
   it('does NOT render DevicesCard in unauth view', async () => {
     // Default beforeEach gives an unauthenticated session.
-    render(<SyncSection />);
+    renderSection();
     await waitFor(() => screen.getByRole('button', { name: '登录' }));
     expect(screen.queryByRole('button', { name: /管理我的设备/ })).toBeNull();
   });
@@ -242,14 +338,14 @@ describe('SyncSection — W6 local-workspace banner', () => {
 
   it('shows the banner when daemon reports a local profile (server_url null)', async () => {
     window.owlAPI.sync.status = vi.fn(() => statusWith(LOCAL_SNAPSHOT));
-    render(<SyncSection />);
+    renderSection();
     await waitFor(() => screen.getByRole('button', { name: '登录' }));
     expect(screen.getByText(/本地独立工作区/)).toBeTruthy();
   });
 
   it('hides the banner when the daemon has not reported (snapshot null)', async () => {
     window.owlAPI.sync.status = vi.fn(() => statusWith(null));
-    render(<SyncSection />);
+    renderSection();
     await waitFor(() => screen.getByRole('button', { name: '登录' }));
     expect(screen.queryByText(/本地独立工作区/)).toBeNull();
   });
@@ -258,7 +354,7 @@ describe('SyncSection — W6 local-workspace banner', () => {
     window.owlAPI.sync.status = vi.fn(() =>
       statusWith({ ...LOCAL_SNAPSHOT, server_url: 'http://srv' }),
     );
-    render(<SyncSection />);
+    renderSection();
     await waitFor(() => screen.getByRole('button', { name: '登录' }));
     expect(screen.queryByText(/本地独立工作区/)).toBeNull();
   });
