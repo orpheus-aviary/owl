@@ -2,6 +2,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Loader2 } from 'lucide-react';
 import { useState } from 'react';
+import { SettingRow } from './SettingRow';
 
 // Skybridge server's actual default port is 8443
 // (`skybridge/packages/server/src/config.ts`).
@@ -96,14 +97,5 @@ export function LoginForm({
         </Button>
       </div>
     </form>
-  );
-}
-
-function SettingRow({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div className="flex items-center justify-between gap-4 px-4 py-3">
-      <span className="text-sm">{label}</span>
-      <div className="flex items-center gap-2">{children}</div>
-    </div>
   );
 }

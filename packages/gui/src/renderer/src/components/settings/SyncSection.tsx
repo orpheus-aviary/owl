@@ -6,6 +6,7 @@ import type { SyncStatusReply } from '../../../../shared/sync-status-types.js';
 import { DevicesCard } from './DevicesCard';
 import { DEFAULT_SERVER_URL, LoginForm, type LoginFormValues } from './LoginForm';
 import { SavedProfilesCard } from './SavedProfilesCard';
+import { SettingRow } from './SettingRow';
 
 /**
  * P5-d Phase 8 — Settings → 同步 tab.
@@ -223,15 +224,6 @@ export function SyncSection() {
           pure-local user (no account profiles). Shown across all views so a
           user on local can still delete a stale account copy. */}
       <SavedProfilesCard />
-    </div>
-  );
-}
-
-function SettingRow({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div className="flex items-center justify-between gap-4 px-4 py-3">
-      <span className="text-sm">{label}</span>
-      <div className="flex items-center gap-2">{children}</div>
     </div>
   );
 }

@@ -280,6 +280,12 @@ function b64(plain: string): string {
   return Buffer.from(`enc:${plain}`, 'utf-8').toString('base64');
 }
 
+/** profile_id values POSTed to /sync/switch, in call order. */
+const switchProfileIds = () =>
+  fetchMock.mock.calls
+    .filter(([u]) => String(u).endsWith('/sync/switch'))
+    .map(([, init]) => JSON.parse((init as RequestInit).body as string).profile_id);
+
 function profileCfg(over: Record<string, unknown> = {}) {
   return {
     server: { url: 'http://127.0.0.1:18443' },
@@ -554,10 +560,6 @@ describe('loginAndOpenSession — multi-account add (D-add)', () => {
       ...over,
     };
   }
-  const switchProfileIds = () =>
-    fetchMock.mock.calls
-      .filter(([u]) => String(u).endsWith('/sync/switch'))
-      .map(([, init]) => JSON.parse((init as RequestInit).body as string).profile_id);
   const login = () =>
     loginAndOpenSession({ serverUrl: 'http://127.0.0.1:18443', email: 'a@test', password: 'pw' });
 
@@ -838,10 +840,6 @@ describe('switchToProfile (Phase 17 / W4)', () => {
       ...over,
     };
   }
-  const switchProfileIds = () =>
-    fetchMock.mock.calls
-      .filter(([u]) => String(u).endsWith('/sync/switch'))
-      .map(([, init]) => JSON.parse((init as RequestInit).body as string).profile_id);
 
   it('switch to local: step-away — switches + setActive(local), no revoke / no token clear', async () => {
     coreState.effectiveActive = 'pid-A'; // currently on an account
@@ -948,10 +946,6 @@ describe('deleteProfileLocalCopy (Phase 17 / destructive)', () => {
       ...over,
     };
   }
-  const switchProfileIds = () =>
-    fetchMock.mock.calls
-      .filter(([u]) => String(u).endsWith('/sync/switch'))
-      .map(([, init]) => JSON.parse((init as RequestInit).body as string).profile_id);
 
   it('active delete: hard-switches local, revokes device-first/logout-last, deletes db + toml', async () => {
     coreState.effectiveActive = 'pid-B';
