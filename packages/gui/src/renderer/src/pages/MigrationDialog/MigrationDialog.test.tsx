@@ -72,6 +72,7 @@ function installMigrationStub(): MigrationStub {
           data: { devices: [] },
         }),
       ),
+      revokeDevice: vi.fn(() => Promise.resolve({ ok: true as const, data: { revoked: true } })),
       run: vi.fn(() =>
         Promise.resolve({
           ok: true as const,

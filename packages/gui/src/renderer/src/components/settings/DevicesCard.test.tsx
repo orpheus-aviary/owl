@@ -146,6 +146,58 @@ describe('DevicesCard — error path', () => {
   });
 });
 
+describe('DevicesCard — W9 remove device', () => {
+  beforeEach(() => {
+    window.owlAPI.sync.revokeDevice = vi.fn(() =>
+      Promise.resolve({ ok: true as const, data: { revoked: true } }),
+    );
+  });
+
+  it('shows 移除 only on non-current devices', async () => {
+    render(<DevicesCard />);
+    fireEvent.click(screen.getByRole('button', { name: /管理我的设备/ }));
+    await waitFor(() => screen.getByText('mac-b (owl)'));
+    // Only the non-current device (dev-B) gets a 移除 button.
+    expect(screen.getAllByRole('button', { name: '移除' })).toHaveLength(1);
+  });
+
+  it('confirm → 确认移除 revokes by id and re-fetches the list', async () => {
+    render(<DevicesCard />);
+    fireEvent.click(screen.getByRole('button', { name: /管理我的设备/ }));
+    await waitFor(() => screen.getByText('mac-b (owl)'));
+    expect(window.owlAPI.sync.devices).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByRole('button', { name: '移除' }));
+    fireEvent.click(screen.getByRole('button', { name: '确认移除' }));
+    await waitFor(() => expect(window.owlAPI.sync.revokeDevice).toHaveBeenCalledWith('dev-B'));
+    // success → re-fetch (this row would disappear with a real server)
+    await waitFor(() => expect(window.owlAPI.sync.devices).toHaveBeenCalledTimes(2));
+  });
+
+  it('取消 dismisses the confirm without revoking', async () => {
+    render(<DevicesCard />);
+    fireEvent.click(screen.getByRole('button', { name: /管理我的设备/ }));
+    await waitFor(() => screen.getByText('mac-b (owl)'));
+    fireEvent.click(screen.getByRole('button', { name: '移除' }));
+    fireEvent.click(screen.getByRole('button', { name: '取消' }));
+    expect(window.owlAPI.sync.revokeDevice).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: '移除' })).toBeTruthy();
+  });
+
+  it('surfaces an error and keeps the row when revoke fails', async () => {
+    window.owlAPI.sync.revokeDevice = vi.fn(() =>
+      Promise.resolve({ ok: false as const, message: '请在设置中重新登录' }),
+    );
+    render(<DevicesCard />);
+    fireEvent.click(screen.getByRole('button', { name: /管理我的设备/ }));
+    await waitFor(() => screen.getByText('mac-b (owl)'));
+    fireEvent.click(screen.getByRole('button', { name: '移除' }));
+    fireEvent.click(screen.getByRole('button', { name: '确认移除' }));
+    await waitFor(() => screen.getByText('请在设置中重新登录'));
+    expect(screen.getByText('mac-b (owl)')).toBeTruthy(); // row not removed
+  });
+});
+
 describe('formatRelative', () => {
   const NOW = 1700000000000;
 

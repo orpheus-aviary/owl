@@ -395,4 +395,73 @@ describe('sync routes (P5-a Step 7)', () => {
       );
     });
   });
+
+  // ── POST /sync/revoke-device (P5-d Phase 17 / W9) ────────────
+
+  describe('POST /sync/revoke-device', () => {
+    function injectSession(revokeImpl: (id: string) => Promise<void> = async () => {}): {
+      revoked: string[];
+    } {
+      const revoked: string[] = [];
+      const realClient = {
+        revokeDevice: async (id: string) => {
+          revoked.push(id);
+          return revokeImpl(id);
+        },
+      } as unknown as RealSkybridgeClient;
+      ctx.skybridgeSession = {
+        realClient,
+        module: {} as SkybridgeSession['module'],
+        config: { server: { url: TEST_SERVER_URL } } as SkybridgeSession['config'],
+        workspaceId: 'ws-X',
+        deviceId: 'dev-current',
+        serverUrl: TEST_SERVER_URL,
+      };
+      return { revoked };
+    }
+
+    it('revokes the device and returns { revoked: true }', async () => {
+      const tracker = injectSession();
+      const res = await app.inject({
+        method: 'POST',
+        url: '/sync/revoke-device',
+        payload: { device_id: 'dev-other' },
+      });
+      assert.equal(res.statusCode, 200);
+      assert.deepEqual(res.json().data, { revoked: true });
+      assert.deepEqual(tracker.revoked, ['dev-other']);
+    });
+
+    it('400 USAGE_ERROR when device_id is missing', async () => {
+      injectSession();
+      const res = await app.inject({ method: 'POST', url: '/sync/revoke-device', payload: {} });
+      assert.equal(res.statusCode, 400);
+      assert.equal(res.json().error_code, 'USAGE_ERROR');
+    });
+
+    it('401 + SKYBRIDGE_AUTH_REQUIRED when no session installed', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/sync/revoke-device',
+        payload: { device_id: 'dev-other' },
+      });
+      assert.equal(res.statusCode, 401);
+      assert.equal(res.json().error_code, 'SKYBRIDGE_AUTH_REQUIRED');
+    });
+
+    it('translates SDK ApiError(401) → 401 + invalidates session', async () => {
+      const apiError = Object.assign(new Error('token revoked'), { name: 'ApiError', status: 401 });
+      injectSession(async () => {
+        throw apiError;
+      });
+      const res = await app.inject({
+        method: 'POST',
+        url: '/sync/revoke-device',
+        payload: { device_id: 'dev-other' },
+      });
+      assert.equal(res.statusCode, 401);
+      assert.equal(res.json().error_code, 'SKYBRIDGE_AUTH_REQUIRED');
+      assert.equal(ctx.skybridgeSession, null, 'stale session invalidated on 401');
+    });
+  });
 });

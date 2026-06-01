@@ -713,3 +713,51 @@ describe('sync:switch-profile', () => {
     expect(windowState.send).not.toHaveBeenCalled();
   });
 });
+
+// P5-d Phase 17 (W9) — `sync:revoke-device` posts to daemon /sync/revoke-device.
+describe('sync:revoke-device', () => {
+  it('happy path: posts device_id, returns { revoked: true }', async () => {
+    const fetchSpy = vi.fn(
+      async (_url: string | URL, _init?: RequestInit) =>
+        new Response(JSON.stringify({ data: { revoked: true } }), { status: 200 }),
+    );
+    vi.stubGlobal('fetch', fetchSpy);
+    const reply = (await call('sync:revoke-device', 'dev-other')) as IpcReply<{ revoked: boolean }>;
+    expect(reply.ok).toBe(true);
+    if (reply.ok) expect(reply.data.revoked).toBe(true);
+    const body = JSON.parse((fetchSpy.mock.calls[0]![1] as RequestInit).body as string);
+    expect(body.device_id).toBe('dev-other');
+  });
+
+  it('daemon error envelope → ok:false + 中文 message from daemon body', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              success: false,
+              error_code: 'SKYBRIDGE_AUTH_REQUIRED',
+              message: 'skybridge token rejected (401); 请在设置中重新登录',
+            }),
+            { status: 401 },
+          ),
+      ),
+    );
+    const reply = (await call('sync:revoke-device', 'dev-other')) as IpcReply<unknown>;
+    expect(reply.ok).toBe(false);
+    if (!reply.ok) expect(reply.message).toMatch(/请在设置中重新登录/);
+  });
+
+  it('fetch rejects (daemon down) → NetworkError → 网络连接失败…', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new Error('ECONNREFUSED');
+      }),
+    );
+    const reply = (await call('sync:revoke-device', 'dev-other')) as IpcReply<unknown>;
+    expect(reply.ok).toBe(false);
+    if (!reply.ok) expect(reply.message).toMatch(/网络连接失败/);
+  });
+});

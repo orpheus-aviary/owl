@@ -111,6 +111,39 @@ export function registerSyncRoutes(app: FastifyInstance, ctx: AppContext): void 
     }
   });
 
+  // P5-d Phase 17 (W9) — revoke a device under the current skybridge user.
+  // Models /sync/devices exactly: reads ctx.skybridgeSession directly (no lazy
+  // bootstrap), translates raw SDK errors before the status/code helpers, and
+  // invalidates the in-memory session on a translated 401. GUI main only ever
+  // calls this for a NON-current device (the current device is removed via
+  // logout), so a successful revoke needs no local session teardown.
+  app.post('/sync/revoke-device', async (req, reply) => {
+    const deviceId = (req.body as { device_id?: unknown } | undefined)?.device_id;
+    if (typeof deviceId !== 'string' || deviceId.length === 0) {
+      fail(reply, 400, 'missing required field: device_id', 'USAGE_ERROR');
+      return;
+    }
+    try {
+      const session = ctx.skybridgeSession;
+      if (!session) {
+        throw new SkybridgeAuthRequiredError('skybridge session not installed; 请在设置中登录');
+      }
+      await session.realClient.revokeDevice(deviceId);
+      ok(reply, { revoked: true });
+    } catch (err) {
+      const translated = translateSkybridgeError(err);
+      if (translated instanceof SkybridgeAuthRequiredError) {
+        invalidateSkybridgeSession(ctx);
+      }
+      fail(
+        reply,
+        statusForError(translated),
+        messageForError(translated),
+        codeForError(translated),
+      );
+    }
+  });
+
   // P5-d Phase 15 — switch the daemon onto a profile's db (live login flip /
   // logout-to-local). `profile_id` is `local` (→ owl/owl.db) or a 32-hex
   // profile (→ profiles/<id>/owl.db). Returns the target db's stored

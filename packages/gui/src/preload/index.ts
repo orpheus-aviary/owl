@@ -128,6 +128,12 @@ contextBridge.exposeInMainWorld('owlAPI', {
      */
     devices: (): Promise<SyncIpcReply<SyncDevicesReply>> => ipcRenderer.invoke('sync:devices'),
     /**
+     * P5-d Phase 17 (W9): revoke a NON-current device server-side, then the
+     * caller re-fetches `devices`. The current device is removed via logout.
+     */
+    revokeDevice: (deviceId: string): Promise<SyncIpcReply<{ revoked: boolean }>> =>
+      ipcRenderer.invoke('sync:revoke-device', deviceId),
+    /**
      * P5-d Phase 17 (W8): drive one manual pull/push round (status popover
      * 「手动同步」action). SSE pushes the resulting `sync:status_changed`, so
      * the caller only needs success/failure. No profile change.

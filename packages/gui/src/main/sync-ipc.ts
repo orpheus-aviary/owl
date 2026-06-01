@@ -66,6 +66,9 @@ export function registerSyncIpc(): void {
   });
   ipcMain.handle('sync:status', async () => safe<SyncStatusReply>(buildStatus));
   ipcMain.handle('sync:devices', async () => safe<SyncDevicesReply>(buildDevices));
+  ipcMain.handle('sync:revoke-device', async (_e, deviceId: string) =>
+    safe<{ revoked: boolean }>(() => revokeDevice(deviceId)),
+  );
   ipcMain.handle('sync:run', async () => safe<RunSyncResult>(runSyncNow));
   // P5-d Phase 17 (W4) — saved-profile list (pure toml read, no daemon round
   // trip) + password-free quick switch (fires profile:switched on success so
@@ -246,6 +249,32 @@ async function buildDevices(): Promise<SyncDevicesReply> {
       is_current: currentDeviceId !== null && d.id === currentDeviceId,
     })),
   };
+}
+
+// P5-d Phase 17 (W9) — revoke a device via the daemon. Same error shape as
+// buildDevices: a bare fetch failure → NetworkError (Chinese「无法连接…」), a
+// non-2xx surfaces the daemon's already-Chinese envelope.message. GUI only
+// calls this for a non-current device (the current one is removed via logout),
+// so there's no local session teardown on success.
+async function revokeDevice(deviceId: string): Promise<{ revoked: boolean }> {
+  let res: Response;
+  try {
+    res = await fetch(`${getDaemonUrl()}/sync/revoke-device`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ device_id: deviceId }),
+    });
+  } catch (err) {
+    throw new NetworkError(
+      err instanceof Error ? err.message : String(err),
+      err instanceof Error ? err : undefined,
+    );
+  }
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { message?: string } | null;
+    throw new Error(body?.message ?? `daemon /sync/revoke-device returned HTTP ${res.status}`);
+  }
+  return { revoked: true };
 }
 
 async function safe<T>(fn: () => Promise<T>): Promise<SyncIpcReply<T>> {

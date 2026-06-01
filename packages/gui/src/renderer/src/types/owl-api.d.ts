@@ -63,6 +63,7 @@ export interface OwlAPI {
     logout: () => Promise<SyncIpcReply<void>>;
     status: () => Promise<SyncIpcReply<SyncStatusReply>>;
     devices: () => Promise<SyncIpcReply<SyncDevicesReply>>;
+    revokeDevice: (deviceId: string) => Promise<SyncIpcReply<{ revoked: boolean }>>;
     run: () => Promise<SyncIpcReply<RunSyncResult>>;
     profiles: () => Promise<SyncIpcReply<SyncProfilesReply>>;
     switchProfile: (id: string) => Promise<SyncIpcReply<void>>;

@@ -106,6 +106,13 @@ export interface RealSkybridgeClient {
       lastSeenAt: number;
     }[]
   >;
+  /**
+   * P5-d Phase 17 (W9) — revoke/delete a device under the current user. The
+   * SDK's `createSkybridgeClient(...)` returns this at runtime (client.d.ts);
+   * the interface declares it so the `POST /sync/revoke-device` route can call
+   * it through `ctx.skybridgeSession.realClient`.
+   */
+  revokeDevice(deviceId: string): Promise<void>;
 }
 
 export interface SkybridgeClientModule {

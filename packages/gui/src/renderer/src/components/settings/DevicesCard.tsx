@@ -105,7 +105,7 @@ export function DevicesCard() {
             ) : (
               <ul className="divide-y divide-border">
                 {phase.devices.map((d) => (
-                  <DeviceRow key={d.id} device={d} />
+                  <DeviceRow key={d.id} device={d} onRemoved={fetchDevices} />
                 ))}
               </ul>
             ))}
@@ -115,10 +115,31 @@ export function DevicesCard() {
   );
 }
 
-function DeviceRow({ device }: { device: SyncDeviceEntry }) {
+// P5-d Phase 17 (W9) — a device row. Non-current devices get a「移除」action
+// (inline confirm → `sync.revokeDevice` → re-fetch the list). The CURRENT
+// device has NO remove button: removing your own device is a self-logout, so
+// it's intentionally only reachable via「退出登录」(Q4).
+function DeviceRow({ device, onRemoved }: { device: SyncDeviceEntry; onRemoved: () => void }) {
+  const [confirming, setConfirming] = useState(false);
+  const [removing, setRemoving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
   const meta = [device.platform ?? null, device.app_version ?? null]
     .filter((s): s is string => Boolean(s))
     .join(' · ');
+
+  const onRemove = async () => {
+    setRemoving(true);
+    setError(null);
+    const reply = await window.owlAPI.sync.revokeDevice(device.id);
+    if (reply.ok) {
+      onRemoved(); // re-fetch — this row disappears
+      return;
+    }
+    setError(reply.message);
+    setRemoving(false);
+    setConfirming(false);
+  };
 
   return (
     <li className="px-4 py-3 flex items-start gap-3">
@@ -143,7 +164,37 @@ function DeviceRow({ device }: { device: SyncDeviceEntry }) {
         <div className="text-xs text-muted-foreground mt-0.5">
           上次活跃 {formatRelative(device.last_seen_at)}
         </div>
+        {error && <div className="text-xs text-destructive mt-1 break-words">{error}</div>}
       </div>
+      {!device.is_current && (
+        <div className="shrink-0">
+          {confirming ? (
+            <div className="flex items-center gap-1">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setConfirming(false)}
+                disabled={removing}
+              >
+                取消
+              </Button>
+              <Button
+                variant="destructive"
+                size="sm"
+                onClick={() => void onRemove()}
+                disabled={removing}
+              >
+                {removing && <Loader2 className="size-3 animate-spin" />}
+                确认移除
+              </Button>
+            </div>
+          ) : (
+            <Button variant="ghost" size="sm" onClick={() => setConfirming(true)}>
+              移除
+            </Button>
+          )}
+        </div>
+      )}
     </li>
   );
 }
