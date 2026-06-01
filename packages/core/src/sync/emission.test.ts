@@ -163,14 +163,15 @@ describe('sync_changes emission — notes', () => {
     const row = lastChange(sqlite);
     assert.equal(row.op, 'delete');
     assert.equal(row.entity_id, note.id);
-    const payload = JSON.parse(row.payload) as { updated_at_ms: number };
+    const payload = JSON.parse(row.payload) as { updated_at_ms: number; lww_counter: number };
     assert.equal(typeof payload.updated_at_ms, 'number');
     assert.ok(
       payload.updated_at_ms >= before && payload.updated_at_ms <= after,
       `updated_at_ms ${payload.updated_at_ms} outside [${before}, ${after}]`,
     );
-    // Confirm no stray fields slipped in
-    assert.deepEqual(Object.keys(payload).sort(), ['updated_at_ms']);
+    // W3: delete now also carries lww_counter; confirm no other stray fields.
+    assert.deepEqual(Object.keys(payload).sort(), ['lww_counter', 'updated_at_ms']);
+    assert.equal(typeof payload.lww_counter, 'number');
   });
 
   it('batchPermanentDeleteNotes emits one delete per id', () => {
@@ -360,10 +361,12 @@ describe('sync_changes emission — folders', () => {
     assert.equal(updates.length, 2);
     assert.equal(deletes.length, 1);
     assert.equal(deletes[0].entity_id, mid.id);
-    // P5-b §4.3: folder/delete payload now carries updated_at_ms as LWW anchor.
+    // P5-b §4.3: folder/delete payload carries updated_at_ms as LWW anchor.
+    // W3: + lww_counter as the tiebreaker.
     const deletePayload = JSON.parse(deletes[0].payload) as Record<string, unknown>;
-    assert.deepEqual(Object.keys(deletePayload).sort(), ['updated_at_ms']);
+    assert.deepEqual(Object.keys(deletePayload).sort(), ['lww_counter', 'updated_at_ms']);
     assert.equal(typeof deletePayload.updated_at_ms, 'number');
+    assert.equal(typeof deletePayload.lww_counter, 'number');
     for (const u of updates) {
       const p = JSON.parse(u.payload) as Record<string, unknown>;
       assert.equal(p.parent_id, root.id, 'children re-parented to grandparent');

@@ -34,6 +34,8 @@ export interface NoteCreatePayload {
   created_at_ms: number;
   updated_at_ms: number;
   tags: NoteTag[];
+  /** W3 (Phase 16c): per-device LWW counter. Absent on pre-W3 / 0.1.3-era payloads. */
+  lww_counter?: number;
 }
 
 /** Sparse post-state: only the fields that actually changed appear. */
@@ -42,6 +44,7 @@ export interface NoteUpdatePayload {
   content?: string;
   folder_id?: string | null;
   tags?: NoteTag[];
+  lww_counter?: number;
 }
 
 export interface NoteTrashPayload {
@@ -49,6 +52,7 @@ export interface NoteTrashPayload {
   trash_level: number;
   trashed_at_ms: number;
   auto_delete_at_ms: number | null;
+  lww_counter?: number;
 }
 
 export interface NoteRestorePayload {
@@ -57,10 +61,12 @@ export interface NoteRestorePayload {
   trashed_at_ms: number | null;
   /** Restore always clears auto_delete_at; null is the only legal value. */
   auto_delete_at_ms: null;
+  lww_counter?: number;
 }
 
 export interface NoteDeletePayload {
   updated_at_ms: number;
+  lww_counter?: number;
 }
 
 export type NoteApplyPayload =
@@ -145,6 +151,25 @@ function requireNullableNumber(
   return v;
 }
 
+/**
+ * W3 (Phase 16c): sparse numeric field. Returns `undefined` when the key is
+ * absent (pre-W3 payloads); throws when present but not a finite number, so a
+ * round-trip never silently drops `lww_counter`.
+ */
+function optionalNumber(
+  op: string,
+  raw: unknown,
+  obj: Record<string, unknown>,
+  key: string,
+): number | undefined {
+  if (!(key in obj)) return undefined;
+  const v = obj[key];
+  if (typeof v !== 'number' || !Number.isFinite(v)) {
+    fail(op, `${key} must be a finite number when present, got ${typeof v}`, raw);
+  }
+  return v;
+}
+
 function requireTagsArray(
   op: string,
   raw: unknown,
@@ -176,6 +201,7 @@ function parseCreate(raw: unknown, obj: Record<string, unknown>): NoteCreatePayl
     created_at_ms: requireNumber('create', raw, obj, 'created_at_ms'),
     updated_at_ms: requireNumber('create', raw, obj, 'updated_at_ms'),
     tags: requireTagsArray('create', raw, obj, 'tags'),
+    lww_counter: optionalNumber('create', raw, obj, 'lww_counter'),
   };
 }
 
@@ -187,6 +213,7 @@ function parseUpdate(raw: unknown, obj: Record<string, unknown>): NoteUpdatePayl
   if ('content' in obj) out.content = requireString('update', raw, obj, 'content');
   if ('folder_id' in obj) out.folder_id = requireNullableString('update', raw, obj, 'folder_id');
   if ('tags' in obj) out.tags = requireTagsArray('update', raw, obj, 'tags');
+  if ('lww_counter' in obj) out.lww_counter = optionalNumber('update', raw, obj, 'lww_counter');
   return out;
 }
 
@@ -196,6 +223,7 @@ function parseTrash(raw: unknown, obj: Record<string, unknown>): NoteTrashPayloa
     trash_level: requireNumber('trash', raw, obj, 'trash_level'),
     trashed_at_ms: requireNumber('trash', raw, obj, 'trashed_at_ms'),
     auto_delete_at_ms: requireNullableNumber('trash', raw, obj, 'auto_delete_at_ms'),
+    lww_counter: optionalNumber('trash', raw, obj, 'lww_counter'),
   };
 }
 
@@ -209,12 +237,16 @@ function parseRestore(raw: unknown, obj: Record<string, unknown>): NoteRestorePa
     trash_level: requireNumber('restore', raw, obj, 'trash_level'),
     trashed_at_ms: requireNullableNumber('restore', raw, obj, 'trashed_at_ms'),
     auto_delete_at_ms: null,
+    lww_counter: optionalNumber('restore', raw, obj, 'lww_counter'),
   };
 }
 
 function parseDelete(raw: unknown, obj: Record<string, unknown>): NoteDeletePayload {
-  // delete carries only updated_at_ms (Step 0b shape).
-  return { updated_at_ms: requireNumber('delete', raw, obj, 'updated_at_ms') };
+  // delete carries only updated_at_ms (Step 0b shape) + optional W3 lww_counter.
+  return {
+    updated_at_ms: requireNumber('delete', raw, obj, 'updated_at_ms'),
+    lww_counter: optionalNumber('delete', raw, obj, 'lww_counter'),
+  };
 }
 
 // ─── public entry ────────────────────────────────────────────────────────

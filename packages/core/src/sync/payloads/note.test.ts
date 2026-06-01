@@ -355,3 +355,42 @@ describe('NotePayloadInvalidError shape', () => {
     }
   });
 });
+
+describe('parseNotePayload — lww_counter (W3)', () => {
+  it('accepts lww_counter on a create payload', () => {
+    const parsed = parseNotePayload('create', {
+      content: 'x',
+      folder_id: null,
+      trash_level: 0,
+      created_at_ms: 1,
+      updated_at_ms: 1,
+      tags: [],
+      lww_counter: 7,
+    });
+    if (parsed.op !== 'create') throw new Error('narrowing failed');
+    assert.equal(parsed.body.lww_counter, 7);
+  });
+
+  it('round-trips lww_counter through a sparse update', () => {
+    const parsed = parseNotePayload('update', { updated_at_ms: 5, lww_counter: 3 });
+    if (parsed.op !== 'update') throw new Error('narrowing failed');
+    assert.equal(parsed.body.lww_counter, 3);
+  });
+
+  it('absent lww_counter → undefined (pre-W3 payload)', () => {
+    const parsed = parseNotePayload('delete', { updated_at_ms: 5 });
+    if (parsed.op !== 'delete') throw new Error('narrowing failed');
+    assert.equal(parsed.body.lww_counter, undefined);
+  });
+
+  it('rejects a non-finite lww_counter', () => {
+    assert.throws(
+      () => parseNotePayload('update', { updated_at_ms: 5, lww_counter: 'nope' }),
+      (err: unknown) => {
+        assert.ok(err instanceof NotePayloadInvalidError);
+        assert.match(err.reason, /lww_counter must be a finite number/);
+        return true;
+      },
+    );
+  });
+});

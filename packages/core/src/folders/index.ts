@@ -5,6 +5,7 @@ import type { OwlDatabase } from '../db/index.js';
 import { folders } from '../db/schema.js';
 import { readSkybridgeDeviceId } from '../skybridge/identity.js';
 import { emitSyncChange, readLocalDeviceUuid } from '../sync/changes.js';
+import { serverNormalizedStamp } from '../sync/hlc.js';
 
 // ─── Types ─────────────────────────────────────────────
 
@@ -46,11 +47,13 @@ export function createFolder(
   input: CreateFolderInput,
 ): Folder {
   const id = uuidv4();
-  const now = new Date();
-  const nowMs = now.getTime();
 
   return sqlite
     .transaction(() => {
+      // W3: stamp inside the tx so HLC state and the row stay consistent.
+      const { ms, counter } = serverNormalizedStamp(sqlite);
+      const stamp = new Date(ms);
+
       // When no explicit position is supplied, append at end of siblings.
       let position = input.position;
       if (position === undefined) {
@@ -71,10 +74,11 @@ export function createFolder(
           name: input.name,
           parentId: input.parentId ?? null,
           position,
-          createdAt: now,
-          updatedAt: now,
+          createdAt: stamp,
+          updatedAt: stamp,
           deviceId: input.deviceId ?? readSkybridgeDeviceId(sqlite) ?? null,
           localDeviceUuid: readLocalDeviceUuid(sqlite),
+          lwwCounter: counter,
         })
         .run();
 
@@ -86,10 +90,11 @@ export function createFolder(
           name: input.name,
           parent_id: input.parentId ?? null,
           position,
-          created_at_ms: nowMs,
-          updated_at_ms: nowMs,
+          created_at_ms: ms,
+          updated_at_ms: ms,
+          lww_counter: counter,
         },
-        nowMs,
+        nowMs: ms,
       });
 
       const row = db.select().from(folders).where(eq(folders.id, id)).get();
@@ -148,9 +153,8 @@ export function updateFolder(
         assertNoCycle(db, id, input.parentId);
       }
 
-      const now = new Date();
-      const nowMs = now.getTime();
-      const updates: Record<string, unknown> = { updatedAt: now };
+      const { ms: nowMs, counter } = serverNormalizedStamp(sqlite);
+      const updates: Record<string, unknown> = { updatedAt: new Date(nowMs), lwwCounter: counter };
       if (input.name !== undefined) updates.name = input.name;
       if (input.parentId !== undefined) updates.parentId = input.parentId;
       if (input.position !== undefined) updates.position = input.position;
@@ -162,7 +166,7 @@ export function updateFolder(
       // Sparse post-state payload: only the columns the caller asked to write
       // (plus updated_at_ms which always changes). device_id and content-style
       // hashes are derived server-side from sync_changes.device_id.
-      const payload: Record<string, unknown> = { updated_at_ms: nowMs };
+      const payload: Record<string, unknown> = { updated_at_ms: nowMs, lww_counter: counter };
       if (input.name !== undefined) payload.name = input.name;
       if (input.parentId !== undefined) payload.parent_id = input.parentId;
       if (input.position !== undefined) payload.position = input.position;
@@ -197,8 +201,11 @@ export function deleteFolder(db: OwlDatabase, sqlite: Database.Database, id: str
       if (!existing) return false;
 
       const grandparentId = existing.parentId;
-      const now = new Date();
-      const nowMs = now.getTime();
+      // W3: one stamp for the whole delete op (child reparenting + the delete
+      // anchor). Distinct entity ids, so sharing (ms, counter) is fine — LWW
+      // compares per-entity.
+      const { ms: nowMs, counter } = serverNormalizedStamp(sqlite);
+      const now = new Date(nowMs);
 
       const childIds = db
         .select({ id: folders.id })
@@ -209,7 +216,7 @@ export function deleteFolder(db: OwlDatabase, sqlite: Database.Database, id: str
 
       if (childIds.length > 0) {
         db.update(folders)
-          .set({ parentId: grandparentId, updatedAt: now })
+          .set({ parentId: grandparentId, updatedAt: now, lwwCounter: counter })
           .where(eq(folders.parentId, id))
           .run();
         for (const childId of childIds) {
@@ -217,7 +224,7 @@ export function deleteFolder(db: OwlDatabase, sqlite: Database.Database, id: str
             entityType: 'folder',
             entityId: childId,
             op: 'update',
-            payload: { parent_id: grandparentId, updated_at_ms: nowMs },
+            payload: { parent_id: grandparentId, updated_at_ms: nowMs, lww_counter: counter },
             nowMs,
           });
         }
@@ -234,7 +241,7 @@ export function deleteFolder(db: OwlDatabase, sqlite: Database.Database, id: str
         entityType: 'folder',
         entityId: id,
         op: 'delete',
-        payload: { updated_at_ms: nowMs },
+        payload: { updated_at_ms: nowMs, lww_counter: counter },
         nowMs,
       });
 
@@ -250,22 +257,28 @@ export function reorderFolders(
   items: ReorderFolderItem[],
 ): number {
   if (items.length === 0) return 0;
-  const now = Date.now();
   const stmt = sqlite.prepare(
-    'UPDATE folders SET parent_id = ?, position = ?, updated_at = ? WHERE id = ?',
+    'UPDATE folders SET parent_id = ?, position = ?, updated_at = ?, lww_counter = ? WHERE id = ?',
   );
   const tx = sqlite.transaction((rows: ReorderFolderItem[]) => {
+    // W3: one stamp for the batch reorder; distinct entity ids share it.
+    const { ms, counter } = serverNormalizedStamp(sqlite);
     let count = 0;
     for (const row of rows) {
-      const result = stmt.run(row.parentId, row.position, now, row.id);
+      const result = stmt.run(row.parentId, row.position, ms, counter, row.id);
       if (result.changes > 0) {
         count += result.changes;
         emitSyncChange(sqlite, {
           entityType: 'folder',
           entityId: row.id,
           op: 'update',
-          payload: { parent_id: row.parentId, position: row.position, updated_at_ms: now },
-          nowMs: now,
+          payload: {
+            parent_id: row.parentId,
+            position: row.position,
+            updated_at_ms: ms,
+            lww_counter: counter,
+          },
+          nowMs: ms,
         });
       }
     }

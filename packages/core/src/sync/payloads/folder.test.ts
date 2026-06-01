@@ -127,3 +127,35 @@ describe('FolderPayloadInvalidError shape', () => {
     }
   });
 });
+
+describe('parseFolderPayload — lww_counter (W3)', () => {
+  it('accepts lww_counter on a create payload', () => {
+    const parsed = parseFolderPayload('create', {
+      name: 'F',
+      parent_id: null,
+      position: 0,
+      created_at_ms: 1,
+      updated_at_ms: 1,
+      lww_counter: 4,
+    });
+    if (parsed.op !== 'create') throw new Error('narrowing failed');
+    assert.equal(parsed.body.lww_counter, 4);
+  });
+
+  it('absent lww_counter → undefined (pre-W3 payload)', () => {
+    const parsed = parseFolderPayload('delete', { updated_at_ms: 9 });
+    if (parsed.op !== 'delete') throw new Error('narrowing failed');
+    assert.equal(parsed.body.lww_counter, undefined);
+  });
+
+  it('rejects a non-finite lww_counter', () => {
+    assert.throws(
+      () => parseFolderPayload('update', { updated_at_ms: 9, lww_counter: Number.NaN }),
+      (err: unknown) => {
+        assert.ok(err instanceof FolderPayloadInvalidError);
+        assert.match(err.reason, /lww_counter must be a finite number/);
+        return true;
+      },
+    );
+  });
+});

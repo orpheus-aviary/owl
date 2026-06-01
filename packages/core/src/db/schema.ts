@@ -16,6 +16,9 @@ export const folders = sqliteTable('folders', {
   // P5-b §3.5: 本机视角的"行在哪台 owl 装着"。SQL 端 NOT NULL 由
   // 0006 的 BEFORE INSERT / UPDATE 触发器兜底。
   localDeviceUuid: text('local_device_uuid').notNull(),
+  // W3 (0009): per-device monotonic LWW tiebreaker. Paired with updated_at +
+  // device_id to form the three-tuple LWW key. Legacy rows backfill 0.
+  lwwCounter: integer('lww_counter', { mode: 'number' }).notNull().default(0),
 });
 
 // ─── Notes ─────────────────────────────────────────────
@@ -45,6 +48,9 @@ export const notes = sqliteTable('notes', {
   // P5-b §3.5: 本机视角的"行在哪台 owl 装着"。SQL 端 NOT NULL 由
   // 0006 的 BEFORE INSERT / UPDATE 触发器兜底。
   localDeviceUuid: text('local_device_uuid').notNull(),
+  // W3 (0009): per-device monotonic LWW tiebreaker. Paired with updated_at +
+  // device_id to form the three-tuple LWW key. Legacy rows backfill 0.
+  lwwCounter: integer('lww_counter', { mode: 'number' }).notNull().default(0),
 });
 
 // ─── Tags ──────────────────────────────────────────────

@@ -31,6 +31,7 @@ import { syncReminders } from '../reminders/index.js';
 import type { ParsedTag } from '../tags/parser.js';
 import { readLocalDeviceUuid } from './changes.js';
 import { recordConflict } from './conflicts.js';
+import { observeRemoteLwwKey, setServerTimeOffset } from './hlc.js';
 import {
   type ConversationApplyPayload,
   ConversationPayloadInvalidError,
@@ -88,11 +89,20 @@ export interface PushAckLike {
 export interface PushResultLike {
   accepted: PushAckLike[];
   duplicates: PushAckLike[];
+  /**
+   * W3 (Phase 16c): server wall-clock (Unix ms) at response time. The real
+   * client always returns it (skybridge ≥ 0.1.4); optional here so the many
+   * structural test fakes don't all have to supply it. runSync uses it to
+   * refresh `server_time_offset_ms` when present.
+   */
+  serverTime?: number;
 }
 
 export interface PullResultLike {
   changes: ServerChangeLike[];
   hasMore: boolean;
+  /** W3 (Phase 16c): server wall-clock (Unix ms). See PushResultLike.serverTime. */
+  serverTime?: number;
 }
 
 /** Structural subset of `@orpheus-aviary/skybridge-client` `SkybridgeClient`. */
@@ -188,9 +198,11 @@ type ApplyOutcome = 'applied' | 'skipped';
  * emit a new sync_changes row and create an echo loop. This writes
  * directly to `notes` via raw better-sqlite3.
  *
- * LWW: remote wins if and only if `remote.updated_at_ms > local.updated_at`
- * (tie = local wins). Delete is a special case: it removes the row when
- * local is older.
+ * LWW (W3): the key is the three-tuple `(updated_at_ms, lww_counter,
+ * device_id)`. Remote wins iff it strictly outranks local under `cmpLww`;
+ * a full tie (same ms+counter+device) keeps local (idempotent / self-replay
+ * safety). Delete is a special case: it removes the row unless local is
+ * strictly newer.
  *
  * Tags / FTS are intentionally not handled here — see design §7.5. The
  * logger receives a "skipped (P5-a)" line so the P5-b backfill has
@@ -204,11 +216,43 @@ function isSelfReplay(sqlite: Database.Database, cid: string): boolean {
   );
 }
 
-function readLocalUpdatedAt(sqlite: Database.Database, id: string): number | null {
-  const row = sqlite.prepare('SELECT updated_at FROM notes WHERE id = ?').get(id) as
-    | { updated_at: number }
-    | undefined;
-  return row ? row.updated_at : null;
+// ─── W3 three-tuple LWW key (updated_at_ms, lww_counter, device_id) ──────
+
+interface LwwKey {
+  ms: number;
+  counter: number;
+  deviceId: string;
+}
+
+/** Total order over (ms, counter, deviceId): <0 means a<b, 0 equal, >0 a>b. */
+function cmpLww(a: LwwKey, b: LwwKey): number {
+  if (a.ms !== b.ms) return a.ms < b.ms ? -1 : 1;
+  if (a.counter !== b.counter) return a.counter < b.counter ? -1 : 1;
+  if (a.deviceId !== b.deviceId) return a.deviceId < b.deviceId ? -1 : 1;
+  return 0;
+}
+
+/**
+ * Remote LWW key from a ServerChange + its parsed body. `lww_counter` is
+ * absent on pre-W3 / 0.1.3-era payloads → 0 (degrades to ms + deviceId).
+ * `deviceId` comes from the wire (always a non-empty string).
+ */
+function remoteLwwKey(
+  c: ServerChangeLike,
+  body: { updated_at_ms: number; lww_counter?: number },
+): LwwKey {
+  return { ms: body.updated_at_ms, counter: body.lww_counter ?? 0, deviceId: c.deviceId };
+}
+
+function readLocalNoteLwwKey(sqlite: Database.Database, id: string): LwwKey | null {
+  const row = sqlite
+    .prepare('SELECT updated_at, lww_counter, device_id FROM notes WHERE id = ?')
+    .get(id) as { updated_at: number; lww_counter: number; device_id: string | null } | undefined;
+  // device_id is nullable → '' so the tuple stays totally ordered; the wire's
+  // remote deviceId is always non-empty, so '' sorts a NULL-device local row first.
+  return row
+    ? { ms: row.updated_at, counter: row.lww_counter, deviceId: row.device_id ?? '' }
+    : null;
 }
 
 /**
@@ -260,8 +304,8 @@ function applyNoteCreate(
   sqlite
     .prepare(
       `INSERT INTO notes (id, folder_id, trash_level, created_at, updated_at,
-                          content, content_hash, device_id, local_device_uuid)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                          content, content_hash, device_id, local_device_uuid, lww_counter)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET
          folder_id         = excluded.folder_id,
          trash_level       = excluded.trash_level,
@@ -269,7 +313,8 @@ function applyNoteCreate(
          content           = excluded.content,
          content_hash      = excluded.content_hash,
          device_id         = excluded.device_id,
-         local_device_uuid = excluded.local_device_uuid`,
+         local_device_uuid = excluded.local_device_uuid,
+         lww_counter       = excluded.lww_counter`,
     )
     .run(
       c.entityId,
@@ -281,6 +326,7 @@ function applyNoteCreate(
       contentHash(body.content),
       c.deviceId,
       localUuid,
+      body.lww_counter ?? 0,
     );
   // P5-b §5.3: tags / FTS / reminder_status apply for real now.
   syncNoteTags(db, sqlite, c.entityId, payloadTagsToParsed(body.tags));
@@ -295,8 +341,19 @@ function applyNoteUpdate(
   body: Extract<NoteApplyPayload, { op: 'update' }>['body'],
 ): ApplyOutcome {
   // P5-b: apply 行 local_device_uuid 永远绑本机；device_id 写远端来源。
-  const sets: string[] = ['updated_at = ?', 'device_id = ?', 'local_device_uuid = ?'];
-  const vals: unknown[] = [body.updated_at_ms, c.deviceId, readLocalDeviceUuid(sqlite)];
+  // W3: persist the remote lww_counter so a later local edit advances past it.
+  const sets: string[] = [
+    'updated_at = ?',
+    'device_id = ?',
+    'local_device_uuid = ?',
+    'lww_counter = ?',
+  ];
+  const vals: unknown[] = [
+    body.updated_at_ms,
+    c.deviceId,
+    readLocalDeviceUuid(sqlite),
+    body.lww_counter ?? 0,
+  ];
   if (body.content !== undefined) {
     sets.push('content = ?');
     vals.push(body.content);
@@ -333,7 +390,8 @@ function applyNoteTrashOrRestore(
              trashed_at     = ?,
              auto_delete_at = ?,
              updated_at     = ?,
-             device_id      = ?
+             device_id      = ?,
+             lww_counter    = ?
        WHERE id = ?`,
     )
     .run(
@@ -342,6 +400,7 @@ function applyNoteTrashOrRestore(
       body.auto_delete_at_ms ?? null,
       body.updated_at_ms,
       c.deviceId,
+      body.lww_counter ?? 0,
       c.entityId,
     );
   return r.changes > 0 ? 'applied' : 'skipped';
@@ -350,13 +409,14 @@ function applyNoteTrashOrRestore(
 function applyNoteDelete(
   sqlite: Database.Database,
   c: ServerChangeLike,
-  body: Extract<NoteApplyPayload, { op: 'delete' }>['body'],
-  localTs: number,
+  localKey: LwwKey,
+  remoteKey: LwwKey,
   logger: RunSyncLogger,
 ): ApplyOutcome {
-  if (localTs > body.updated_at_ms) {
+  // Local strictly newer (three-tuple) → keep the row; tie or older → delete.
+  if (cmpLww(localKey, remoteKey) > 0) {
     logger.info(
-      `[sync] apply note ${c.entityId} delete — local newer (${localTs} > ${body.updated_at_ms}), skipped`,
+      `[sync] apply note ${c.entityId} delete — local newer (${localKey.ms}/${localKey.counter} > ${remoteKey.ms}/${remoteKey.counter}), skipped`,
     );
     return 'skipped';
   }
@@ -422,14 +482,14 @@ function applyNoteChange(
 ): ApplyOutcome {
   if (isSelfReplay(sqlite, c.clientChangeId)) return 'skipped';
 
-  const localTsRaw = readLocalUpdatedAt(sqlite, c.entityId);
-  const localExists = localTsRaw !== null;
-  const localTs = localTsRaw ?? 0;
-  const remoteTs = payload.body.updated_at_ms;
+  const localKeyRaw = readLocalNoteLwwKey(sqlite, c.entityId);
+  const localExists = localKeyRaw !== null;
+  const localKey = localKeyRaw ?? { ms: 0, counter: 0, deviceId: '' };
+  const remoteKey = remoteLwwKey(c, payload.body);
 
   if (payload.op === 'delete') {
     if (!localExists) return 'skipped'; // idempotent — already gone
-    return applyNoteDelete(sqlite, c, payload.body, localTs, logger);
+    return applyNoteDelete(sqlite, c, localKey, remoteKey, logger);
   }
 
   // update / trash / restore on missing local note → out-of-order, skip;
@@ -441,18 +501,20 @@ function applyNoteChange(
     return 'skipped';
   }
 
-  // LWW gate for ops touching an existing note (incl. create vs. dup id)
-  if (localExists && localTs >= remoteTs) {
+  // W3 three-tuple LWW gate: remote must strictly outrank local
+  // (tie or older → skip; equal → idempotent self-replay safety).
+  if (localExists && cmpLww(remoteKey, localKey) <= 0) {
     logger.info(
-      `[sync] apply note ${c.entityId} ${payload.op} — LWW skip (local=${localTs} >= remote=${remoteTs})`,
+      `[sync] apply note ${c.entityId} ${payload.op} — LWW skip (local=${localKey.ms}/${localKey.counter} >= remote=${remoteKey.ms}/${remoteKey.counter})`,
     );
     return 'skipped';
   }
 
   // P5-c §6.16: conflict detection runs before applyNoteUpdate overwrites
   // the losing local row. Other ops (create / trash / restore) skip the hook.
+  // conflict_record still stores bare ms (counter columns deferred, plan §4.1).
   if (conflictSink && payload.op === 'update' && localExists) {
-    maybeRecordNoteConflict(sqlite, c, payload.body, localTs, remoteTs, conflictSink);
+    maybeRecordNoteConflict(sqlite, c, payload.body, localKey.ms, remoteKey.ms, conflictSink);
   }
 
   if (payload.op === 'create') return applyNoteCreate(db, sqlite, c, payload.body);
@@ -462,11 +524,13 @@ function applyNoteChange(
 
 // ─── folder apply (P5-b §4.4) ───────────────────────────────────────
 
-function readLocalFolderUpdatedAt(sqlite: Database.Database, id: string): number | null {
-  const row = sqlite.prepare('SELECT updated_at FROM folders WHERE id = ?').get(id) as
-    | { updated_at: number }
-    | undefined;
-  return row ? row.updated_at : null;
+function readLocalFolderLwwKey(sqlite: Database.Database, id: string): LwwKey | null {
+  const row = sqlite
+    .prepare('SELECT updated_at, lww_counter, device_id FROM folders WHERE id = ?')
+    .get(id) as { updated_at: number; lww_counter: number; device_id: string | null } | undefined;
+  return row
+    ? { ms: row.updated_at, counter: row.lww_counter, deviceId: row.device_id ?? '' }
+    : null;
 }
 
 function applyFolderCreate(
@@ -478,15 +542,16 @@ function applyFolderCreate(
   sqlite
     .prepare(
       `INSERT INTO folders (id, name, parent_id, position, created_at, updated_at,
-                            device_id, local_device_uuid)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                            device_id, local_device_uuid, lww_counter)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET
          name              = excluded.name,
          parent_id         = excluded.parent_id,
          position          = excluded.position,
          updated_at        = excluded.updated_at,
          device_id         = excluded.device_id,
-         local_device_uuid = excluded.local_device_uuid`,
+         local_device_uuid = excluded.local_device_uuid,
+         lww_counter       = excluded.lww_counter`,
     )
     .run(
       c.entityId,
@@ -497,6 +562,7 @@ function applyFolderCreate(
       body.updated_at_ms,
       c.deviceId,
       localUuid,
+      body.lww_counter ?? 0,
     );
   return 'applied';
 }
@@ -509,8 +575,18 @@ function applyFolderUpdate(
   // P5-b §4.4: sparse update — only touch the columns the caller asked to
   // change, otherwise an absent `parent_id` would clobber the existing
   // parent with NULL via an integer-style upsert.
-  const sets: string[] = ['updated_at = ?', 'device_id = ?', 'local_device_uuid = ?'];
-  const vals: unknown[] = [body.updated_at_ms, c.deviceId, readLocalDeviceUuid(sqlite)];
+  const sets: string[] = [
+    'updated_at = ?',
+    'device_id = ?',
+    'local_device_uuid = ?',
+    'lww_counter = ?',
+  ];
+  const vals: unknown[] = [
+    body.updated_at_ms,
+    c.deviceId,
+    readLocalDeviceUuid(sqlite),
+    body.lww_counter ?? 0,
+  ];
   if (body.name !== undefined) {
     sets.push('name = ?');
     vals.push(body.name);
@@ -533,13 +609,13 @@ function applyFolderUpdate(
 function applyFolderDelete(
   sqlite: Database.Database,
   c: ServerChangeLike,
-  body: Extract<FolderApplyPayload, { op: 'delete' }>['body'],
-  localTs: number,
+  localKey: LwwKey,
+  remoteKey: LwwKey,
   logger: RunSyncLogger,
 ): ApplyOutcome {
-  if (localTs > body.updated_at_ms) {
+  if (cmpLww(localKey, remoteKey) > 0) {
     logger.info(
-      `[sync] apply folder ${c.entityId} delete — local newer (${localTs} > ${body.updated_at_ms}), skipped`,
+      `[sync] apply folder ${c.entityId} delete — local newer (${localKey.ms}/${localKey.counter} > ${remoteKey.ms}/${remoteKey.counter}), skipped`,
     );
     return 'skipped';
   }
@@ -555,14 +631,14 @@ function applyFolderChange(
 ): ApplyOutcome {
   if (isSelfReplay(sqlite, c.clientChangeId)) return 'skipped';
 
-  const localTsRaw = readLocalFolderUpdatedAt(sqlite, c.entityId);
-  const localExists = localTsRaw !== null;
-  const localTs = localTsRaw ?? 0;
-  const remoteTs = payload.body.updated_at_ms;
+  const localKeyRaw = readLocalFolderLwwKey(sqlite, c.entityId);
+  const localExists = localKeyRaw !== null;
+  const localKey = localKeyRaw ?? { ms: 0, counter: 0, deviceId: '' };
+  const remoteKey = remoteLwwKey(c, payload.body);
 
   if (payload.op === 'delete') {
     if (!localExists) return 'skipped';
-    return applyFolderDelete(sqlite, c, payload.body, localTs, logger);
+    return applyFolderDelete(sqlite, c, localKey, remoteKey, logger);
   }
 
   if (!localExists && payload.op !== 'create') {
@@ -570,9 +646,9 @@ function applyFolderChange(
     return 'skipped';
   }
 
-  if (localExists && localTs >= remoteTs) {
+  if (localExists && cmpLww(remoteKey, localKey) <= 0) {
     logger.info(
-      `[sync] apply folder ${c.entityId} ${payload.op} — LWW skip (local=${localTs} >= remote=${remoteTs})`,
+      `[sync] apply folder ${c.entityId} ${payload.op} — LWW skip (local=${localKey.ms}/${localKey.counter} >= remote=${remoteKey.ms}/${remoteKey.counter})`,
     );
     return 'skipped';
   }
@@ -730,6 +806,12 @@ function applyOneNoteChange(
   }
   // Validator throws NotePayloadInvalidError → rolls back the batch
   const parsed = parseNotePayload(change.op, change.payload);
+  // W3: advance local HLC past every validated remote stamp we observe, so
+  // the next local write outranks it — whether this op applies or LWW-skips.
+  observeRemoteLwwKey(sqlite, {
+    ms: parsed.body.updated_at_ms,
+    counter: parsed.body.lww_counter ?? 0,
+  });
   return applyNoteChange(db, sqlite, change, parsed, logger, conflictSink);
 }
 
@@ -748,6 +830,11 @@ function applyOneFolderChange(
   }
   // Validator throws FolderPayloadInvalidError → rolls back the batch
   const parsed = parseFolderPayload(change.op, change.payload);
+  // W3: observe remote stamp to advance local HLC (see note path).
+  observeRemoteLwwKey(sqlite, {
+    ms: parsed.body.updated_at_ms,
+    counter: parsed.body.lww_counter ?? 0,
+  });
   return applyFolderChange(sqlite, change, parsed, logger);
 }
 
@@ -766,6 +853,18 @@ const NOOP_LOGGER: RunSyncLogger = {
   info: () => {},
   warn: () => {},
 };
+
+/**
+ * W3: refresh `server_time_offset_ms` from a pull/push response's serverTime.
+ * No-op on the pre-W3 fakes that don't carry it.
+ */
+function refreshServerOffset(
+  sqlite: Database.Database,
+  serverTime: number | undefined,
+  nowMs: number,
+): void {
+  if (serverTime !== undefined) setServerTimeOffset(sqlite, serverTime - nowMs);
+}
 
 /**
  * One pull → push round.
@@ -823,6 +922,11 @@ export async function runSync(deps: RunSyncDeps): Promise<RunSyncResult> {
   // outer await unwinds, cursor un-advanced.
   for (;;) {
     const pulled = await retryPull(cursor);
+
+    // W3: refresh the server-clock offset every round — including the empty
+    // catch-up pull — so a device that's been offline re-bases immediately on
+    // reconnect rather than waiting for the next change.
+    refreshServerOffset(sqlite, pulled.serverTime, now());
 
     if (pulled.changes.length === 0 && pulled.hasMore) {
       throw new SkybridgeProtocolError(
@@ -894,6 +998,9 @@ export async function runSync(deps: RunSyncDeps): Promise<RunSyncResult> {
 
     localChangesRef.value = localChanges;
     const result = await retryPush();
+
+    // W3: push responses also carry serverTime — refresh the offset.
+    refreshServerOffset(sqlite, result.serverTime, now());
 
     const acks: PushAckLike[] = [...result.accepted, ...result.duplicates];
     serverSeqHigh = acks.reduce((m, a) => (a.serverSeq > m ? a.serverSeq : m), 0);

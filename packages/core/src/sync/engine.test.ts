@@ -589,8 +589,12 @@ describe('runSync — pull apply note update / LWW', () => {
     assert.equal(readNote(sqlite, 'n-u')?.content, 'fresh');
   });
 
-  it('update skipped when remote.updated_at_ms == local.updated_at (tie → local wins)', async () => {
-    seedNote(sqlite, 'n-u', { content: 'tie', updatedAt: 3_000 });
+  it('update skipped on a fully-equal LWW key (same ms+counter+device → idempotent skip)', async () => {
+    // W3: equal updated_at_ms no longer auto-skips — the three-tuple
+    // (ms, counter, deviceId) decides. A genuine tie (identical device) is a
+    // self-replay-shaped no-op and still skips. Cross-device same-ms is
+    // covered by the deviceId-tiebreak case in hlc-engine.test.ts.
+    seedNote(sqlite, 'n-u', { content: 'tie', updatedAt: 3_000, deviceId: 'dev-local' });
     const client = new FakeSkybridgeClient();
     client.enqueuePull({
       changes: [
@@ -598,6 +602,7 @@ describe('runSync — pull apply note update / LWW', () => {
           serverSeq: 1,
           entityId: 'n-u',
           op: 'update',
+          deviceId: 'dev-local',
           payload: { updated_at_ms: 3_000, content: 'other' },
         }),
       ],
@@ -1276,12 +1281,15 @@ describe('runSync — pull apply folder (P5-b §4.4)', () => {
     );
   });
 
-  it('LWW tie → local wins (skipped)', async () => {
+  it('LWW fully-equal key (same ms+counter+device) → idempotent skip', async () => {
+    // W3: equal ms alone no longer skips; a true tie needs identical
+    // (ms, counter, deviceId). Cross-device same-ms is deviceId-decided
+    // (covered in hlc-engine.test.ts).
     sqlite
       .prepare(
-        'INSERT INTO folders (id, name, parent_id, position, created_at, updated_at, local_device_uuid) VALUES (?, ?, ?, 0, 0, 1000, ?)',
+        'INSERT INTO folders (id, name, parent_id, position, created_at, updated_at, device_id, local_device_uuid) VALUES (?, ?, ?, 0, 0, 1000, ?, ?)',
       )
-      .run('f-t', 'Local', null, 'dev-local');
+      .run('f-t', 'Local', null, 'dev-local', 'dev-local');
 
     const client = new FakeSkybridgeClient();
     client.enqueuePull({
@@ -1290,6 +1298,7 @@ describe('runSync — pull apply folder (P5-b §4.4)', () => {
           serverSeq: 1,
           entityId: 'f-t',
           op: 'update',
+          deviceId: 'dev-local',
           payload: { updated_at_ms: 1000, name: 'Remote' },
         }),
       ],

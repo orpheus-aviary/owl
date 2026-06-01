@@ -8,6 +8,7 @@ import { getFolderSubtreeIds } from '../folders/index.js';
 import { syncReminders } from '../reminders/index.js';
 import { readSkybridgeDeviceId } from '../skybridge/identity.js';
 import { emitSyncChange, readLocalDeviceUuid } from '../sync/changes.js';
+import { serverNormalizedStamp } from '../sync/hlc.js';
 import type { ParsedTag } from '../tags/parser.js';
 import { AlreadyTrashedError, VersionMismatchError } from './errors.js';
 import { contentHash } from './hash.js';
@@ -121,23 +122,26 @@ export function createNote(
   input: CreateNoteInput,
 ): NoteWithTags {
   const id = uuidv4();
-  const now = new Date();
-  const nowMs = now.getTime();
   const hash = contentHash(input.content);
 
   return sqlite
     .transaction(() => {
+      // W3: stamp inside the tx so the persisted HLC state matches the row.
+      // create writes created_at = updated_at = the same normalized ms.
+      const { ms, counter } = serverNormalizedStamp(sqlite);
+      const stamp = new Date(ms);
       db.insert(notes)
         .values({
           id,
           content: input.content,
           folderId: input.folderId ?? null,
-          createdAt: now,
-          updatedAt: now,
+          createdAt: stamp,
+          updatedAt: stamp,
           trashLevel: 0,
           deviceId: input.deviceId ?? readSkybridgeDeviceId(sqlite) ?? null,
           contentHash: hash,
           localDeviceUuid: readLocalDeviceUuid(sqlite),
+          lwwCounter: counter,
         })
         .run();
 
@@ -159,11 +163,12 @@ export function createNote(
           content: input.content,
           folder_id: input.folderId ?? null,
           trash_level: 0,
-          created_at_ms: nowMs,
-          updated_at_ms: nowMs,
+          created_at_ms: ms,
+          updated_at_ms: ms,
           tags: (input.tags ?? []).map((t) => ({ tag_type: t.tagType, tag_value: t.tagValue })),
+          lww_counter: counter,
         },
-        nowMs,
+        nowMs: ms,
       });
 
       // Safe: we just inserted this note
@@ -372,9 +377,9 @@ export function updateNote(
       }
     }
 
-    const now = new Date();
-    const nowMs = now.getTime();
-    const updates: Record<string, unknown> = { updatedAt: now };
+    // W3: server-normalized HLC stamp; lww_counter bumps within the same ms.
+    const { ms: nowMs, counter } = serverNormalizedStamp(sqlite);
+    const updates: Record<string, unknown> = { updatedAt: new Date(nowMs), lwwCounter: counter };
 
     if (input.content !== undefined) {
       updates.content = input.content;
@@ -399,7 +404,7 @@ export function updateNote(
 
     // Sparse post-state. content_hash + device_id derived server-side from
     // (content, sync_changes.device_id), so omit from payload.
-    const payload: Record<string, unknown> = { updated_at_ms: nowMs };
+    const payload: Record<string, unknown> = { updated_at_ms: nowMs, lww_counter: counter };
     if (input.content !== undefined) payload.content = input.content;
     if (input.folderId !== undefined) payload.folder_id = input.folderId;
     if (input.tags !== undefined) {
@@ -454,12 +459,12 @@ export function deleteNote(
       throw new AlreadyTrashedError(id, note.trashLevel);
     }
 
-    const now = new Date();
-    const nowMs = now.getTime();
+    const { ms: nowMs, counter } = serverNormalizedStamp(sqlite);
+    const now = new Date(nowMs);
     const newLevel = note.trashLevel + 1;
     const thresholdDays = opts.autoDeleteDays ?? 0;
     const autoDeleteAt =
-      newLevel === 2 ? new Date(now.getTime() + thresholdDays * 86_400_000) : note.autoDeleteAt;
+      newLevel === 2 ? new Date(nowMs + thresholdDays * 86_400_000) : note.autoDeleteAt;
 
     db.update(notes)
       .set({
@@ -467,6 +472,7 @@ export function deleteNote(
         trashedAt: now,
         autoDeleteAt,
         updatedAt: now,
+        lwwCounter: counter,
       })
       .where(eq(notes.id, id))
       .run();
@@ -480,6 +486,7 @@ export function deleteNote(
         trashed_at_ms: nowMs,
         auto_delete_at_ms: autoDeleteAt ? autoDeleteAt.getTime() : null,
         updated_at_ms: nowMs,
+        lww_counter: counter,
       },
       nowMs,
     });
@@ -513,8 +520,8 @@ export function restoreNote(
       }
     }
 
-    const now = new Date();
-    const nowMs = now.getTime();
+    const { ms: nowMs, counter } = serverNormalizedStamp(sqlite);
+    const now = new Date(nowMs);
     const newLevel = note.trashLevel - 1;
     const newTrashedAt = newLevel === 0 ? null : note.trashedAt;
     db.update(notes)
@@ -523,6 +530,7 @@ export function restoreNote(
         trashedAt: newTrashedAt,
         autoDeleteAt: null,
         updatedAt: now,
+        lwwCounter: counter,
       })
       .where(eq(notes.id, id))
       .run();
@@ -536,6 +544,7 @@ export function restoreNote(
         trashed_at_ms: newTrashedAt ? newTrashedAt.getTime() : null,
         auto_delete_at_ms: null,
         updated_at_ms: nowMs,
+        lww_counter: counter,
       },
       nowMs,
     });
@@ -560,11 +569,15 @@ export function permanentDeleteNote(
       // (notes.updated_at vs payload.updated_at_ms) has a comparable
       // timestamp on the remote side. Pre-Step-0b emit was `{}`, which
       // would have been rejected by parseNotePayload at apply time.
+      // W3: HLC stamp so the delete carries (ms, counter) for three-tuple LWW
+      // on the peer (the row is gone here, so only the payload is stamped).
+      const { ms, counter } = serverNormalizedStamp(sqlite);
       emitSyncChange(sqlite, {
         entityType: 'note',
         entityId: id,
         op: 'delete',
-        payload: { updated_at_ms: Date.now() },
+        payload: { updated_at_ms: ms, lww_counter: counter },
+        nowMs: ms,
       });
       return true;
     })

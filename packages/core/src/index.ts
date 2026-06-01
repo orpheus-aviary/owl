@@ -132,6 +132,15 @@ export type { SearchResult } from './search/index.js';
 export { emitSyncChange } from './sync/changes.js';
 export type { SyncEntityType, SyncOp, EmitSyncChangeArgs } from './sync/changes.js';
 
+// W3 (Phase 16c) — HLC-lite LWW stamping
+export {
+  serverNormalizedStamp,
+  observeRemoteLwwKey,
+  setServerTimeOffset,
+  readServerTimeOffset,
+} from './sync/hlc.js';
+export type { LwwStamp } from './sync/hlc.js';
+
 // Sync apply-side payload validators (P5-a Step 4b — note ops only)
 export * as syncPayloads from './sync/payloads/note.js';
 

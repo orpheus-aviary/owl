@@ -74,12 +74,20 @@ export interface RealSkybridgeClient {
     accepted: { clientChangeId: string; serverSeq: number }[];
     duplicates: { clientChangeId: string; serverSeq: number }[];
     latestSeq: number;
+    /** W3 (Phase 16c): server wall-clock (Unix ms); skybridge ≥ 0.1.4. */
+    serverTime: number;
   }>;
   pullChanges(
     workspaceId: string,
     sinceSeq: number,
     limit?: number,
-  ): Promise<{ changes: ServerChangeLike[]; hasMore: boolean; latestSeq: number }>;
+  ): Promise<{
+    changes: ServerChangeLike[];
+    hasMore: boolean;
+    latestSeq: number;
+    /** W3 (Phase 16c): server wall-clock (Unix ms); skybridge ≥ 0.1.4. */
+    serverTime: number;
+  }>;
   subscribeEvents(workspaceId: string, handlers: SseHandlers): () => void;
   /**
    * List devices under the current authenticated user. Used by the
@@ -159,11 +167,12 @@ export function adaptClient(client: RealSkybridgeClient): SkybridgeClientLike {
   return {
     async pullChanges(workspaceId, sinceServerSeq): Promise<PullResultLike> {
       const r = await client.pullChanges(workspaceId, sinceServerSeq);
-      return { changes: r.changes, hasMore: r.hasMore };
+      // W3: forward serverTime so runSync can refresh the HLC offset.
+      return { changes: r.changes, hasMore: r.hasMore, serverTime: r.serverTime };
     },
     async pushChanges(workspaceId, changes): Promise<PushResultLike> {
       const r = await client.pushChanges(workspaceId, changes);
-      return { accepted: r.accepted, duplicates: r.duplicates };
+      return { accepted: r.accepted, duplicates: r.duplicates, serverTime: r.serverTime };
     },
   };
 }

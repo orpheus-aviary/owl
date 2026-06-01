@@ -21,6 +21,8 @@ export interface FolderCreatePayload {
   position: number;
   created_at_ms: number;
   updated_at_ms: number;
+  /** W3 (Phase 16c): per-device LWW counter. Absent on pre-W3 / 0.1.3-era payloads. */
+  lww_counter?: number;
 }
 
 /** Sparse post-state: only the columns the caller asked to write. */
@@ -29,10 +31,12 @@ export interface FolderUpdatePayload {
   name?: string;
   parent_id?: string | null;
   position?: number;
+  lww_counter?: number;
 }
 
 export interface FolderDeletePayload {
   updated_at_ms: number;
+  lww_counter?: number;
 }
 
 export type FolderApplyPayload =
@@ -101,6 +105,24 @@ function requireNullableString(
   return v;
 }
 
+/**
+ * W3 (Phase 16c): sparse numeric field. Returns `undefined` when absent
+ * (pre-W3 payloads); throws when present but not a finite number.
+ */
+function optionalNumber(
+  op: string,
+  raw: unknown,
+  obj: Record<string, unknown>,
+  key: string,
+): number | undefined {
+  if (!(key in obj)) return undefined;
+  const v = obj[key];
+  if (typeof v !== 'number' || !Number.isFinite(v)) {
+    fail(op, `${key} must be a finite number when present, got ${typeof v}`, raw);
+  }
+  return v;
+}
+
 // ─── per-op parsers ──────────────────────────────────────────────────────
 
 function parseCreate(raw: unknown, obj: Record<string, unknown>): FolderCreatePayload {
@@ -110,6 +132,7 @@ function parseCreate(raw: unknown, obj: Record<string, unknown>): FolderCreatePa
     position: requireNumber('create', raw, obj, 'position'),
     created_at_ms: requireNumber('create', raw, obj, 'created_at_ms'),
     updated_at_ms: requireNumber('create', raw, obj, 'updated_at_ms'),
+    lww_counter: optionalNumber('create', raw, obj, 'lww_counter'),
   };
 }
 
@@ -120,11 +143,15 @@ function parseUpdate(raw: unknown, obj: Record<string, unknown>): FolderUpdatePa
   if ('name' in obj) out.name = requireString('update', raw, obj, 'name');
   if ('parent_id' in obj) out.parent_id = requireNullableString('update', raw, obj, 'parent_id');
   if ('position' in obj) out.position = requireNumber('update', raw, obj, 'position');
+  if ('lww_counter' in obj) out.lww_counter = optionalNumber('update', raw, obj, 'lww_counter');
   return out;
 }
 
 function parseDelete(raw: unknown, obj: Record<string, unknown>): FolderDeletePayload {
-  return { updated_at_ms: requireNumber('delete', raw, obj, 'updated_at_ms') };
+  return {
+    updated_at_ms: requireNumber('delete', raw, obj, 'updated_at_ms'),
+    lww_counter: optionalNumber('delete', raw, obj, 'lww_counter'),
+  };
 }
 
 // ─── public entry ────────────────────────────────────────────────────────
