@@ -5,7 +5,10 @@
  * Phase 15 makes login per-profile (design §5.4.1, D11):
  *
  *   - `loginAndOpenSession(input)` —— user submits server URL + email +
- *      password from Settings. We:
+ *      password from Settings. Runs from ANY active profile: logging in while
+ *      already on an account ADDS the new account and switches to it (the prior
+ *      account stays saved for password-free quick-switch, D2 — never revoked).
+ *      We:
  *        1. POST /auth/login via the SDK (0.1.4 returns refreshToken +
  *           serverId; token only lives in local scope)
  *        2. require serverId (R5 — a 0.1.4 server); profileId =
@@ -18,8 +21,9 @@
  *        6. POST /sync/session (installs on the switched db)
  *        7. writeProfileConfig([profiles.<id>], setActive) — encrypted_token
  *           + encrypted_refresh_token + device/workspace/server_id
- *      Unwind on any failure: best-effort remote logout + return the daemon
- *      to local; never write toml.
+ *      Unwind on any failure: best-effort remote logout + roll the daemon back
+ *      to the PRIOR profile (it may have been another account, not just local);
+ *      never write toml.
  *
  *   - `logout()` —— full logout (D2): remote-revoke (refresh-then-logout if
  *     the access token has expired) → switch the daemon back to local →
@@ -147,7 +151,15 @@ export async function loginAndOpenSession(
     throw new SafeStorageUnavailableError();
   }
 
-  // Step 1 — remote login. auth.token is plaintext, scoped to this fn.
+  // The profile the daemon is currently on (resolver gate, not raw active, so
+  // a ghost is never a rollback destination, ⑤). A successful login switches
+  // away from it; any failure restores it — to the PRIOR account, not blindly
+  // to local, since we may be adding an account while already on one.
+  const prior = readEffectiveActiveProfileId();
+
+  // Step 1 — remote login. auth.token is plaintext, scoped to this fn. A bad
+  // password throws HERE, before we touch the daemon or the renewal timer, so
+  // the prior account's session keeps auto-renewing untouched.
   const auth = await skybridgeLogin(input.serverUrl, input.email, input.password);
 
   // Step 2 — require a 0.1.4 server: server_id anchors the profile id (D11/R5).
@@ -158,6 +170,12 @@ export async function loginAndOpenSession(
   }
   const profileId = computeProfileId(auth.serverId, auth.user.id);
 
+  // Now that login succeeded and we're committing to touch the daemon: capture
+  // the prior token's expiry, then stop its renewal timer so no stray refresh
+  // of the prior account fires into the target's db during the switch window.
+  const priorExpiresAt = currentExpiresAt;
+  clearRefreshTimer();
+  let switched = false;
   try {
     // Steps 3–4 split on whether this machine already holds a copy of the
     // account (Phase 16, B9). A first login is the only time a local→account
@@ -172,17 +190,24 @@ export async function loginAndOpenSession(
       // Return visit — switch first, reuse the remembered device (§5.3). No
       // claim: the account already has a local copy here.
       const { device_id: existingDeviceId } = await postSyncSwitch(profileId);
+      switched = true; // daemon is on the target now (Phase 14: throw = abort)
       device = existingDeviceId
         ? reuseDevice(profileId, existingDeviceId)
         : await registerNewDevice(auth);
       workspace = await ensureOwlWorkspace(auth, device.id);
     } else {
-      // First login on this machine.
+      // First login to this account on this machine.
       device = await registerNewDevice(auth);
       const client = createSkybridgeClient({ authContext: auth, deviceId: device.id });
       workspace = await ensureOwlWorkspace(auth, device.id, client);
-      await maybeClaimLocalInto(client, workspace.id, profileId, auth.user.email);
+      // Claim is the ONLY local→account on-ramp (§5.5, D-add-3): offer it only
+      // when adding FROM local. Adding an account while on another account
+      // never merges the local db.
+      if (prior === LOCAL_PROFILE) {
+        await maybeClaimLocalInto(client, workspace.id, profileId, auth.user.email);
+      }
       await postSyncSwitch(profileId); // opens the claimed copy, or creates empty
+      switched = true;
     }
 
     // Step 5 — encrypt access (+ refresh) before any HTTP / disk write, so a
@@ -228,11 +253,14 @@ export async function loginAndOpenSession(
       workspace_id: workspace.id,
     };
   } catch (err) {
-    // Unwind: revoke the freshly-issued token, and return the daemon to local
-    // (15a rolls back to local; precise rollback to the prior profile is
-    // Phase 17). Never write toml — the caller's persisted state is unchanged.
+    // Unwind: revoke the freshly-issued token, and return the daemon to the
+    // PRIOR profile — precise rollback if we'd already switched onto the target,
+    // else just restore the prior account's renewal timer (the daemon never
+    // moved). From local this rolls back to local (equivalent to the old
+    // bestEffortSwitchLocal). Never write toml — persisted state is unchanged.
     await bestEffortRemoteLogout(auth);
-    await bestEffortSwitchLocal();
+    if (switched) await rollbackToPrior(prior, priorExpiresAt);
+    else reschedulePrior(prior, priorExpiresAt);
     throw err;
   }
   // auth.token falls out of scope here.

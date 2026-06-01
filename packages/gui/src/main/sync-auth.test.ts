@@ -537,6 +537,112 @@ describe('loginAndOpenSession — claim empty account (Phase 16)', () => {
   });
 });
 
+// ─── multi-account add: login while already on an account (D-add) ────
+
+describe('loginAndOpenSession — multi-account add (D-add)', () => {
+  /** A full prior-account section (read by the rollback's planQuickSwitch). */
+  function priorSection(over: Record<string, unknown> = {}) {
+    return {
+      server_id: 'srv-A',
+      server_url: 'http://srv-a:8443',
+      user_id: 'u-A',
+      email: 'a@test',
+      encrypted_token: b64('tk-A-access'),
+      encrypted_refresh_token: b64('rt-A-refresh'),
+      device: { id: 'dev-A', name: 'mac-a', app_version: 'owl 0.5.0-dev', client_version: '0.1.4' },
+      workspace: { id: 'ws-A', slug: 'owl/default' },
+      ...over,
+    };
+  }
+  const switchProfileIds = () =>
+    fetchMock.mock.calls
+      .filter(([u]) => String(u).endsWith('/sync/switch'))
+      .map(([, init]) => JSON.parse((init as RequestInit).body as string).profile_id);
+  const login = () =>
+    loginAndOpenSession({ serverUrl: 'http://127.0.0.1:18443', email: 'a@test', password: 'pw' });
+
+  it('logging in from an account adds + switches to the new account; never prompts claim (D-add-3)', async () => {
+    coreState.effectiveActive = 'pid-A'; // already on account A
+    fsState.profileDbExists = false; // first login to the new account on this machine
+    coreState.localInspect = { noteCount: 5, hasSyncTraces: false }; // local HAS notes
+
+    await login();
+
+    // Claim is the local-only on-ramp: adding FROM an account never merges local
+    // (contrast the from-local claim tests above, where prior === local).
+    expect(claimState.calls).toBe(0);
+    expect(coreState.copyCalls).toHaveLength(0);
+    // Switched onto the new account + wrote only its section (A's stays saved).
+    expect(switchProfileIds()).toEqual(['pid-srv-1-u-A']);
+    expect(coreState.writeProfileCalls).toHaveLength(1);
+    expect(coreState.writeProfileCalls[0]!.profileId).toBe('pid-srv-1-u-A');
+    expect(coreState.writeProfileCalls[0]!.opts).toEqual({ setActive: true });
+  });
+
+  it('login failure from an account rolls the daemon back to the PRIOR account (not local)', async () => {
+    coreState.effectiveActive = 'pid-A';
+    coreState.profileSection = priorSection(); // read by the rollback's planQuickSwitch(A)
+    fsState.profileDbExists = false;
+    sessionResp = { ok: false, status: 500 }; // /sync/session fails
+
+    await expect(login()).rejects.toThrow(/HTTP 500/);
+
+    // Switched onto the new account, then rolled the daemon back to A — never local.
+    expect(switchProfileIds()).toEqual(['pid-srv-1-u-A', 'pid-A']);
+    expect(switchProfileIds()).not.toContain('local');
+    expect(coreState.writeProfileCalls).toHaveLength(0);
+    expect(sdkState.logoutCalls).toBe(1); // revoked the freshly-issued token
+  });
+
+  it('a bad password does not stop the prior account renewal timer', async () => {
+    // Establish a live renewal timer for account A (login from local).
+    coreState.cfgRead = profileCfg();
+    await loginAndOpenSession({ serverUrl: 'http://x', email: 'a@test', password: 'p' });
+    sdkState.refreshCalls = 0;
+    coreState.effectiveActive = 'pid-srv-1-u-A'; // now on A
+
+    // Attempt to add another account, but the remote login fails (wrong password).
+    sdkState.loginError = new Error('bad password');
+    await expect(login()).rejects.toThrow(/bad password/);
+
+    // A's timer is untouched (login throws before clearRefreshTimer): advancing
+    // to A's renewal point still fires exactly one refresh.
+    await vi.advanceTimersByTimeAsync(FAR - BASE - 60_000);
+    expect(sdkState.refreshCalls).toBe(1);
+  });
+
+  it('re-login to the CURRENT account re-installs, reuses the device, overwrites its secrets', async () => {
+    coreState.effectiveActive = 'pid-srv-1-u-A'; // already on this exact account
+    fsState.profileDbExists = true; // its db exists (return visit / self-switch)
+    switchDeviceId = 'dev-A'; // daemon remembers the device
+    coreState.profileSection = priorSection();
+
+    await login();
+
+    expect(switchProfileIds()).toEqual(['pid-srv-1-u-A']);
+    expect(coreState.writeProfileCalls).toHaveLength(1);
+    const { profileId, section } = coreState.writeProfileCalls[0]!;
+    expect(profileId).toBe('pid-srv-1-u-A'); // [profiles.<A>] still written for the same id
+    expect((section.device as { id: string }).id).toBe('dev-A'); // device reused
+    expect((section.workspace as { id: string }).id).toBe('ws-A'); // workspace reused
+    expect(section.encrypted_token).toBe(b64('tk-plaintext')); // secrets overwritten by this login
+    expect(section.encrypted_refresh_token).toBe(b64('rt-refresh'));
+  });
+
+  it('re-login to the current account that fails rolls back to itself, never local', async () => {
+    coreState.effectiveActive = 'pid-srv-1-u-A';
+    fsState.profileDbExists = true;
+    switchDeviceId = 'dev-A';
+    coreState.profileSection = priorSection();
+    sessionResp = { ok: false, status: 500 };
+
+    await expect(login()).rejects.toThrow();
+
+    expect(switchProfileIds()).toEqual(['pid-srv-1-u-A', 'pid-srv-1-u-A']);
+    expect(switchProfileIds()).not.toContain('local');
+  });
+});
+
 // ─── logout ─────────────────────────────────────────────────────────
 
 describe('logout (Phase 15 — full logout / D2)', () => {
