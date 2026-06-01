@@ -399,4 +399,41 @@ deleteProfileLocalCopy(targetId):                      # targetId 必为 hex（U
 
 ## 9. 实施记录
 
-（待实施后回填：commit、验收基线、与设计偏差、真机手测。）
+### 全部四片已 ship（2026-06-02，落 owl main 未 push，逐片全绿）
+
+**Commit**（plan 本体 `c56c28b`）：
+- `58fc3f5 feat(gui): manual sync action + reminder note (17a)`
+- `7bc2a59 feat(skybridge): password-free profile quick-switch (17b)`
+- `66906c8 feat(skybridge): remove device from the settings list (17c)`
+- `6cecd19 feat(skybridge): delete account local copy (17d)`
+
+**最终验收（whole repo，全绿）**：`pnpm -r build` → `just check`（8 守卫 + typecheck）→ core **519** / daemon **283** / cli **134** / gui **367** → gated e2e **16/16**。
+
+**逐片基线**：17a gui 325→ ; 17b core 505→516 / gui 325→343；17c daemon 279→283 / gui 343→350；17d core 516→519 / gui 350→367。
+
+**落点照设计（含三轮 review 修订）无偏差**：
+- **17a**：shared `sync-run-types.ts`（`RunSyncResult` 镜像）；main `sync:run` + `runSyncNow`（仿 buildDevices 错误翻译，不 notify）；preload/d.ts `sync.run`；`SyncStatusBar` 账号态加「手动同步」（syncing/running disabled，local/无 snapshot 不显）；`SyncSection` 加 W5 一行。
+- **17b**：core `listProfiles`(含 `dbExists`⑦) / `updateProfileAuth`(by-id②) / `clearProfileAuth`(by-id) / `readEffectiveActiveProfileId`(⑤)；main `switchToProfile`（进门 clearTimer① + refresh-first + persist-first② + db 硬闸⑩ + `switched` 整段 catch⑥ + `rollbackToPrior`/`reschedulePrior`，null 守卫）+ `QuickSwitchNeedsLoginError`；shared `sync-profiles-types.ts`；main `buildProfiles` + `sync:profiles`/`sync:switch-profile`(成功 notify)；`SyncStatusBar` popover 加 `ProfileSwitcher`(账号列表 `max-h` 滚动，fetch on open)。
+- **17c**：daemon `RealSkybridgeClient` 加 `revokeDevice` 声明 + `POST /sync/revoke-device`(仿 /sync/devices)；main `sync:revoke-device` + `revokeDevice()`；`DevicesCard` 非当前行「移除」+ inline 确认 + revoke 后重拉（当前行无按钮 Q4）。
+- **17d**：core `deleteProfileDb`(拒 local/非 hex)；main `deleteProfileLocalCopy`(active 硬切 local④ + `postSyncSwitchStrict` HTTP 失败中止/NetworkError 继续 + 泛化 `remoteRevoke`→`bestEffortRevokeProfile` device-first/logout-last③ + refresh-only⑨)；main `sync:delete-profile`(仅 wasActive 才 notify)；renderer `SavedProfilesCard`(「已保存账号」+ 强二次确认 Dialog)挂 `SyncSection` 末。
+
+**实现踩坑（carry-forward）**：
+- `switchToProfile`/`deleteProfileLocalCopy` 测试在 `sync-auth.test.ts`：core mock 须补 `readEffectiveActiveProfileId`/`updateProfileAuth`/`clearProfileAuth`/`deleteProfileDb`/`removeProfile`/`ProfileDbMissingError`，skybridge-client mock 须补 `NetworkError`（hoisted class，**记得在 `vi.hoisted` 解构里也加**——只 return 不解构 → `MockNetworkError is not defined`）。`/sync/switch` fetchMock 加 `switchResp`/`switchThrows` 才能测 17d 的 HTTP-fail vs daemon-down 两路。
+- `RunSyncResult` 是 core camelCase（`pulledTotal` 等），daemon `ok(reply, result)` 原样透传 → shared 镜像用 camelCase（非 snake_case wire 约定，因是内部 daemon API）。
+- `ProfileSwitcher` 标准单测走「直接传 props」而非 SyncStatusBar 集成（popover mock 不触发 `onOpenChange`，fetch 路径测不到）；`SavedProfilesCard` 走 mount fetch（mounted-ref 守 unmount setState）。Radix Dialog 同 Popover 在 jsdom panic → 测里 `vi.mock('@/components/ui/dialog')` passthrough（仿 ClaimAccountDialog.test）。
+- ProfileSwitcher 的 local 行文案用「**本地工作区**」（区别于 W6 header「本地独立工作区」），避免 SyncStatusBar 局部 `getByText('本地独立工作区')` 撞双。
+- `sync:run`/`sync:switch-profile`/`sync:delete-profile` 的「不 notify / 仅条件 notify」负向断言要先 `flushImmediate()` 排空上一个 test 的 setImmediate notify、再 fresh `windowState.send`（跨 test setImmediate 泄漏会污染共享 send mock）。
+
+**与设计的偏差**：删除副本入口落 Settings「已保存账号」区（独立 `SavedProfilesCard`，不进 popover）—— 与 §5.3 一致，destructive 不放悬浮层。其余照设计 + 三轮 review。
+
+### 真机手测全过（2026-06-02，隔离 nest + 真 0.1.4 server + 账号 a@local/b@local）
+
+17a-d 一并真机验证全部通过：手动同步 / 提醒文案 / 免密快切（A↔B↔本地、切回免密、dead-refresh 提示）/ 移除设备（仅非当前）/ 删除账号副本（active+非 active，local 库原样）。
+
+**手测暴露并修复一个 Phase 15 遗留 bug（commit `ef059b2` `fix(skybridge)`，与 Phase 17 无关）**：
+- **现象**：登录后永远卡「同步中」；daemon.log 里 `op:'replace'`(install) + sse connect 以 ~250/sec 死循环，server 端 `POST /auth/refresh` + `GET /workspaces/.../events|changes` 同频风暴。
+- **根因**：主进程免密续期定时器把 `expiresAt - now - margin` 直接喂 `setTimeout`。skybridge server 默认 access TTL = **30 天** → delay ≈ 2.59e9 ms > `setTimeout` 32 位上限（2147483647 ms ≈ 24.8 天）→ **Node 钳成 1ms 立即触发**（`TimeoutOverflowWarning: ... Timeout duration was set to 1`）→ `refreshSession` 每 ~4ms 刷新+重装一轮，SSE bridge 每轮拆了重连 → UI 卡「同步中」。Phase 15 真机测当时 server TTL 较短（delay 在 32 位内），未暴露。
+- **修复**：`scheduleRefreshIn` 分段——`delayMs > MAX_TIMER_MS(2_147_483_647)` 时先睡满上限、`scheduleRefresh(currentExpiresAt)` 重算剩余、再 arm；只在临近过期才真正 `refreshSession`。回归测试 `sync-auth.test.ts`「does NOT refresh-loop when the renewal delay exceeds setTimeout 32-bit max」。
+- **诊断法（carry-forward）**：卡「同步中」+ daemon.log 巨大（10MB×N 分钟）+ 同一 install/connect 高频重复 → 抓 server reqlog 分布定位是 GUI 风暴还是 daemon；GUI main 无独立 log → 临时 `appendFileSync` 抓 `new Error().stack` 看 `Timeout._onTimeout` 调用链；`grep TimeoutOverflowWarning` 一锤定音。
+
+**最终基线（含 fix）**：gui **368**（+1 回归）· core 519 / daemon 283 / cli 134 · `just check` + gated e2e 16/16 全绿。conflict counter / 错钟 soak 不属 17（留 Phase 20）。

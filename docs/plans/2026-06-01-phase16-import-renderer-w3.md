@@ -308,3 +308,43 @@ apply 侧 `parseNotePayload`/`parseFolderPayload`（`sync/payloads/note.ts`/`fol
 | 给 `SyncStatusSnapshot` 加 `is_local` 显式字段 | 不做（复用现有 server_url===null / session===null 信号；真有歧义再加） |
 | `conflict_record` 加 `local_counter`/`remote_counter` 列 + GUI 展示 | 不做（display-only，连带改 conflicts.ts/GUI 类型/测试；留 conflict UI 迭代 / 0.6 W7） |
 | skybridge 任何改动 | **不需要**（0.1.4 已具 serverTime；payload owl 自有；wire 已带 device_id） |
+
+---
+
+## 8. 实施记录
+
+### 16a + 16b — 已 ship（2026-06-01，落 owl main 未 push，全绿）
+
+**Commit**：`3d19ded feat(gui): reload renderer on profile switch (16a)` + `4dfbbbe feat(skybridge): claim-empty-account dialog + local UI (16b)`（plan 本体 `64be5a5`）。
+
+**验收（whole repo）**：`just check` 8 守卫 · core **480** / daemon **278** / cli **134** / gui **316** · gated e2e **16/16**。
+
+**与设计的偏差（记录）**：
+- §3.4 写「shadcn **AlertDialog**」，实际用 `Dialog`（`components/ui/` 只有 `dialog.tsx`，无 alert-dialog）：`showCloseButton={false}` + Esc/outside→`independent` 实现 forced-choice，等价。
+- 其余照设计：claim 在 switch 前（B9）、整库 copy、W6 双信号判据、reload 双延迟（main `setImmediate` + renderer tick）、claim-prompt 独立模块防 import 环。
+
+**真机 e2e 手测通过（2026-06-01，隔离 nest `/tmp/owl-p16-nest` + 真 0.1.4 server `/tmp/owl-p16-sb` + 账号 test@local，rig 测后已清理）**：
+- **W6**：未登录时 SyncSection banner + SyncStatusBar popover 均显「本地独立工作区」。
+- **claim merge**：local 2 笔记 → 登录空账号 → 弹「本地笔记如何处理？」→ 并入 → 窗口自动 reload 进登录态。
+- **文件/server 核验**：`profiles/<id>/owl.db` 生成、与 local 同 4 笔记（2 特殊 + 2 用户）；**`owl/owl.db`（local）`synced_at=0`/`sync_cursor=0`/无 skybridge meta —— 账号同步零写 local（D10b 铁证）**；server change-log = `note/create×2 + update×2`（仅 2 用户笔记上行，特殊笔记 bootstrap 不推）；server `devices=1`/`workspaces=1`（无堆积）；profile db `skybridge_device_id/workspace_id` 与 toml 一致、`backfilled=1`。
+- **logout**：toml `active_profile="local"`、`[profiles.<id>]` 段保留（server_id/device/workspace）、token 字段清空（D2 full logout）、窗口自动 reload 回 local。
+- 未单独跑「保持独立 / 非空账号无弹框」真机分支（单测已覆盖 5 case），留需要时复测。
+
+### 16c — W3 HLC-lite — 已 ship（2026-06-01，落 owl main 未 push，全绿）
+
+**改动落点**（照 §4 定稿，无偏差）：
+- **migration `0009_lww_counter.sql`**（notes/folders 加 `lww_counter INTEGER NOT NULL DEFAULT 0`）+ `schema.ts` 加 `lwwCounter` + `migrate.ts` `LATEST_KNOWN_VERSION` 8→9。fresh install / 升级共用 `applyForwardMigrations`，旧行回填 0。`conflict_record` counter 列**未做**（§4.1，留 0.6/W7）。
+- **新 `core/src/sync/hlc.ts`**：`serverNormalizedStamp(sqlite, nowMs=Date.now)`（offset 归一 + 同毫秒 counter++）/ `observeRemoteLwwKey` / `setServerTimeOffset` / `readServerTimeOffset`，`local_metadata` 存 `server_time_offset_ms`/`hlc_last_ms`/`hlc_last_counter`（int 存字符串，仿 `device_uuid`）。core `index.ts` 导出。
+- **payload parser**（`note.ts`/`folder.ts`）：每 op interface 加 `lww_counter?: number` + 新 `optionalNumber` helper（present 校验有限数，缺失→undefined）。
+- **业务写**：notes(create/update/delete/restore/permanentDelete) + folders(create/update/delete 含子+锚/reorder) 改 `serverNormalizedStamp`（**createNote/createFolder/reorderFolders 的 stamp 移进 transaction**），行写 `lwwCounter`、payload 加 `lww_counter`。`setNotePinned`/`reorderNotesInFolder`（无 `updated_at_ms`）不动。
+- **engine**：`PullResultLike`/`PushResultLike` 加 `serverTime?`（**optional**——避免改 45+ 个既有 fake literal；real client 总带，adapter 透传）。`runSync` 每轮 pull（含 empty）+ push 后经 `refreshServerOffset` 落 offset（用注入 `deps.nowMs`）。apply 路由对每个校验通过的 note/folder payload 调 `observeRemoteLwwKey`。LWW 比较升三元 `cmpLww(ms,counter,deviceId)`（local `device_id ?? ''`，remote `c.deviceId`，counter `?? 0`）：note/folder update+delete gate、conflict gate 全改三元；apply 写行落 `lww_counter`。
+- **daemon `session.ts`**：`RealSkybridgeClient` pull/push duck-type 加 `serverTime: number`（**required**，对齐 0.1.4 wire），`adaptClient` 透传。
+
+**与设计的偏差（记录）**：
+- §4.5/§4.6「PullResultLike+push 加 `serverTime: number`」实现为 **`serverTime?`（optional）**：45 个既有 engine.test fake literal 不带 serverTime，改 required 要逐个补且无测试价值；real client 总返回，daemon duck-type 仍 required + adapter 单测守住透传。
+- offset 落点抽 `refreshServerOffset` helper（而非两处内联 `if`），把 `runSync` cognitive-complexity 压回 ≤15（biome 守卫）。
+- **既有 LWW「tie → local wins」单测语义更新**：旧 ms-only `>=` 下「同 ms→local 赢」；三元下「同 ms+counter+device」才算 tie（idempotent skip），跨设备同 ms 由 deviceId 定。engine.test 两处 tie 测试改为「同 device 真 tie→skip」，跨设备 tiebreak 移入新 `hlc-engine.test.ts`。emission.test 两处 delete-payload exact-key 断言加 `lww_counter`。
+
+**新测试**：`core/sync/hlc.test.ts`（stamp/observe/offset 纯函数 + createNote/createFolder/updateNote counter 落库）· `core/sync/hlc-engine.test.ts`（同设备同毫秒不丢 / 跨设备 deviceId tiebreak 双向 / pre-W3 无 counter 兼容 / serverTime 落 offset：empty pull + push）· note/folder parser 加 lww_counter case · `daemon/sync/session-adapter.test.ts`（adapter 透传 serverTime）。
+
+**验收（whole repo，全绿）**：`pnpm -r build` → `just check`（8 守卫 + typecheck + lint 48 既有 warning）· core **505** / daemon **279** / cli **134** / gui **316** · gated e2e **16/16**。错钟真机/soak 留 Phase 20。
