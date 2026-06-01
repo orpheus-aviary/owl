@@ -693,6 +693,26 @@ describe('proactive renewal (Phase 15b)', () => {
     await maybeRefreshNow();
     expect(sdkState.refreshCalls).toBe(0);
   });
+
+  // Regression: a long-lived access token (server default TTL is 30 days) makes
+  // `expiresAt - now - margin` exceed setTimeout's 32-bit ceiling (~24.8 days).
+  // Passing that straight to setTimeout clamped it to 1ms and fired immediately
+  // → an infinite refresh+reinstall storm. The timer must chunk: sleep the max,
+  // re-evaluate, re-arm — never refresh early in a tight loop.
+  it('does NOT refresh-loop when the renewal delay exceeds setTimeout 32-bit max', async () => {
+    sdkState.loginReturn.expiresAt = BASE + 30 * 86_400_000; // delay ≫ 2^31-1
+    await loginFresh();
+
+    // Pre-fix this fired at ~1ms (setTimeout overflow). Advancing well past that
+    // must NOT refresh.
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(sdkState.refreshCalls).toBe(0);
+
+    // It re-arms at the ~24.8-day ceiling; the re-arm only recomputes the
+    // remaining delay (token still has days left) — it must not refresh.
+    await vi.advanceTimersByTimeAsync(2_147_483_647);
+    expect(sdkState.refreshCalls).toBe(0);
+  });
 });
 
 // ─── switchToProfile (Phase 17 / W4) ─────────────────────────────────

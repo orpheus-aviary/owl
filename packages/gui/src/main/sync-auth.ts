@@ -130,6 +130,9 @@ export class QuickSwitchNeedsLoginError extends Error {
 const REFRESH_MARGIN_MS = 60_000; // refresh this long before expiry
 const REFRESH_MIN_DELAY_MS = 1_000; // never schedule a zero/negative timeout
 const REFRESH_RETRY_MS = 30_000; // back off after a transient (network) failure
+// setTimeout's 32-bit signed-int ceiling (~24.8 days). A larger delay clamps to
+// 1ms and fires immediately, so a long-lived token's renewal must be chunked.
+const MAX_TIMER_MS = 2_147_483_647;
 
 let refreshTimer: ReturnType<typeof setTimeout> | null = null;
 /** Expiry of the currently-installed access token, or null when none. */
@@ -609,9 +612,21 @@ function scheduleRefresh(expiresAt?: number): void {
 
 function scheduleRefreshIn(delayMs: number): void {
   if (refreshTimer) clearTimeout(refreshTimer);
-  refreshTimer = setTimeout(() => {
-    void refreshSession();
-  }, delayMs);
+  // setTimeout's delay is a 32-bit signed int; a larger value silently clamps
+  // to 1ms and fires immediately. Access tokens are long-lived (the server's
+  // default TTL is 30 days), so `expiresAt - now - margin` routinely exceeds
+  // this ceiling. When it does, sleep the max, then re-evaluate the remaining
+  // delay against `currentExpiresAt` and re-arm — instead of refreshing in a
+  // tight 1ms loop.
+  if (delayMs > MAX_TIMER_MS) {
+    refreshTimer = setTimeout(() => {
+      if (currentExpiresAt !== null) scheduleRefresh(currentExpiresAt);
+    }, MAX_TIMER_MS);
+  } else {
+    refreshTimer = setTimeout(() => {
+      void refreshSession();
+    }, delayMs);
+  }
   // Don't keep the process alive just for the renewal timer.
   refreshTimer.unref?.();
 }
