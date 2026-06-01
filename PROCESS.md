@@ -1,6 +1,47 @@
 # 开发进度
 
-## 当前阶段：P5-d per-profile 隔离 — **Phase 12 + Phase S + Phase 13（存储+迁移 plumbing-only）完成**（设计 v6 定稿）；下一步 **Phase 14（daemon switch）**
+## 当前阶段：P5-d per-profile 隔离 — Phase 12-16 完成；**Phase 17 全完成（GUI 账号/设备管理：17a 手动同步+提醒文案 · 17b 免密快切 · 17c 移除设备 · 17d 删除账号副本）+ 1 个 Phase 15 遗留 bug 修复（setTimeout 32 位溢出）**（五片 commit 落 main 未 push、全绿、**真机手测全过 2026-06-02**）；下一步 **Phase 18（本地全链路验证）**
+
+**Phase 17 子设计**：`docs/plans/2026-06-01-phase17-gui-account-device.md`（经 **3 轮 review**，切片 17a/17b/17c/17d；§9 实施记录有全验收 + 真机手测 + bug 修复诊断）。父设计 `2026-05-29-account-profile-isolation-design.md`（v6，§0.5/§5.4.3 D2/§11/§13 W4/W5/W8/W9 权威）。
+
+**✅ Phase 17 五 commit（本地 main，未 push）**：
+| Commit | 内容 |
+|---|---|
+| `58fc3f5` | **17a** 手动同步(W8)+提醒文案(W5)：shared `RunSyncResult` + main `sync:run` + SyncStatusBar「手动同步」按钮（账号态显，syncing disabled）+ SyncSection W5 一行。daemon 零改动（复用 `POST /sync/run`）。 |
+| `7bc2a59` | **17b** 免密快切(W4)：core `listProfiles`(含 `dbExists`)/`updateProfileAuth`(by-id)/`clearProfileAuth`(by-id)/`readEffectiveActiveProfileId`；main `switchToProfile`（进门 clearTimer + refresh-first + persist-first + db 硬闸 + `switched` 整段 catch + 精确回滚前一 profile）+ `QuickSwitchNeedsLoginError`；`sync:profiles`/`sync:switch-profile`；SyncStatusBar popover `ProfileSwitcher`(账号列表 max-h 滚动)。切回 local = step-away 保留 token（D2）。 |
+| `66906c8` | **17c** 移除设备(W9)：daemon `RealSkybridgeClient.revokeDevice` 声明 + `POST /sync/revoke-device`(仿 /sync/devices)；main `sync:revoke-device`；DevicesCard 非当前行「移除」+ inline 确认 + revoke 后重拉（当前行无按钮 Q4）。 |
+| `6cecd19` | **17d** 删除账号本地副本(destructive)：core `deleteProfileDb`(拒 local/非 hex)；main `deleteProfileLocalCopy`(active 硬切 local 释放句柄+`postSyncSwitchStrict` HTTP 失败中止/NetworkError 继续 + 泛化 `remoteRevoke`→`bestEffortRevokeProfile` device-first/logout-last + refresh-only)；`sync:delete-profile`(仅 wasActive 才 notify)；renderer `SavedProfilesCard`(Settings「已保存账号」+ 强二次确认 Dialog)。 |
+| `ef059b2` | **fix(skybridge)** 续期定时器 setTimeout 32 位溢出（Phase 15 遗留，非 Phase 17）：server 默认 30 天 access TTL → delay 2.59e9 ms > 2147483647 → Node 钳 1ms 立即触发 → refresh+install ~250/sec 死循环 → 卡「同步中」。修：`scheduleRefreshIn` 分段（>`MAX_TIMER_MS` 睡满上限+重算+重 arm）。回归测试 1。 |
+
+**Phase 17 验收（whole repo 全绿）**：`pnpm -r build` → `just check`(8 守卫+typecheck) → core **519** / daemon **283** / cli **134** / gui **368** → gated e2e **16/16**。
+
+**✅ 真机手测全过（2026-06-02，隔离 nest + 真 0.1.4 server + 账号 a@local/b@local）**：手动同步 / 提醒文案 / 免密快切(A↔B↔本地、切回免密、dead-refresh 提示) / 移除设备(仅非当前) / 删除账号副本(active+非 active、local 库原样)。**手测暴露并修复上方 setTimeout 溢出 bug**（诊断法见 plan §9）。
+
+四决策拍板：①快切扩展 SyncStatusBar popover ②删除副本纳入 Phase 17 ③离开账号两语义并存（侧栏切回保留 token / Settings 退出完全 revoke）④移除设备仅非当前。
+
+> **插队功能（用户 2026-06-02 提，需求已反转）**：原「登录守卫」（已登录态**禁止**直接登另一账号、须先切回本地）**作废**；改为**支持已登录态直接添加新账号**（多账号 add，语义 A：新账号成 active，旧账号留在已保存列表可免密快切回去，符合 D2 step-away）。**不加任何 login guard**。设计稿 `docs/plans/2026-06-02-add-account-while-logged-in.md`（经 2 轮 review 定稿，§9 实施记录）。做完此插队功能再回 Phase 18。
+>
+> **✅ 状态：两 slice 已实现 + 全绿 + 真机手测通过（2026-06-02）+ 已 commit 落 main（未 push）**。slice add-1（main `loginAndOpenSession` 多账号化：prior 捕获 + claim 仅 from-local + 失败回滚到 prior）；slice add-2（renderer：抽 `LoginForm` + auth view「添加账号」URL `?action=add` 驱动 + 侧栏「+ 添加账号」`PopoverClose`）。**无 daemon/core/新 IPC 改动**。验收：`pnpm -r build` + `just check`（typecheck+6 守卫）+ core 519/daemon 283/cli 134/gui **385**(+17) + gated e2e 16/16 全绿。真机手测：隔离 nest + 真 0.1.4 server（a@local/b@local）跑完设计稿 §5 全清单。**下一步回 Phase 18（本地全链路验证）**。
+
+---
+
+**Phase 16 子设计**：`docs/plans/2026-06-01-phase16-import-renderer-w3.md`（经 2 轮 review，切片 16a/16b/16c；§8 实施记录有 16a/16b/16c 全验收 + 手测）。
+
+**✅ 16a 受控 renderer reload（B7，commit `3d19ded`）**：profile switch（login/logout，main 单点）成功后 main `webContents.send('profile:switched')`（`setImmediate` 在 IPC reply 之后）→ renderer 收后再延一 tick `window.location.reload()`，整窗 reload 零残留（editor tab / AI / conflict / sync timer 全清）。软 `resetAllStores(epoch)` 留 0.6。
+
+**✅ 16b 认领空账号弹框 + W6 local UI（D10b/B2 + W6，commit `4dfbbbe`）**：
+- core `inspectLocalProfile()`（只读 owl/owl.db 计数 + B8 orphan 探测）+ `copyLocalProfileDbInto()`（readonly backup 整库 copy）。
+- gui main `loginAndOpenSession` 分回访/首登：首登 register+ensureWorkspace+空账号 probe(`pullChanges(ws,0,1)`)全在 switch **之前**（B9），空账号+local 有笔记 → `promptClaim`(独立 `claim-prompt.ts` 防 import 环) → merge 则 copy 到 target **再** switch。**账号同步永不写 owl/owl.db**（D10b）。
+- renderer `ClaimAccountDialog`（forced choice，用 `Dialog` 非 AlertDialog——后者不存在）+ W6 「本地独立工作区」明示（SyncStatusBar popover + SyncSection banner，判据 `snapshot!==null && server_url===null`）。
+
+**16a/16b 验收（commit-time，whole repo 全绿）**：`just check` 8 守卫 · core **480** / daemon **278** / cli **134** / gui **316** · gated e2e **16/16**。（16c 后基线见下方 505/279。）
+
+**✅ 16a/16b 真机 e2e 手测通过（2026-06-01，隔离 nest + 真 0.1.4 server + 账号 test@local，rig 已清理）**：W6 banner/popover 显「本地独立工作区」；local 2 笔记登录空账号 → claim 弹框 → 并入 → 窗口自动 reload 进登录态；**文件/server 核验**：`profiles/<id>/owl.db` 生成且与 local 同笔记数、**`owl/owl.db` 零被账号同步污染（synced_at=0/cursor=0/无 skybridge meta，D10b 铁证）**、server change-log 仅 2 用户笔记上行（特殊笔记不推）、server device=1/workspace=1 无堆积、profile db 身份与 toml 一致 backfilled=1；logout → active=local、`[profiles.<id>]` 段保留、token 清空、窗口自动 reload 回 local。
+
+**✅ 16c W3 HLC-lite（owl 单仓不动 skybridge，commit `e3472f9` `feat(skybridge)`，落 main 未 push）**：migration **`0009_lww_counter.sql`**（notes/folders 加 `lww_counter`；`LATEST_KNOWN_VERSION` 8→9）+ 新 `sync/hlc.ts`（`serverNormalizedStamp` 同毫秒 counter++ / `observeRemoteLwwKey` / `setServerTimeOffset` / `readServerTimeOffset`，HLC 状态落 `local_metadata`）+ payload parser 接 `lww_counter`（`optionalNumber`）+ 业务写 stamp 落点（notes/folders create/update/delete/restore/reorder，行+payload 带 counter，create/reorder 的 stamp 移进 tx）+ engine 三元 LWW `cmpLww(ms,counter,deviceId)`（update/delete/conflict gate 全改 + apply 写行 counter + 每 payload `observeRemoteLwwKey`）+ `runSync` 每轮 pull(含 empty)/push 落 offset + daemon `adaptClient` 透传 `serverTime`。`conflict_record` counter 列**未做**（§4.1 留 0.6/W7）。新测试 4 文件（`hlc.test`/`hlc-engine.test`/parser/daemon adapter）。**验收全绿**：`pnpm -r build` + `just check`(8 守卫) + core **505**/daemon **279**/cli **134**/gui **316** + gated e2e **16/16**。错钟真机/soak 留 Phase 20。详见 plan §4 + §8。
+
+---
+
 
 **设计文档**：`docs/plans/2026-05-29-account-profile-isolation-design.md`（**v6 定稿，以 §0.5 决策总账为准**）+ `2026-05-29-phase12-profile-foundation.md`（Phase 12 子设计）。
 
@@ -30,13 +71,39 @@
 
 **⚠️ Phase 13 登记给 Phase 15**：profile 段 `server_id` 留空占位（R2，无 live writer）；机密字段沿用 `encrypted_token`，refresh 落地若改 `encrypted_refresh_token` 需补 writer/reader/redact glob（R1）；version negotiation 硬要求 0.1.4 server，`server_id` 缺失报错不静默回退 url-key（R5）。
 
+**✅ Phase 14（daemon switch，plumbing-only）2026-05-31 完成（工作树，未 commit）** —— 照 `docs/plans/2026-05-31-phase14-daemon-switch.md`（v4 定稿，经 3 轮 review）。`switchProfile(ctx, targetDbPath, logger): Promise<{warnings}>` 走 §5.4.2-bis 完整状态重建 + switch gate。**无 live 触发**（login 翻转留 Phase 15）→ 运行时 diff≈0。
+| 任务 | 内容 |
+|---|---|
+| switch-gate | `SwitchGate`（`isSwitching`/`generation`/`trackMutation`/`runExclusive`）—— 串行化切换 + swap 期 drain 在飞 mutation；server.ts 单点 hook 在 route 注册前挂、mutating 请求 switch 期回 503 `SWITCH_IN_PROGRESS`（`fail()`） |
+| switchProfile | **PREPARE**（createDatabase+ensureDeviceId+ensureSpecialNotes，可 throw=abort 旧 ctx 未动）→ **QUIESCE**（stopBackgroundHandles+drainManualSync）→ **COMMIT**（swap db/sqlite/deviceId、rebuild ReminderScheduler+ConversationStore、evict broadcaster WeakMap、清 session/preview、异常进 warnings 不 reject）→ 锁外 ensureBackgroundHandles |
+| 4 轮 review 修 | P1-a shutdown 改读 `ctx.scheduler/ctx.sqlite`；**P1 epoch**：`ensureBackgroundHandles` 入口 guard + await 后写回前重判 generation 失配则弃 stale handle（抢在 SSE onOpen 前同步退订）；P2 ensureDeviceId 先于 ensureSpecialNotes；**P3 core**：`createDatabase` try/catch 包版本派发、任何 throw 关句柄；P4 `switchProfile` throw=abort/resolve=committed 契约 |
+
+**Phase 14 验收**：core 465 / CLI 134 / daemon **272**（+17）/ GUI 299 / **E2E 16/16** / `just check` 8 守卫全绿。改动文件：daemon `{switch-gate.ts(新), profile-switch.ts(新), coalesce.ts, status-broadcaster.ts, manual.ts, bridge-lifecycle.ts, context.ts, cli.ts, server.ts}` + core `db/index.ts` + 5 测试文件。
+
+**⚠️ Phase 14 登记给 Phase 15/16/17**：live 切换触发 + switch 后 `installSkybridgeSession` compose（15）；renderer 受控刷新 §5.4.4（16）；GUI 快切下拉触发 switchProfile（17）；写 toml `active_profile` 由 GUI main（daemon 不写 toml，守卫拦）。
+
 **✅ skybridge 0.1.4（Phase S）已实施落 skybridge main 2026-05-31**（7 commit 未 push/未 publish，`just check` + 109 tests 全绿）= server_id（db `server_meta`+config 覆盖）+ 权威时间 + refresh 轮换（replaced_by 区分 replay/invalid）+ device revoke + lazy-bind。Phase 15 对接 ready；npm publish 留 Phase 19。详见 skybridge `docs/plans/2026-05-30-phase-S-skybridge-0.1.4.md` 与 skybridge PROCESS.md。
 
-**重排路线（设计稿 §11）**：Phase 12 ✅ + Phase S ✅ + Phase 13 ✅ → **14(switch：db replace 完整重建 §5.4.2-bis 含 ConversationStore + switch mutex)** → 15(登录/refresh/server_id, 依赖 Phase S) → 16(import 守卫+reset+W3) → 17(GUI 快切+移除设备+手动同步) → 18-23(全链路/阿里云部署 0.1.4/soak/CLI/发版/收尾)。
+**重排路线（设计稿 §11）**：Phase 12 ✅ + Phase S ✅ + Phase 13 ✅ + Phase 14 ✅ → **15(登录/切换/登出：profileId=hash(server_id,user_id)、refresh-token 流、device 复用、登录顺序 B9，依赖 Phase S)** → 16(import 守卫+renderer reset+W3) → 17(GUI 快切+移除设备+手动同步) → 18-23(全链路/阿里云部署 0.1.4/soak/CLI/发版/收尾)。
 
-**下个对话**：开工 **Phase 14（daemon switch）** —— §5.4.2-bis：profile 切换走 db replace 完整重建（rebuild ReminderScheduler + **ConversationStore**（持 sqlite）/ evict broadcaster WeakMap / drain coalescer / 重设 ctx.deviceId）+ switch mutex。Phase S 已 ready，Phase 15 前不需回 skybridge（除非 soak/部署）。
+**✅ Phase 15（登录/切换/登出 + refresh，live）2026-06-01 完成（落 owl main，未 push）** —— 照 `docs/plans/2026-05-31-phase15-login-refresh.md`（经 3 轮 review）。子设计两决策：① SDK 接入 = skybridge `just publish --tag next` 发 0.1.4 三包 + owl bump `0.1.4`（latest 仍停 0.1.3，Phase 19 promote）；② plumbing 风格切 15a/15b。
+| 任务 | 内容 |
+|---|---|
+| S15 | **skybridge 0.1.4 已 publish @next**（proto/client/server）。Phase S 漏 bump package.json 版本 → 补 bump commit `db50768`（skybridge main）。owl daemon+gui dep → `0.1.4`，gated e2e 16/16 真打 0.1.4 server |
+| 15a | core `computeProfileId(server_id,user)`(D11) + `encrypted_refresh_token` 穿透 config adapter/gate + `updateActiveProfileAuth`(轮换 raw-patch)/`readProfileSection`(按 id 读 device 复用) + export `readSkybridgeDeviceId` + redact glob；daemon `POST /sync/switch`(mkdir+switchProfile+回 device_id，switch-gate 自指死锁豁免)；GUI main login 翻 per-profile(B9: switch→device 复用/register→ensureWorkspace→session→writeProfileConfig setActive；R5 硬要求 server_id；unwind 回 local) + logout D2 full(revoke with refresh-then-logout 兜过期) |
+| 15b | restore **refresh-first**(refresh→轮换落盘→install；dead refresh 清 creds、net 留 token)；**GUI main proactive timer 续期**(`scheduleRefresh`/`refreshSession`/`maybeRefreshNow`，expiresAt−60s + `powerMonitor`resume/`browser-window-focus` 重校；非 daemon event) |
 
-**Push 状态**：Phase 12 三 commit（`45eef1e`/`a4c61bd`/`d15c9cd`）+ Phase 13 三 commit（`c4da3f1` refactor T1 / `9b61ae0` feat T2 / 本 docs commit = plan+PROCESS）在本地 main，**未 push**。MEMORY 为工作树改动（不入 git）。
+**Phase 15 验收**：core **474** / daemon **278** / gui 308 / cli 134 / `just check` 8 守卫 / gated e2e 16/16 全绿。**已知取舍**：app 完全退出超 access TTL → daemon 后台 sync 停到下次启动（记 release notes）。**Phase 15 留尾**：受控 renderer reload + 认领空账号弹框 + W3 时间戳 → Phase 16；GUI 快切下拉/移除设备/手动同步 → Phase 17。
+
+**✅ Phase 15 真机 e2e 手测全过（2026-06-01，对真 0.1.4 server，隔离 nest）**：登录写 per-profile toml（server_id 锚 + 两密文 + device + workspace）+ 生成 `profiles/<id>/owl.db`；**local `owl/owl.db` 未被账号同步污染**（D10b 验）；server 1 device 不堆积；账号笔记同步上行；**proactive 续期每 60s 免密**（daemon.log 4+ 次 session install）+ **refresh 轮换**（server 旧 family 撤销）；登出 `op:switch local`；**重登 device 复用**（`op:switch` device_id 非 null，server 仍 1 device，F1 根治）；**重启免密 refresh-first restore**（新 daemon pid 启动即 install）。唯一粗糙点 = 切换后 renderer 需手刷才显示对的 profile 笔记（受控 reload 缺 → Phase 16 首要项）。临时环境已清理。
+
+**🧹 Phase 15 顺手 cleanup（gui，待提交）**：① Settings tab 重排 `外观→自定义→同步→快捷键→高级`（default `外观`，原 `快捷键` 首位非行业惯例）+ 测试同步；② 删死代码 gui `atomic-write.ts`(+test)——Phase 15 login/logout 改走 core `writeProfileConfig`/`clearSkybridgeAuth`/`setActiveProfile`，atomic-write 唯一消费者消失（§40 不变量作废）。gui 308→297（−11 测随文件删）。
+
+**Push 状态补充**：Phase 15 owl 提交 = 5 commit（`eff7e1e` chore bump / `1795b90` core / `c8308e4` daemon switch / `133af6c` gui login / `386388c` docs plan）+ 15b 1 commit（待提交/已提交见 git log）。skybridge `db50768` bump 在 skybridge main。**均未 push**。
+
+**下个对话**：开工 **Phase 15（登录/refresh/server_id）** —— 接 Phase S 0.1.4 client（login 回 refreshToken/expiresAt/serverId；`refresh()`/`getServerInfo()`/`getServerTime()`；`revokeDevice`）。登录顺序 §5.4.1（**先在当前 profile 备好目标库再 switch**，B9）：login → profileId=hash(server_id,user_id) → 备库（reuse/import 抉择 §5.5）→ **switchProfile（Phase 14 已就绪）** → installSkybridgeSession → 写 toml `[profiles.<id>]`+active_profile（GUI main）。硬要求 0.1.4 server，`server_id` 缺失报错不回退 url-key（R5）。owl 存 `encrypted_refresh_token` + 补 redact glob。
+
+**Push 状态**：Phase 12（`45eef1e`/`a4c61bd`/`d15c9cd`）**已在 origin/main（已 push）**。Phase 13（`c4da3f1`/`9b61ae0`/`f9113f7`）+ Phase 14（`c4f2240` fix db / `da3e900` feat switch / `ae7c61a` docs plan）**六 commit 在本地 main 未 push**。**本 PROCESS.md 改动留工作树待用户提交**；MEMORY 不入 git。
 
 ---
 
