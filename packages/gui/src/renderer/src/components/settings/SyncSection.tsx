@@ -4,6 +4,7 @@ import { Loader2 } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import type { SyncStatusReply } from '../../../../shared/sync-status-types.js';
 import { DevicesCard } from './DevicesCard';
+import { SavedProfilesCard } from './SavedProfilesCard';
 
 /**
  * P5-d Phase 8 — Settings → 同步 tab.
@@ -211,6 +212,11 @@ export function SyncSection() {
           <DevicesCard />
         </>
       )}
+
+      {/* W4/delete-local-copy — saved-account management; renders nothing for a
+          pure-local user (no account profiles). Shown across all views so a
+          user on local can still delete a stale account copy. */}
+      <SavedProfilesCard />
     </div>
   );
 }

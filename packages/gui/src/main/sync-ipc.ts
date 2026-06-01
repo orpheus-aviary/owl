@@ -43,6 +43,7 @@ import { getDaemonUrl } from './daemon.js';
 import {
   QuickSwitchNeedsLoginError,
   SafeStorageUnavailableError,
+  deleteProfileLocalCopy,
   loginAndOpenSession,
   logout,
   switchToProfile,
@@ -77,6 +78,15 @@ export function registerSyncIpc(): void {
   ipcMain.handle('sync:switch-profile', async (_e, id: string) => {
     const reply = await safe<void>(() => switchToProfile(id));
     if (reply.ok) notifyProfileSwitched();
+    return reply;
+  });
+  // P5-d Phase 17 (delete-local-copy) — destructive remove of an account's
+  // local copy. Reloads the renderer only when the deleted profile was active
+  // (the daemon switched to local); deleting a non-active profile leaves the
+  // current view intact (the Settings list re-fetches on its own).
+  ipcMain.handle('sync:delete-profile', async (_e, id: string) => {
+    const reply = await safe<{ wasActive: boolean }>(() => deleteProfileLocalCopy(id));
+    if (reply.ok && reply.data.wasActive) notifyProfileSwitched();
     return reply;
   });
 }

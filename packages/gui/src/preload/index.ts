@@ -153,6 +153,13 @@ contextBridge.exposeInMainWorld('owlAPI', {
     switchProfile: (id: string): Promise<SyncIpcReply<void>> =>
       ipcRenderer.invoke('sync:switch-profile', id),
     /**
+     * P5-d Phase 17 (delete-local-copy): destructively remove an account's
+     * local copy (db + toml) and revoke it remotely. Reloads the window when
+     * the deleted profile was active.
+     */
+    deleteProfile: (id: string): Promise<SyncIpcReply<{ wasActive: boolean }>> =>
+      ipcRenderer.invoke('sync:delete-profile', id),
+    /**
      * P5-d Phase 16 (B7): subscribe to "a profile switch committed" (login /
      * logout). MainApp mounts one listener and does a controlled full reload
      * so the previous profile's renderer state (editor tabs / AI cache /

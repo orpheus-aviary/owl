@@ -187,6 +187,7 @@ export type {
 export {
   clearProfileAuth,
   clearSkybridgeAuth,
+  deleteProfileDb,
   listProfiles,
   readProfileSection,
   readSkybridgeConfig,

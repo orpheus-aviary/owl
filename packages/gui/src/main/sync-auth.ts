@@ -47,6 +47,7 @@ import {
   type ApiRefreshResult,
   type AuthContext,
   CLIENT_VERSION,
+  NetworkError,
   type SkybridgeClient,
   createSkybridgeClient,
   login as skybridgeLogin,
@@ -63,12 +64,14 @@ import {
   clearSkybridgeAuth,
   computeProfileId,
   copyLocalProfileDbInto,
+  deleteProfileDb,
   inspectLocalProfile,
   normalizeServerUrl,
   paths,
   readEffectiveActiveProfileId,
   readProfileSection,
   readSkybridgeConfig,
+  removeProfile,
   setActiveProfile,
   updateActiveProfileAuth,
   updateProfileAuth,
@@ -426,6 +429,57 @@ async function rollbackToPrior(prior: string, priorExpiresAt: number | null): Pr
   }
 }
 
+/**
+ * P5-d Phase 17 (delete-local-copy) — destructive: remove an account's local
+ * copy on THIS machine (its db files + toml section) and clean it up remotely
+ * (revoke device + token family). Two paths:
+ *
+ *   - active profile → release the daemon's db handle FIRST (④): a successful
+ *     `postSyncSwitchStrict(local)` is required, or the daemon must be
+ *     definitively unreachable (NetworkError → no handle held). An HTTP failure
+ *     ABORTS the delete and restores the renewal timer — never delete a db the
+ *     daemon might still have open.
+ *   - non-active profile → no daemon move; the db isn't open here.
+ *
+ * Remote teardown is best-effort (device-first / logout-last, refresh-only ok).
+ * Returns `{ wasActive }` so the IPC layer reloads the renderer only when the
+ * deletion changed the active profile.
+ */
+export async function deleteProfileLocalCopy(targetId: string): Promise<{ wasActive: boolean }> {
+  // Read the stored creds before anything clears them — needed for remote cleanup.
+  const section = readProfileSection(targetId);
+  const wasActive = readEffectiveActiveProfileId() === targetId;
+
+  if (wasActive) {
+    const activeExpiresAt = currentExpiresAt;
+    clearRefreshTimer();
+    try {
+      await postSyncSwitchStrict(LOCAL_PROFILE); // ④ hard handle release
+    } catch (err) {
+      if (!(err instanceof NetworkError)) {
+        // daemon up but the switch failed → it may still hold the db → abort.
+        if (activeExpiresAt !== null) scheduleRefresh(activeExpiresAt);
+        throw err;
+      }
+      // NetworkError → daemon unreachable → no handle held → safe to continue.
+    }
+    setActiveProfile(LOCAL_PROFILE);
+  }
+
+  if (section) {
+    await bestEffortRevokeProfile({
+      serverUrl: section.server_url,
+      user: { id: section.user_id ?? '', email: section.email ?? '', displayName: null },
+      encryptedAccess: section.encrypted_token,
+      encryptedRefresh: section.encrypted_refresh_token,
+      deviceId: section.device?.id,
+    });
+  }
+  deleteProfileDb(targetId);
+  removeProfile(targetId);
+  return { wasActive };
+}
+
 export async function restoreSessionOnStartup(): Promise<SyncSessionSummary | null> {
   const cfg = safeReadConfig();
   if (!cfg?.auth?.user_id || !cfg.auth.email) return null;
@@ -699,6 +753,31 @@ async function bestEffortSwitchLocal(): Promise<void> {
   }
 }
 
+/**
+ * P5-d Phase 17 (delete-local-copy) — switch the daemon onto a profile, but
+ * surface failures the active-delete handle-release gate needs to tell apart:
+ * a non-2xx throws a plain Error (daemon is up but the switch failed → it may
+ * still hold the db handle → the caller MUST abort the delete), while a bare
+ * fetch failure is wrapped as NetworkError (daemon unreachable → no handle held
+ * → safe to continue). Unlike `bestEffortSwitchLocal`, it never swallows.
+ */
+async function postSyncSwitchStrict(profileId: string): Promise<void> {
+  let res: Response;
+  try {
+    res = await fetch(`${getDaemonUrl()}/sync/switch`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ profile_id: profileId }),
+    });
+  } catch (err) {
+    throw new NetworkError(
+      err instanceof Error ? err.message : String(err),
+      err instanceof Error ? err : undefined,
+    );
+  }
+  if (!res.ok) throw new Error(`daemon /sync/switch returned HTTP ${res.status}`);
+}
+
 async function bestEffortRemoteLogout(auth: AuthContext): Promise<void> {
   try {
     const client = createSkybridgeClient({ authContext: auth });
@@ -709,40 +788,69 @@ async function bestEffortRemoteLogout(auth: AuthContext): Promise<void> {
 }
 
 /**
- * Revoke the refresh-token family server-side for a full logout (D2). Tries
- * the stored access token first; if it has expired, refreshes once to mint a
- * fresh access token and revokes with that. Network failures are tolerated
- * (best-effort — local cleanup proceeds regardless, since the user is logging
- * out); only TOKEN_EXPIRED routes to the refresh path.
+ * P5-d Phase 17 — best-effort remote teardown for a profile, shared by full
+ * logout and delete-local-copy. **device-first, logout-last** (③): `logout()`
+ * kills the token family, after which the same token 401s, so a device revoke
+ * must precede it (the skybridge SDK smoke test verifies this). Obtains a usable
+ * access token from the stored one, refreshing once on a missing / expired
+ * access — refresh-only profiles work too (⑨). Every step is swallowed; the
+ * caller's local cleanup proceeds regardless.
+ */
+async function bestEffortRevokeProfile(input: {
+  serverUrl: string;
+  user: { id: string; email: string; displayName: null };
+  encryptedAccess?: string;
+  encryptedRefresh?: string;
+  deviceId?: string;
+}): Promise<void> {
+  const { serverUrl, user, deviceId } = input;
+  const refreshTok = decryptB64(input.encryptedRefresh);
+  let access = decryptB64(input.encryptedAccess);
+
+  const makeClient = (token: string) =>
+    createSkybridgeClient({ authContext: { serverUrl, token, user } });
+
+  // Run an authenticated action, refreshing once on a missing / expired access.
+  // `access` is updated to the refreshed token so a later action reuses it.
+  const withAccess = async (action: (client: SkybridgeClient) => Promise<void>): Promise<void> => {
+    if (access) {
+      try {
+        await action(makeClient(access));
+        return;
+      } catch (err) {
+        if (!isTokenExpired(err)) return; // network / already-dead → best-effort
+        // expired → refresh below
+      }
+    }
+    if (!refreshTok) return;
+    try {
+      access = (await skybridgeRefresh(serverUrl, refreshTok)).token;
+    } catch {
+      return; // dead / network refresh → give up the remote step
+    }
+    try {
+      await action(makeClient(access));
+    } catch {
+      // best-effort
+    }
+  };
+
+  if (deviceId) await withAccess((c) => c.revokeDevice(deviceId)); // ③ device-first
+  await withAccess((c) => c.logout()); // logout-last (revokes the family)
+}
+
+/**
+ * Revoke the refresh-token family server-side for a full logout (D2). Keeps the
+ * device row (so a re-login reuses it, §5.3) → no deviceId, logout only.
  */
 async function remoteRevoke(cfg: SkybridgeConfig): Promise<void> {
   if (!cfg.auth) return;
-  const serverUrl = cfg.server.url;
-  const user = { id: cfg.auth.user_id, email: cfg.auth.email, displayName: null };
-
-  const access = decryptB64(cfg.auth.encrypted_token);
-  if (access) {
-    try {
-      await createSkybridgeClient({ authContext: { serverUrl, token: access, user } }).logout();
-      return; // access logout revokes the family
-    } catch (err) {
-      // Not expired (network / already-revoked / other) → best-effort, stop.
-      if (!isTokenExpired(err)) return;
-      // Expired → fall through to the refresh path.
-    }
-  }
-
-  const refreshToken = decryptB64(cfg.auth.encrypted_refresh_token);
-  if (!refreshToken) return;
-  try {
-    const rotated = await skybridgeRefresh(serverUrl, refreshToken);
-    await createSkybridgeClient({
-      authContext: { serverUrl, token: rotated.token, user },
-    }).logout();
-  } catch {
-    // REFRESH_INVALID / REFRESH_REPLAYED → family already dead; network →
-    // best-effort. Either way, local cleanup proceeds.
-  }
+  await bestEffortRevokeProfile({
+    serverUrl: cfg.server.url,
+    user: { id: cfg.auth.user_id, email: cfg.auth.email, displayName: null },
+    encryptedAccess: cfg.auth.encrypted_token,
+    encryptedRefresh: cfg.auth.encrypted_refresh_token,
+  });
 }
 
 function isTokenExpired(err: unknown): boolean {

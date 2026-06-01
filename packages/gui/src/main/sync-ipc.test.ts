@@ -57,6 +57,10 @@ const authState = {
   // Phase 17 (W4)
   switchCalls: [] as string[],
   switchError: null as Error | null,
+  // Phase 17 (delete-local-copy)
+  deleteCalls: [] as string[],
+  deleteWasActive: false,
+  deleteError: null as Error | null,
 };
 vi.mock('./sync-auth.js', () => ({
   loginAndOpenSession: vi.fn(
@@ -79,6 +83,11 @@ vi.mock('./sync-auth.js', () => ({
   switchToProfile: vi.fn(async (id: string) => {
     authState.switchCalls.push(id);
     if (authState.switchError) throw authState.switchError;
+  }),
+  deleteProfileLocalCopy: vi.fn(async (id: string) => {
+    authState.deleteCalls.push(id);
+    if (authState.deleteError) throw authState.deleteError;
+    return { wasActive: authState.deleteWasActive };
   }),
   // Real error class so `err instanceof SafeStorageUnavailableError` works.
   SafeStorageUnavailableError: class SafeStorageUnavailableError extends Error {
@@ -179,6 +188,9 @@ beforeEach(() => {
   authState.logoutCalls = 0;
   authState.switchCalls = [];
   authState.switchError = null;
+  authState.deleteCalls = [];
+  authState.deleteWasActive = false;
+  authState.deleteError = null;
   coreState.readReturn = null;
   coreState.readError = null;
   coreState.profileList = [];
@@ -759,5 +771,42 @@ describe('sync:revoke-device', () => {
     const reply = (await call('sync:revoke-device', 'dev-other')) as IpcReply<unknown>;
     expect(reply.ok).toBe(false);
     if (!reply.ok) expect(reply.message).toMatch(/网络连接失败/);
+  });
+});
+
+// P5-d Phase 17 (delete-local-copy) — `sync:delete-profile` delegates to
+// deleteProfileLocalCopy + notifies the renderer ONLY when the deleted profile
+// was active (daemon switched to local → reload).
+describe('sync:delete-profile', () => {
+  it('non-active delete → ok, delegates, does NOT notify', async () => {
+    authState.deleteWasActive = false;
+    await flushImmediate();
+    windowState.send = vi.fn();
+    const reply = (await call('sync:delete-profile', 'pid-B')) as IpcReply<{ wasActive: boolean }>;
+    await flushImmediate();
+    expect(reply.ok).toBe(true);
+    expect(authState.deleteCalls).toEqual(['pid-B']);
+    expect(windowState.send).not.toHaveBeenCalled();
+  });
+
+  it('active delete (wasActive) → ok + notifies profile:switched', async () => {
+    authState.deleteWasActive = true;
+    await flushImmediate();
+    windowState.send = vi.fn();
+    const reply = (await call('sync:delete-profile', 'pid-B')) as IpcReply<{ wasActive: boolean }>;
+    await flushImmediate();
+    expect(reply.ok).toBe(true);
+    if (reply.ok) expect(reply.data.wasActive).toBe(true);
+    expect(windowState.send).toHaveBeenCalledWith('profile:switched');
+  });
+
+  it('failure → ok:false, no notify', async () => {
+    authState.deleteError = new Error('boom');
+    await flushImmediate();
+    windowState.send = vi.fn();
+    const reply = (await call('sync:delete-profile', 'pid-B')) as IpcReply<unknown>;
+    await flushImmediate();
+    expect(reply.ok).toBe(false);
+    expect(windowState.send).not.toHaveBeenCalled();
   });
 });

@@ -581,6 +581,22 @@ export function readProfileSection(profileId: string, path?: string): ProfileCon
 }
 
 /**
+ * P5-d Phase 17 (delete-local-copy) — delete an account profile's db files
+ * (`owl.db` + WAL + SHM sidecars). Refuses `local` / non-hex ids (D10a: the
+ * local db is never deleted). Missing files are ignored. The caller owns the
+ * remote cleanup + `removeProfile` (toml section); this only drops the bytes.
+ *
+ * @throws InvalidProfileIdError if `profileId` isn't 32-hex (rejects `local`)
+ */
+export function deleteProfileDb(profileId: string): void {
+  if (!isHexProfileId(profileId)) throw new InvalidProfileIdError(profileId);
+  const db = profileDbPath(profileId);
+  for (const p of [db, `${db}-wal`, `${db}-shm`]) {
+    if (existsSync(p)) unlinkSync(p);
+  }
+}
+
+/**
  * P5-d Phase 17 (W4) — enumerate every `[profiles.<id>]` section for the
  * sidebar quick-switch list. Raw-parse (NOT `readSkybridgeConfig`, which only
  * yields the active view + throws on a missing server url); skips ids that

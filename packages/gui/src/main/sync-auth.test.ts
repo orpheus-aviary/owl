@@ -55,7 +55,7 @@ vi.mock('./claim-prompt.js', () => ({
 // vi.hoisted so the class exists when the (hoisted) mock factory runs — a
 // `class` declaration would otherwise be in the temporal dead zone, since the
 // SUT import hoists above it.
-const { MockApiError, MockProfileDbMissingError } = vi.hoisted(() => {
+const { MockApiError, MockProfileDbMissingError, MockNetworkError } = vi.hoisted(() => {
   class MockApiError extends Error {
     readonly code: string;
     readonly status: number;
@@ -73,7 +73,13 @@ const { MockApiError, MockProfileDbMissingError } = vi.hoisted(() => {
       this.name = 'ProfileDbMissingError';
     }
   }
-  return { MockApiError, MockProfileDbMissingError };
+  class MockNetworkError extends Error {
+    constructor(message: string) {
+      super(message);
+      this.name = 'NetworkError';
+    }
+  }
+  return { MockApiError, MockProfileDbMissingError, MockNetworkError };
 });
 
 const sdkState = {
@@ -91,6 +97,7 @@ const sdkState = {
   ensureWorkspaceReturn: { id: 'ws-A', tool: 'owl', name: 'default' },
   ensureWorkspaceError: null as Error | null,
   logoutCalls: 0,
+  revokeDeviceCalls: [] as string[],
   refreshCalls: 0,
   refreshReturn: { token: 'tk-new', refreshToken: 'rt-new', expiresAt: 9_999_999 },
   refreshError: null as Error | null,
@@ -108,6 +115,7 @@ const sdkState = {
 vi.mock('@orpheus-aviary/skybridge-client', () => ({
   CLIENT_VERSION: '0.1.4',
   ApiError: MockApiError,
+  NetworkError: MockNetworkError,
   login: vi.fn(async (serverUrl: string, email: string) => {
     if (sdkState.loginError) throw sdkState.loginError;
     return { ...sdkState.loginReturn, serverUrl, user: { ...sdkState.loginReturn.user, email } };
@@ -130,13 +138,18 @@ vi.mock('@orpheus-aviary/skybridge-client', () => ({
       }),
       logout: vi.fn(async () => {
         sdkState.logoutCalls += 1;
+        callLog.push('logout');
         if (sdkState.expiredTokens.has(token)) throw new MockApiError('TOKEN_EXPIRED');
       }),
       listDevices: vi.fn(),
       pushChanges: vi.fn(),
       pullChanges: vi.fn(async () => sdkState.pullReturn),
       subscribeEvents: vi.fn(),
-      revokeDevice: vi.fn(),
+      revokeDevice: vi.fn(async (id: string) => {
+        sdkState.revokeDeviceCalls.push(id);
+        callLog.push('revoke');
+        if (sdkState.expiredTokens.has(token)) throw new MockApiError('TOKEN_EXPIRED');
+      }),
     };
   }),
 }));
@@ -160,6 +173,9 @@ const coreState = {
   effectiveActive: 'local',
   updateProfileAuthCalls: [] as Array<{ id: string; patch: Record<string, unknown> }>,
   clearProfileAuthCalls: [] as string[],
+  // Phase 17 (delete-local-copy)
+  deleteDbCalls: [] as string[],
+  removeProfileCalls: [] as string[],
 };
 vi.mock('@owl/core', () => ({
   OWL_APP_VERSION: '0.5.0-dev',
@@ -195,6 +211,13 @@ vi.mock('@owl/core', () => ({
   clearProfileAuth: vi.fn((id: string) => {
     coreState.clearProfileAuthCalls.push(id);
   }),
+  // Phase 17 (delete-local-copy)
+  deleteProfileDb: vi.fn((id: string) => {
+    coreState.deleteDbCalls.push(id);
+  }),
+  removeProfile: vi.fn((id: string) => {
+    coreState.removeProfileCalls.push(id);
+  }),
   // Phase 16
   paths: {
     profileDbPath: (id: string) => `/nest/owl/profiles/${id}/owl.db`,
@@ -217,6 +240,7 @@ import {
   SafeStorageUnavailableError,
   SkybridgeServerTooOldError,
   clearRefreshTimer,
+  deleteProfileLocalCopy,
   loginAndOpenSession,
   logout,
   maybeRefreshNow,
@@ -228,16 +252,21 @@ import {
 
 let switchDeviceId: string | null = null;
 let sessionResp = { ok: true, status: 200 };
+// Phase 17 (delete): drive postSyncSwitchStrict — a non-2xx is an HTTP failure
+// (abort delete), a thrown fetch is a daemon-down NetworkError (continue).
+let switchResp = { ok: true, status: 200 };
+let switchThrows = false;
 // Phase 16: orders the claim copy vs the daemon switch (B9: copy must precede
 // switch). Pushed by the copy mock ('copy') and the switch fetch ('switch').
 let callLog: string[] = [];
 const fetchMock = vi.fn(async (url: string | URL, _init?: RequestInit) => {
   const u = String(url);
   if (u.endsWith('/sync/switch')) {
+    if (switchThrows) throw new Error('ECONNREFUSED');
     callLog.push('switch');
     return {
-      ok: true,
-      status: 200,
+      ok: switchResp.ok,
+      status: switchResp.status,
       json: async () => ({ data: { device_id: switchDeviceId } }),
     } as unknown as Response;
   }
@@ -290,6 +319,7 @@ beforeEach(() => {
   sdkState.registerDeviceError = null;
   sdkState.ensureWorkspaceError = null;
   sdkState.logoutCalls = 0;
+  sdkState.revokeDeviceCalls = [];
   sdkState.refreshCalls = 0;
   sdkState.refreshError = null;
   sdkState.refreshReturn = { token: 'tk-new', refreshToken: 'rt-new', expiresAt: FAR };
@@ -306,6 +336,8 @@ beforeEach(() => {
   coreState.effectiveActive = 'local';
   coreState.updateProfileAuthCalls = [];
   coreState.clearProfileAuthCalls = [];
+  coreState.deleteDbCalls = [];
+  coreState.removeProfileCalls = [];
   sdkState.pullReturn = { changes: [], hasMore: false, latestSeq: 0, serverTime: 0 };
   fsState.profileDbExists = false;
   claimState.choice = 'independent';
@@ -313,6 +345,8 @@ beforeEach(() => {
   callLog = [];
   switchDeviceId = null;
   sessionResp = { ok: true, status: 200 };
+  switchResp = { ok: true, status: 200 };
+  switchThrows = false;
   fetchMock.mockClear();
   vi.stubGlobal('fetch', fetchMock);
 });
@@ -769,5 +803,98 @@ describe('switchToProfile (Phase 17 / W4)', () => {
     await expect(switchToProfile('pid-B')).rejects.toThrow();
     expect(switchProfileIds()).toEqual(['pid-B', 'local']);
     expect(coreState.setActiveCalls).toContain('local'); // rollback re-points local
+  });
+});
+
+// ─── deleteProfileLocalCopy (Phase 17 / delete-local-copy) ───────────
+
+describe('deleteProfileLocalCopy (Phase 17 / destructive)', () => {
+  function accountSection(over: Record<string, unknown> = {}) {
+    return {
+      server_id: 'srv-B',
+      server_url: 'http://srv-b:8443',
+      user_id: 'u-B',
+      email: 'b@test',
+      encrypted_token: b64('tk-B-access'),
+      encrypted_refresh_token: b64('rt-B-refresh'),
+      device: { id: 'dev-B', name: 'mac-b', app_version: 'owl 0.5.0-dev', client_version: '0.1.4' },
+      workspace: { id: 'ws-B', slug: 'owl/default' },
+      ...over,
+    };
+  }
+  const switchProfileIds = () =>
+    fetchMock.mock.calls
+      .filter(([u]) => String(u).endsWith('/sync/switch'))
+      .map(([, init]) => JSON.parse((init as RequestInit).body as string).profile_id);
+
+  it('active delete: hard-switches local, revokes device-first/logout-last, deletes db + toml', async () => {
+    coreState.effectiveActive = 'pid-B';
+    coreState.profileSection = accountSection();
+    await deleteProfileLocalCopy('pid-B');
+
+    expect(switchProfileIds()).toEqual(['local']); // ④ handle released
+    expect(coreState.setActiveCalls).toEqual(['local']);
+    // ③ device-first / logout-last
+    expect(sdkState.revokeDeviceCalls).toEqual(['dev-B']);
+    expect(callLog.indexOf('revoke')).toBeLessThan(callLog.indexOf('logout'));
+    expect(coreState.deleteDbCalls).toEqual(['pid-B']);
+    expect(coreState.removeProfileCalls).toEqual(['pid-B']);
+  });
+
+  it('active delete returns { wasActive: true }', async () => {
+    coreState.effectiveActive = 'pid-B';
+    coreState.profileSection = accountSection();
+    expect(await deleteProfileLocalCopy('pid-B')).toEqual({ wasActive: true });
+  });
+
+  it('④ HTTP switch failure aborts the delete (db + toml untouched)', async () => {
+    coreState.effectiveActive = 'pid-B';
+    coreState.profileSection = accountSection();
+    switchResp = { ok: false, status: 500 }; // daemon up but switch failed
+    await expect(deleteProfileLocalCopy('pid-B')).rejects.toThrow();
+    expect(coreState.deleteDbCalls).toEqual([]); // never deleted
+    expect(coreState.removeProfileCalls).toEqual([]);
+  });
+
+  it('④ daemon unreachable (NetworkError) → continues the delete', async () => {
+    coreState.effectiveActive = 'pid-B';
+    coreState.profileSection = accountSection();
+    switchThrows = true; // fetch rejects → NetworkError → no handle held
+    const result = await deleteProfileLocalCopy('pid-B');
+    expect(result).toEqual({ wasActive: true });
+    expect(coreState.deleteDbCalls).toEqual(['pid-B']);
+    expect(coreState.removeProfileCalls).toEqual(['pid-B']);
+  });
+
+  it('non-active delete: no daemon switch, just remote cleanup + db + toml', async () => {
+    coreState.effectiveActive = 'local';
+    coreState.profileSection = accountSection();
+    const result = await deleteProfileLocalCopy('pid-B');
+    expect(result).toEqual({ wasActive: false });
+    expect(switchProfileIds()).toEqual([]); // daemon untouched
+    expect(coreState.deleteDbCalls).toEqual(['pid-B']);
+    expect(coreState.removeProfileCalls).toEqual(['pid-B']);
+  });
+
+  it('⑨ refresh-only profile: refreshes to mint access, then device-first/logout-last', async () => {
+    coreState.effectiveActive = 'local';
+    coreState.profileSection = accountSection({ encrypted_token: undefined }); // refresh only
+    await deleteProfileLocalCopy('pid-B');
+    expect(sdkState.refreshCalls).toBeGreaterThanOrEqual(1); // minted an access
+    expect(sdkState.revokeDeviceCalls).toEqual(['dev-B']);
+    expect(callLog.indexOf('revoke')).toBeLessThan(callLog.indexOf('logout'));
+  });
+
+  it('skips remote cleanup when neither access nor refresh is usable, still deletes locally', async () => {
+    coreState.effectiveActive = 'local';
+    coreState.profileSection = accountSection({
+      encrypted_token: undefined,
+      encrypted_refresh_token: undefined,
+    });
+    await deleteProfileLocalCopy('pid-B');
+    expect(sdkState.revokeDeviceCalls).toEqual([]); // no usable token → remote skipped
+    expect(sdkState.logoutCalls).toBe(0);
+    expect(coreState.deleteDbCalls).toEqual(['pid-B']); // local delete still runs
+    expect(coreState.removeProfileCalls).toEqual(['pid-B']);
   });
 });

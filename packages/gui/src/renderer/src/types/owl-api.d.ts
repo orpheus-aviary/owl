@@ -67,6 +67,7 @@ export interface OwlAPI {
     run: () => Promise<SyncIpcReply<RunSyncResult>>;
     profiles: () => Promise<SyncIpcReply<SyncProfilesReply>>;
     switchProfile: (id: string) => Promise<SyncIpcReply<void>>;
+    deleteProfile: (id: string) => Promise<SyncIpcReply<{ wasActive: boolean }>>;
     onProfileSwitched: (cb: () => void) => () => void;
     onClaimPrompt: (cb: (input: ClaimPromptInput) => void) => () => void;
     respondClaim: (choice: ClaimChoice) => void;

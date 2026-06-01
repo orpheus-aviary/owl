@@ -108,6 +108,9 @@ function installMigrationStub(): MigrationStub {
         }),
       ),
       switchProfile: vi.fn(() => Promise.resolve({ ok: true, data: undefined } as const)),
+      deleteProfile: vi.fn(() =>
+        Promise.resolve({ ok: true as const, data: { wasActive: false } }),
+      ),
       onProfileSwitched: vi.fn(() => () => {}),
       onClaimPrompt: vi.fn(() => () => {}),
       respondClaim: vi.fn(),

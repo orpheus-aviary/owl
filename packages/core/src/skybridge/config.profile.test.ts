@@ -9,7 +9,15 @@
  */
 
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, it } from 'node:test';
@@ -23,6 +31,7 @@ import {
   SkybridgeServerUrlMissingError,
   clearProfileAuth,
   clearSkybridgeAuth,
+  deleteProfileDb,
   listProfiles,
   readProfileSection,
   readSkybridgeConfig,
@@ -435,6 +444,35 @@ describe('updateProfileAuth — by-id rotation (Phase 17 / W4)', () => {
     updateProfileAuth(ID_A, { encrypted_token: 'x' }); // ID_A has no section
     const profiles = readRaw().profiles as Record<string, unknown>;
     assert.equal(profiles[ID_A], undefined, 'no ghost section created');
+  });
+});
+
+describe('deleteProfileDb (Phase 17 / delete-local-copy)', () => {
+  it('deletes the db + WAL + SHM sidecars, ignores missing files', () => {
+    const db = profileDbPath(ID_A);
+    touchDb(db);
+    writeFileSync(`${db}-wal`, '');
+    writeFileSync(`${db}-shm`, '');
+    deleteProfileDb(ID_A);
+    assert.equal(existsSync(db), false, 'db gone');
+    assert.equal(existsSync(`${db}-wal`), false, 'wal gone');
+    assert.equal(existsSync(`${db}-shm`), false, 'shm gone');
+  });
+
+  it('is a no-op when the db files are already absent', () => {
+    deleteProfileDb(ID_A); // no throw
+    assert.equal(existsSync(profileDbPath(ID_A)), false);
+  });
+
+  it('refuses to delete "local" / non-hex ids (never deletes the local db)', () => {
+    assert.throws(
+      () => deleteProfileDb('local'),
+      (e: unknown) => e instanceof InvalidProfileIdError,
+    );
+    assert.throws(
+      () => deleteProfileDb('../escape'),
+      (e: unknown) => e instanceof InvalidProfileIdError,
+    );
   });
 });
 
