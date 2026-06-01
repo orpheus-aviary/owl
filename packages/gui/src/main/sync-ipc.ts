@@ -25,6 +25,7 @@ import { BrowserWindow, ipcMain, safeStorage } from 'electron';
 import type { LoginAndOpenSessionInput } from '../shared/sync-auth-types.js';
 import type { SyncDevicesReply } from '../shared/sync-devices-types.js';
 import { syncErrorMessage } from '../shared/sync-error-message.js';
+import type { RunSyncResult } from '../shared/sync-run-types.js';
 import type {
   SyncIpcReply,
   SyncStatusReply,
@@ -51,6 +52,32 @@ export function registerSyncIpc(): void {
   });
   ipcMain.handle('sync:status', async () => safe<SyncStatusReply>(buildStatus));
   ipcMain.handle('sync:devices', async () => safe<SyncDevicesReply>(buildDevices));
+  ipcMain.handle('sync:run', async () => safe<RunSyncResult>(runSyncNow));
+}
+
+// P5-d Phase 17 (W8) — drive one manual pull/push round from the status
+// popover's「手动同步」action. No profile change → does NOT fire
+// `profile:switched`. Like buildDevices, this has no fallback: a bare fetch
+// failure is wrapped as the SDK's NetworkError so `safe<T>()` renders the
+// Chinese「无法连接到本地后台服务」, and a non-2xx surfaces the daemon's
+// already-Chinese envelope.message (manual.ts messageForError) verbatim.
+async function runSyncNow(): Promise<RunSyncResult> {
+  let res: Response;
+  try {
+    res = await fetch(`${getDaemonUrl()}/sync/run`, { method: 'POST' });
+  } catch (err) {
+    throw new NetworkError(
+      err instanceof Error ? err.message : String(err),
+      err instanceof Error ? err : undefined,
+    );
+  }
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { message?: string } | null;
+    throw new Error(body?.message ?? `daemon /sync/run returned HTTP ${res.status}`);
+  }
+  const body = (await res.json()) as { data?: RunSyncResult };
+  if (!body.data) throw new Error('daemon /sync/run returned no data');
+  return body.data;
 }
 
 /**

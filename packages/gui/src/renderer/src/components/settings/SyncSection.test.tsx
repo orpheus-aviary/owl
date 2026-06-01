@@ -206,6 +206,14 @@ describe('SyncSection — auth → logout flow', () => {
     expect(screen.getByRole('button', { name: /管理我的设备/ })).toBeTruthy();
     expect(window.owlAPI.sync.devices).not.toHaveBeenCalled();
   });
+
+  // P5-d Phase 17 (W5) — the auth view notes that reminders only fire for
+  // the active profile (single-active acceptance, design §13 W5).
+  it('shows the active-profile reminder note in auth view', async () => {
+    render(<SyncSection />);
+    await waitFor(() => screen.getByText('a@test'));
+    expect(screen.getByText(/提醒仅在当前账号激活时触发/)).toBeTruthy();
+  });
 });
 
 describe('SyncSection — DevicesCard wiring', () => {

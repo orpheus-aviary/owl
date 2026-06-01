@@ -11,6 +11,7 @@
 import type { LoginAndOpenSessionInput } from '../../../shared/sync-auth-types.js';
 import type { ClaimChoice, ClaimPromptInput } from '../../../shared/sync-claim-types.js';
 import type { SyncDevicesReply } from '../../../shared/sync-devices-types.js';
+import type { RunSyncResult } from '../../../shared/sync-run-types.js';
 import type { SyncIpcReply, SyncStatusReply } from '../../../shared/sync-status-types.js';
 
 export type StartupMode =
@@ -61,6 +62,7 @@ export interface OwlAPI {
     logout: () => Promise<SyncIpcReply<void>>;
     status: () => Promise<SyncIpcReply<SyncStatusReply>>;
     devices: () => Promise<SyncIpcReply<SyncDevicesReply>>;
+    run: () => Promise<SyncIpcReply<RunSyncResult>>;
     onProfileSwitched: (cb: () => void) => () => void;
     onClaimPrompt: (cb: (input: ClaimPromptInput) => void) => () => void;
     respondClaim: (choice: ClaimChoice) => void;

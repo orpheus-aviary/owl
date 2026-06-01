@@ -502,3 +502,78 @@ describe('sync:devices', () => {
     if (reply.ok) expect(reply.data.devices).toEqual([]);
   });
 });
+
+// P5-d Phase 17 (W8) — `sync:run` drives daemon POST /sync/run. Mirrors the
+// devices error-translation shape (daemon envelope.message verbatim / bare
+// fetch failure → NetworkError → Chinese). No profile change → never notifies.
+describe('sync:run', () => {
+  const RUN_RESULT = {
+    pulledTotal: 3,
+    appliedTotal: 2,
+    skippedTotal: 1,
+    pushedTotal: 4,
+    duplicatesTotal: 0,
+    serverSeqHigh: 42,
+    cursorBefore: 38,
+    cursorAfter: 42,
+    conflictsRecorded: 0,
+  };
+
+  it('happy path: returns daemon RunSyncResult, does NOT notify profile:switched', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(JSON.stringify({ data: RUN_RESULT }), { status: 200 })),
+    );
+    // Drain any setImmediate-deferred notify queued by an earlier test, then
+    // take a fresh send mock so this negative assertion only sees the effect
+    // of THIS handler (sync:run must never fire profile:switched).
+    await flushImmediate();
+    windowState.send = vi.fn();
+    const reply = (await call('sync:run')) as IpcReply<typeof RUN_RESULT>;
+    await flushImmediate();
+    expect(reply.ok).toBe(true);
+    if (reply.ok) expect(reply.data).toMatchObject({ pushedTotal: 4, conflictsRecorded: 0 });
+    expect(windowState.send).not.toHaveBeenCalled();
+  });
+
+  it('daemon error envelope → ok:false + 中文 message from daemon body', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              success: false,
+              error_code: 'SKYBRIDGE_AUTH_REQUIRED',
+              message: 'skybridge token rejected (401); 请在设置中重新登录',
+            }),
+            { status: 401 },
+          ),
+      ),
+    );
+    const reply = (await call('sync:run')) as IpcReply<unknown>;
+    expect(reply.ok).toBe(false);
+    if (!reply.ok) expect(reply.message).toMatch(/请在设置中重新登录/);
+  });
+
+  it('fetch rejects (daemon down) → NetworkError → 网络连接失败…', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new Error('ECONNREFUSED');
+      }),
+    );
+    const reply = (await call('sync:run')) as IpcReply<unknown>;
+    expect(reply.ok).toBe(false);
+    if (!reply.ok) expect(reply.message).toMatch(/网络连接失败/);
+  });
+
+  it('200 but no data → ok:false', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(JSON.stringify({}), { status: 200 })),
+    );
+    const reply = (await call('sync:run')) as IpcReply<unknown>;
+    expect(reply.ok).toBe(false);
+  });
+});

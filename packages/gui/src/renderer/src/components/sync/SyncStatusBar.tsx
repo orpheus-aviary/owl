@@ -1,3 +1,4 @@
+import { Button } from '@/components/ui/button';
 import {
   Popover,
   PopoverContent,
@@ -9,6 +10,7 @@ import {
 import type { SyncState, SyncStatusSnapshot } from '@/lib/api';
 import { useSyncStatus } from '@/stores/sync-status';
 import { Loader2 } from 'lucide-react';
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
 
 /**
@@ -18,11 +20,13 @@ import { Link } from 'react-router-dom';
  * Chinese label below. No router behaviour — hover/click opens a
  * popover with workspace / device / last-sync / last-error details.
  *
- * No manual sync button: P5-b's SSE bridge auto-retries forever
- * (`sse-bridge.ts:42-58`, 2/4/8/16/30s + jitter, never gives up) and
- * runs a catch-up `runManualSync` on every reconnect, so an "offline"
- * state is informational, not actionable. Power users can still drive
- * sync from `owl sync run`.
+ * P5-d Phase 17 (W8): the account-details view has a「手动同步」action
+ * (drives `POST /sync/run` via `owlAPI.sync.run`) so the user can force a
+ * pull/push round — handy when "offline" and they want an immediate retry.
+ * The SSE bridge still auto-retries forever on its own (`sse-bridge.ts:42-58`,
+ * 2/4/8/16/30s + jitter, never gives up) and runs a catch-up `runManualSync`
+ * on every reconnect, so there is deliberately NO manual reconnect button —
+ * offline stays informational; manual sync is the one actionable affordance.
  *
  * The four state labels mirror `SyncState` exactly — adding a new state
  * to the union means updating `STATE_INFO` below.
@@ -91,6 +95,20 @@ function SyncStatusDetails({
   snapshot: SyncStatusSnapshot | null;
   state: SyncState;
 }) {
+  // Manual sync (W8) — only meaningful in the account-details view below,
+  // but hooks must be unconditional so they live at the top.
+  const [running, setRunning] = useState(false);
+  const [runError, setRunError] = useState<string | null>(null);
+  const runSync = async () => {
+    setRunning(true);
+    setRunError(null);
+    const reply = await window.owlAPI.sync.run();
+    setRunning(false);
+    // Success path needs no local update — the daemon broadcasts
+    // `sync:status_changed` over SSE and `useSyncStatus` picks it up.
+    if (!reply.ok) setRunError(reply.message);
+  };
+
   // No snapshot at all → daemon hasn't reported yet (cold start or
   // sync not configured). Surface a calm explainer rather than the
   // "0 pending / null device" placeholder we'd otherwise render.
@@ -170,12 +188,25 @@ function SyncStatusDetails({
         <dd className="text-foreground">{snapshot.pushed_seq}</dd>
       </dl>
 
-      <Link
-        to="/settings?tab=sync"
-        className="text-xs text-muted-foreground hover:text-foreground self-end"
-      >
-        管理账号 →
-      </Link>
+      {runError && <p className="text-xs text-destructive break-words">{runError}</p>}
+
+      <div className="flex items-center justify-between">
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => void runSync()}
+          disabled={running || state === 'syncing'}
+        >
+          {(running || state === 'syncing') && <Loader2 className="size-4 animate-spin" />}
+          手动同步
+        </Button>
+        <Link
+          to="/settings?tab=sync"
+          className="text-xs text-muted-foreground hover:text-foreground"
+        >
+          管理账号 →
+        </Link>
+      </div>
     </div>
   );
 }

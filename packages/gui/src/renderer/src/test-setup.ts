@@ -50,6 +50,22 @@ function defaultOwlAPI(): OwlAPI {
           data: { devices: [] },
         }),
       ),
+      run: vi.fn(() =>
+        Promise.resolve({
+          ok: true as const,
+          data: {
+            pulledTotal: 0,
+            appliedTotal: 0,
+            skippedTotal: 0,
+            pushedTotal: 0,
+            duplicatesTotal: 0,
+            serverSeqHigh: 0,
+            cursorBefore: 0,
+            cursorAfter: 0,
+            conflictsRecorded: 0,
+          },
+        }),
+      ),
       onProfileSwitched: vi.fn(() => () => {}),
       onClaimPrompt: vi.fn(() => () => {}),
       respondClaim: vi.fn(),

@@ -1,4 +1,4 @@
-import { render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import type { ComponentProps, ReactNode } from 'react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -308,5 +308,61 @@ describe('SyncStatusBar — W6 local profile (server_url null)', () => {
     const content = screen.getByTestId('popover-content');
     expect(within(content).queryByText('本地独立工作区')).toBeNull();
     expect(within(content).getByText('服务器')).toBeTruthy();
+  });
+});
+
+describe('SyncStatusBar — W8 manual sync action', () => {
+  it('account view shows a 手动同步 button that calls owlAPI.sync.run', async () => {
+    const runMock = vi.mocked(window.owlAPI.sync.run);
+    runMock.mockClear();
+    snapshotHolder.value = makeSnapshot({ state: 'idle', server_url: 'http://srv' });
+    render(
+      <MemoryRouter>
+        <SyncStatusBar />
+      </MemoryRouter>,
+    );
+    const content = screen.getByTestId('popover-content');
+    const button = within(content).getByRole('button', { name: /手动同步/ });
+    fireEvent.click(button);
+    expect(runMock).toHaveBeenCalledTimes(1);
+    // The trailing state update (running → false) settles inside act.
+    await waitFor(() => expect(button).not.toHaveProperty('disabled', true));
+  });
+
+  it('手动同步 is disabled while syncing', () => {
+    snapshotHolder.value = makeSnapshot({ state: 'syncing', server_url: 'http://srv' });
+    render(
+      <MemoryRouter>
+        <SyncStatusBar />
+      </MemoryRouter>,
+    );
+    const content = screen.getByTestId('popover-content');
+    const button = within(content).getByRole('button', { name: /手动同步/ }) as HTMLButtonElement;
+    expect(button.disabled).toBe(true);
+  });
+
+  it('local profile (server_url null) shows no 手动同步 button', () => {
+    snapshotHolder.value = makeSnapshot({ server_url: null });
+    render(
+      <MemoryRouter>
+        <SyncStatusBar />
+      </MemoryRouter>,
+    );
+    const content = screen.getByTestId('popover-content');
+    expect(within(content).queryByRole('button', { name: /手动同步/ })).toBeNull();
+  });
+
+  it('surfaces the error message when sync.run fails', async () => {
+    const runMock = vi.mocked(window.owlAPI.sync.run);
+    runMock.mockResolvedValueOnce({ ok: false, message: '网络连接失败，请检查本地后台服务' });
+    snapshotHolder.value = makeSnapshot({ state: 'idle', server_url: 'http://srv' });
+    render(
+      <MemoryRouter>
+        <SyncStatusBar />
+      </MemoryRouter>,
+    );
+    const content = screen.getByTestId('popover-content');
+    fireEvent.click(within(content).getByRole('button', { name: /手动同步/ }));
+    await waitFor(() => expect(within(content).getByText(/网络连接失败/)).toBeTruthy());
   });
 });

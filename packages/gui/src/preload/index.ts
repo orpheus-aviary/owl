@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from 'electron';
 import type { LoginAndOpenSessionInput } from '../shared/sync-auth-types.js';
 import type { ClaimChoice, ClaimPromptInput } from '../shared/sync-claim-types.js';
 import type { SyncDevicesReply } from '../shared/sync-devices-types.js';
+import type { RunSyncResult } from '../shared/sync-run-types.js';
 import type { SyncIpcReply, SyncStatusReply } from '../shared/sync-status-types.js';
 import { daemonUrlFromArgv, parseStartupMode } from './args.js';
 
@@ -125,6 +126,12 @@ contextBridge.exposeInMainWorld('owlAPI', {
      * ^0.1.3). main computes `is_current` against toml `[device].id`.
      */
     devices: (): Promise<SyncIpcReply<SyncDevicesReply>> => ipcRenderer.invoke('sync:devices'),
+    /**
+     * P5-d Phase 17 (W8): drive one manual pull/push round (status popover
+     * 「手动同步」action). SSE pushes the resulting `sync:status_changed`, so
+     * the caller only needs success/failure. No profile change.
+     */
+    run: (): Promise<SyncIpcReply<RunSyncResult>> => ipcRenderer.invoke('sync:run'),
     /**
      * P5-d Phase 16 (B7): subscribe to "a profile switch committed" (login /
      * logout). MainApp mounts one listener and does a controlled full reload

@@ -205,6 +205,9 @@ export function SyncSection() {
               )}
             </div>
           </div>
+          <p className="text-xs text-muted-foreground px-1">
+            ⏰ 提醒仅在当前账号激活时触发；切换到其他账号或本地独立工作区时，此账号的提醒不会响起。
+          </p>
           <DevicesCard />
         </>
       )}
