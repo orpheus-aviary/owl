@@ -56,18 +56,22 @@ import {
   LOCAL_PROFILE,
   OWL_APP_VERSION,
   type ProfileConfigSection,
+  ProfileDbMissingError,
   type SkybridgeConfig,
   type SkybridgeDeviceSection,
+  clearProfileAuth,
   clearSkybridgeAuth,
   computeProfileId,
   copyLocalProfileDbInto,
   inspectLocalProfile,
   normalizeServerUrl,
   paths,
+  readEffectiveActiveProfileId,
   readProfileSection,
   readSkybridgeConfig,
   setActiveProfile,
   updateActiveProfileAuth,
+  updateProfileAuth,
   writeProfileConfig,
 } from '@owl/core';
 import { safeStorage } from 'electron';
@@ -97,6 +101,19 @@ export class SkybridgeServerTooOldError extends Error {
   constructor() {
     super('this server is too old — owl needs a skybridge 0.1.4+ server (no server_id returned)');
     this.name = 'SkybridgeServerTooOldError';
+  }
+}
+
+/**
+ * P5-d Phase 17 (W4) — a saved profile can't be quick-switched without a
+ * password (no usable refresh token / incomplete stored section). The renderer
+ * maps this to "请在设置中重新登录".
+ */
+export class QuickSwitchNeedsLoginError extends Error {
+  readonly code = 'QUICK_SWITCH_NEEDS_LOGIN';
+  constructor() {
+    super('this account needs a password re-login (no usable refresh token)');
+    this.name = 'QuickSwitchNeedsLoginError';
   }
 }
 
@@ -239,6 +256,174 @@ export async function logout(): Promise<void> {
   //    (deleting the local copy is a separate destructive action, Phase 17).
   clearSkybridgeAuth();
   setActiveProfile(LOCAL_PROFILE);
+}
+
+/**
+ * P5-d Phase 17 (W4) — password-free quick switch to a saved profile (or back
+ * to local). The headliner of Phase 17; it generalises `restoreSessionOnStartup`'s
+ * refresh path to "switch onto any specific profile", with the timer / rotation /
+ * rollback boundaries the three review rounds nailed down:
+ *
+ *   - ① stop the prior profile's renewal timer on entry (after the no-op
+ *     check), so a stray `refreshSession` can't install the prior account's
+ *     session into the target's db during the switch window. `priorExpiresAt`
+ *     is captured so any failure path can restore it.
+ *   - ② persist the rotated ciphertext to the *target* profile (by id) BEFORE
+ *     the daemon switches — a switch/install failure then leaves the target
+ *     re-switchable instead of dead (its old refresh token is already gone).
+ *   - ⑤ all active/prior decisions use the *effective* active id (resolver
+ *     gate), never the raw `active_profile`, so a ghost can't be the target or
+ *     a rollback destination.
+ *   - ⑥ the whole account branch is one catch: an early failure (no db / bad
+ *     section / dead refresh / persist write) reschedules the prior timer; a
+ *     post-switch failure rolls the daemon back to prior.
+ *   - ⑩ a main-side `existsSync` gate (before refresh) refuses a section whose
+ *     db is missing — `/sync/switch` would otherwise mkdir + create an empty db.
+ *
+ * Switching to `local` is "step away" (D2): keep the prior account's tokens,
+ * never revoke — re-entry is password-free. A full logout (revoke) stays the
+ * Settings `logout()` action.
+ */
+export async function switchToProfile(targetId: string): Promise<void> {
+  if (!safeStorage.isEncryptionAvailable()) throw new SafeStorageUnavailableError();
+
+  const prior = readEffectiveActiveProfileId();
+  if (targetId === prior) return; // already here — leave the timer alone
+
+  const priorExpiresAt = currentExpiresAt; // capture before clear (rollback/reschedule)
+  clearRefreshTimer();
+
+  if (targetId === LOCAL_PROFILE) {
+    try {
+      await postSyncSwitch(LOCAL_PROFILE); // daemon opens owl/owl.db + clears session
+      setActiveProfile(LOCAL_PROFILE); // keep [profiles.<prior>] (tokens stay)
+    } catch (err) {
+      reschedulePrior(prior, priorExpiresAt);
+      throw err;
+    }
+    return; // local has no renewal — leave the timer stopped
+  }
+
+  // Account target — refresh-first + persist-first; whole branch in one catch.
+  let switched = false;
+  try {
+    // ⑩ main-side hard gate (authoritative, before refresh): never let a
+    // db-less section reach /sync/switch and get revived into an empty db.
+    if (!existsSync(paths.profileDbPath(targetId))) {
+      throw new ProfileDbMissingError(targetId);
+    }
+    const plan = await planQuickSwitch(targetId); // refresh + persist-first
+    await postSyncSwitch(targetId); // Phase 14: throw = abort, daemon stays on prior
+    switched = true;
+    await installSessionFor(targetId, plan); // session + setActive + reschedule
+  } catch (err) {
+    if (switched) await rollbackToPrior(prior, priorExpiresAt);
+    else reschedulePrior(prior, priorExpiresAt);
+    throw err;
+  }
+}
+
+/** What `planQuickSwitch` resolves to: a rotated token + session-ready fields. */
+interface SwitchPlan {
+  rotated: ApiRefreshResult;
+  sessionBase: {
+    user_id: string;
+    email: string;
+    server_url: string;
+    device: SkybridgeDeviceSection;
+    workspace: { id: string; slug: string };
+  };
+}
+
+/**
+ * Refresh a stored profile's access token and persist the rotated ciphertext to
+ * THAT profile's section by id (②, before any daemon switch). Throws
+ * `QuickSwitchNeedsLoginError` when the section is incomplete / has no refresh
+ * token; a dead refresh token clears the section's creds (so Settings shows
+ * "needs re-login") and rethrows.
+ */
+async function planQuickSwitch(profileId: string): Promise<SwitchPlan> {
+  const section = readProfileSection(profileId);
+  const device = section?.device;
+  const workspace = section?.workspace;
+  if (
+    !section?.user_id ||
+    !section.email ||
+    !section.server_url ||
+    !device?.id ||
+    !device.name ||
+    !workspace?.id
+  ) {
+    throw new QuickSwitchNeedsLoginError();
+  }
+  const refreshTok = decryptB64(section.encrypted_refresh_token);
+  if (!refreshTok) throw new QuickSwitchNeedsLoginError();
+
+  let rotated: ApiRefreshResult;
+  try {
+    rotated = await skybridgeRefresh(section.server_url, refreshTok);
+  } catch (err) {
+    if (isRefreshDead(err)) clearProfileAuth(profileId); // mark "needs re-login"
+    throw err;
+  }
+  // ② persist-first — store the rotated ciphertext on the TARGET section by id
+  // (it isn't active yet, so updateActiveProfileAuth can't reach it).
+  updateProfileAuth(profileId, {
+    encrypted_token: safeStorage.encryptString(rotated.token).toString('base64'),
+    encrypted_refresh_token: safeStorage.encryptString(rotated.refreshToken).toString('base64'),
+  });
+  return {
+    rotated,
+    sessionBase: {
+      user_id: section.user_id,
+      email: section.email,
+      server_url: section.server_url,
+      device,
+      workspace: { id: workspace.id, slug: workspace.slug },
+    },
+  };
+}
+
+/** Install a planned session on the (already-switched) profile db + activate it. */
+async function installSessionFor(profileId: string, plan: SwitchPlan): Promise<void> {
+  await postSyncSession({ token: plan.rotated.token, ...plan.sessionBase });
+  setActiveProfile(profileId); // db exists (we switched onto it) → passes the gate
+  scheduleRefresh(plan.rotated.expiresAt);
+}
+
+/**
+ * Restore the prior profile's renewal timer after a switch that never moved the
+ * daemon. local has no renewal; a null expiry means there was nothing to
+ * restore — never pass null to `scheduleRefresh` (`null - Date.now()` is NaN).
+ */
+function reschedulePrior(prior: string, priorExpiresAt: number | null): void {
+  if (prior === LOCAL_PROFILE || priorExpiresAt === null) return;
+  scheduleRefresh(priorExpiresAt);
+}
+
+/**
+ * Best-effort precise rollback to the prior profile after a post-switch failure
+ * (daemon is on the target but the session install failed). Puts the daemon +
+ * session + timer back; on a deeper failure, at least restores the prior timer.
+ */
+async function rollbackToPrior(prior: string, priorExpiresAt: number | null): Promise<void> {
+  if (prior === LOCAL_PROFILE) {
+    try {
+      await postSyncSwitch(LOCAL_PROFILE);
+      setActiveProfile(LOCAL_PROFILE);
+    } catch {
+      // best-effort — daemon may be down; toml/next boot wins
+    }
+    clearRefreshTimer();
+    return;
+  }
+  try {
+    await postSyncSwitch(prior);
+    const plan = await planQuickSwitch(prior); // prior creds untouched → still valid
+    await installSessionFor(prior, plan);
+  } catch {
+    reschedulePrior(prior, priorExpiresAt); // a later tick / focus recovers
+  }
 }
 
 export async function restoreSessionOnStartup(): Promise<SyncSessionSummary | null> {

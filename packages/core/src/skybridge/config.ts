@@ -117,6 +117,22 @@ export interface ProfileConfigSection {
   workspace?: SkybridgeWorkspaceSection;
 }
 
+/**
+ * P5-d Phase 17 (W4) — one row of `listProfiles()`: enough to render the
+ * sidebar quick-switch list + decide whether a profile is switchable.
+ * `dbExists` gates quick-switch (a ghost section with no db must not be
+ * revived into an empty db by `/sync/switch`'s mkdir; design ⑦).
+ */
+export interface ProfileListEntry {
+  /** 32-hex profile id. */
+  id: string;
+  email?: string;
+  server_url: string;
+  server_id?: string;
+  hasRefreshToken: boolean;
+  dbExists: boolean;
+}
+
 /** Raw `[profiles.<id>]` section as parsed off disk (everything optional). */
 interface RawProfileSection {
   server_id?: string;
@@ -562,6 +578,95 @@ export function readProfileSection(profileId: string, path?: string): ProfileCon
   const workspace = toWorkspaceSection(section.workspace);
   if (workspace) out.workspace = workspace;
   return out;
+}
+
+/**
+ * P5-d Phase 17 (W4) — enumerate every `[profiles.<id>]` section for the
+ * sidebar quick-switch list. Raw-parse (NOT `readSkybridgeConfig`, which only
+ * yields the active view + throws on a missing server url); skips ids that
+ * aren't 32-hex (dirty data). `local` is implicit (no section) — the GUI
+ * synthesises that row. Each entry carries `dbExists` so the caller can gate
+ * quick-switch on the db actually being present (⑦, ghost-revival defense).
+ */
+export function listProfiles(path?: string): ProfileListEntry[] {
+  const filePath = path ?? skybridgeConfigPath();
+  if (!existsSync(filePath)) return [];
+  let raw: RawConfig;
+  try {
+    raw = parse(readFileSync(filePath, 'utf-8')) as RawConfig;
+  } catch {
+    return [];
+  }
+  const profiles = raw.profiles;
+  if (profiles == null) return [];
+  const out: ProfileListEntry[] = [];
+  for (const [id, section] of Object.entries(profiles)) {
+    if (!isHexProfileId(id)) continue;
+    const entry: ProfileListEntry = {
+      id,
+      server_url: section.server_url ?? '',
+      hasRefreshToken: Boolean(section.encrypted_refresh_token),
+      dbExists: existsSync(profileDbPath(id)),
+    };
+    if (section.email) entry.email = section.email;
+    if (section.server_id) entry.server_id = section.server_id;
+    out.push(entry);
+  }
+  return out;
+}
+
+/**
+ * P5-d Phase 17 (W4) — patch a **specific** profile's secret fields by id
+ * (raw read-modify-write), the by-id sibling of `updateActiveProfileAuth`.
+ * Quick-switch persists the rotated ciphertext to the *target* profile BEFORE
+ * the daemon switches onto it (persist-first, ②), and at that moment the target
+ * is not yet `active_profile`, so the active-only variant can't reach it. Only
+ * the keys present in `patch` are written; preserves device/workspace/server_id
+ * + every sibling + `active_profile`. No-op if the file / section is absent.
+ */
+export function updateProfileAuth(
+  profileId: string,
+  patch: { encrypted_token?: string; encrypted_refresh_token?: string },
+  path?: string,
+): void {
+  const filePath = path ?? skybridgeConfigPath();
+  if (!existsSync(filePath)) return;
+  mutateConfigFile(filePath, (raw) => {
+    const section = (raw.profiles as Record<string, Record<string, unknown>> | undefined)?.[
+      profileId
+    ];
+    if (!section) return;
+    if ('encrypted_token' in patch) section.encrypted_token = patch.encrypted_token;
+    if ('encrypted_refresh_token' in patch) {
+      section.encrypted_refresh_token = patch.encrypted_refresh_token;
+    }
+  });
+}
+
+/**
+ * P5-d Phase 17 (W4) — clear a **specific** profile's credentials by id (raw
+ * read-modify-write), the by-id sibling of `clearSkybridgeAuth`. Quick-switch
+ * marks a target "needs re-login" on a dead refresh token while that target
+ * usually isn't the active profile (active is still the prior one). Keeps
+ * device/workspace/server_id (the §5.3 device memory) + `active_profile`
+ * untouched. No-op if the file / section is absent.
+ */
+export function clearProfileAuth(profileId: string, path?: string): void {
+  const filePath = path ?? skybridgeConfigPath();
+  if (!existsSync(filePath)) return;
+  // smol-toml drops undefined-valued keys on stringify, so nulling a field is
+  // equivalent to removing it — same idiom as clearSkybridgeAuth.
+  mutateConfigFile(filePath, (raw) => {
+    const section = (raw.profiles as Record<string, Record<string, unknown>> | undefined)?.[
+      profileId
+    ];
+    if (!section) return;
+    section.encrypted_token = undefined;
+    section.encrypted_refresh_token = undefined;
+    section.token = undefined;
+    section.user_id = undefined;
+    section.email = undefined;
+  });
 }
 
 /** Delete the file entirely. Used by integration tests, not production. */

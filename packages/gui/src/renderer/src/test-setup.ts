@@ -66,6 +66,25 @@ function defaultOwlAPI(): OwlAPI {
           },
         }),
       ),
+      profiles: vi.fn(() =>
+        Promise.resolve({
+          ok: true as const,
+          data: {
+            active: 'local',
+            profiles: [
+              {
+                id: 'local',
+                email: null,
+                server_url: null,
+                is_active: true,
+                can_quick_switch: false,
+                db_missing: false,
+              },
+            ],
+          },
+        }),
+      ),
+      switchProfile: vi.fn(() => Promise.resolve({ ok: true, data: undefined } as const)),
       onProfileSwitched: vi.fn(() => () => {}),
       onClaimPrompt: vi.fn(() => () => {}),
       respondClaim: vi.fn(),

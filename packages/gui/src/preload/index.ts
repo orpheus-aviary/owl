@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from 'electron';
 import type { LoginAndOpenSessionInput } from '../shared/sync-auth-types.js';
 import type { ClaimChoice, ClaimPromptInput } from '../shared/sync-claim-types.js';
 import type { SyncDevicesReply } from '../shared/sync-devices-types.js';
+import type { SyncProfilesReply } from '../shared/sync-profiles-types.js';
 import type { RunSyncResult } from '../shared/sync-run-types.js';
 import type { SyncIpcReply, SyncStatusReply } from '../shared/sync-status-types.js';
 import { daemonUrlFromArgv, parseStartupMode } from './args.js';
@@ -132,6 +133,19 @@ contextBridge.exposeInMainWorld('owlAPI', {
      * the caller only needs success/failure. No profile change.
      */
     run: (): Promise<SyncIpcReply<RunSyncResult>> => ipcRenderer.invoke('sync:run'),
+    /**
+     * P5-d Phase 17 (W4): list saved profiles (local + accounts) for the
+     * sidebar quick-switch list. Pure toml read — works even when the daemon
+     * is down.
+     */
+    profiles: (): Promise<SyncIpcReply<SyncProfilesReply>> => ipcRenderer.invoke('sync:profiles'),
+    /**
+     * P5-d Phase 17 (W4): password-free switch to a saved profile (or `local`).
+     * Fires profile:switched on success → controlled reload (16a). `local` is a
+     * step-away (keeps tokens); a full revoke is the Settings logout.
+     */
+    switchProfile: (id: string): Promise<SyncIpcReply<void>> =>
+      ipcRenderer.invoke('sync:switch-profile', id),
     /**
      * P5-d Phase 16 (B7): subscribe to "a profile switch committed" (login /
      * logout). MainApp mounts one listener and does a controlled full reload

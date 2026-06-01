@@ -20,11 +20,19 @@
  */
 
 import { type ApiDevice, ApiError, NetworkError } from '@orpheus-aviary/skybridge-client';
-import { type SkybridgeConfig, readSkybridgeConfig } from '@owl/core';
+import {
+  LOCAL_PROFILE,
+  ProfileDbMissingError,
+  type SkybridgeConfig,
+  listProfiles,
+  readEffectiveActiveProfileId,
+  readSkybridgeConfig,
+} from '@owl/core';
 import { BrowserWindow, ipcMain, safeStorage } from 'electron';
 import type { LoginAndOpenSessionInput } from '../shared/sync-auth-types.js';
 import type { SyncDevicesReply } from '../shared/sync-devices-types.js';
 import { syncErrorMessage } from '../shared/sync-error-message.js';
+import type { ProfileSummary, SyncProfilesReply } from '../shared/sync-profiles-types.js';
 import type { RunSyncResult } from '../shared/sync-run-types.js';
 import type {
   SyncIpcReply,
@@ -32,7 +40,13 @@ import type {
   SyncStatusResult,
 } from '../shared/sync-status-types.js';
 import { getDaemonUrl } from './daemon.js';
-import { SafeStorageUnavailableError, loginAndOpenSession, logout } from './sync-auth.js';
+import {
+  QuickSwitchNeedsLoginError,
+  SafeStorageUnavailableError,
+  loginAndOpenSession,
+  logout,
+  switchToProfile,
+} from './sync-auth.js';
 
 export function registerSyncIpc(): void {
   ipcMain.handle('sync:login', async (_e, input: LoginAndOpenSessionInput) => {
@@ -53,6 +67,41 @@ export function registerSyncIpc(): void {
   ipcMain.handle('sync:status', async () => safe<SyncStatusReply>(buildStatus));
   ipcMain.handle('sync:devices', async () => safe<SyncDevicesReply>(buildDevices));
   ipcMain.handle('sync:run', async () => safe<RunSyncResult>(runSyncNow));
+  // P5-d Phase 17 (W4) — saved-profile list (pure toml read, no daemon round
+  // trip) + password-free quick switch (fires profile:switched on success so
+  // the renderer reloads, exactly like login/logout).
+  ipcMain.handle('sync:profiles', async () => safe<SyncProfilesReply>(async () => buildProfiles()));
+  ipcMain.handle('sync:switch-profile', async (_e, id: string) => {
+    const reply = await safe<void>(() => switchToProfile(id));
+    if (reply.ok) notifyProfileSwitched();
+    return reply;
+  });
+}
+
+// P5-d Phase 17 (W4) — assemble the quick-switch list from the toml alone:
+// every `[profiles.<id>]` account plus a synthetic `local` entry, with the
+// EFFECTIVE active id marked (a ghost section whose db is gone never resolves
+// active, ⑤). A profile is quick-switchable only when it has a refresh token,
+// its db exists, and it isn't already active (⑦).
+function buildProfiles(): SyncProfilesReply {
+  const active = readEffectiveActiveProfileId();
+  const accounts: ProfileSummary[] = listProfiles().map((p) => ({
+    id: p.id,
+    email: p.email ?? null,
+    server_url: p.server_url.length > 0 ? p.server_url : null,
+    is_active: active === p.id,
+    can_quick_switch: p.hasRefreshToken && p.dbExists && active !== p.id,
+    db_missing: !p.dbExists,
+  }));
+  const local: ProfileSummary = {
+    id: LOCAL_PROFILE,
+    email: null,
+    server_url: null,
+    is_active: active === LOCAL_PROFILE,
+    can_quick_switch: active !== LOCAL_PROFILE,
+    db_missing: false,
+  };
+  return { active, profiles: [local, ...accounts] };
 }
 
 // P5-d Phase 17 (W8) — drive one manual pull/push round from the status
@@ -212,6 +261,12 @@ async function safe<T>(fn: () => Promise<T>): Promise<SyncIpcReply<T>> {
     }
     if (err instanceof SafeStorageUnavailableError) {
       return { ok: false, message: syncErrorMessage({ kind: 'safe_storage_unavailable' }) };
+    }
+    // P5-d Phase 17 (W4) — a saved profile that can't be quick-switched (dead /
+    // missing refresh token, or its local copy is gone). The popover gates most
+    // of these out, but this is the authoritative main-side guard.
+    if (err instanceof QuickSwitchNeedsLoginError || err instanceof ProfileDbMissingError) {
+      return { ok: false, message: '该账号无法免密切换，请前往「设置 → 同步」重新登录' };
     }
     return {
       ok: false,

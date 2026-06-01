@@ -55,7 +55,7 @@ vi.mock('./claim-prompt.js', () => ({
 // vi.hoisted so the class exists when the (hoisted) mock factory runs — a
 // `class` declaration would otherwise be in the temporal dead zone, since the
 // SUT import hoists above it.
-const { MockApiError } = vi.hoisted(() => {
+const { MockApiError, MockProfileDbMissingError } = vi.hoisted(() => {
   class MockApiError extends Error {
     readonly code: string;
     readonly status: number;
@@ -66,7 +66,14 @@ const { MockApiError } = vi.hoisted(() => {
       this.name = 'ApiError';
     }
   }
-  return { MockApiError };
+  class MockProfileDbMissingError extends Error {
+    readonly code = 'SKYBRIDGE_PROFILE_DB_MISSING';
+    constructor(public readonly profileId: string) {
+      super(`cannot activate profile ${profileId}: its db does not exist`);
+      this.name = 'ProfileDbMissingError';
+    }
+  }
+  return { MockApiError, MockProfileDbMissingError };
 });
 
 const sdkState = {
@@ -149,6 +156,10 @@ const coreState = {
   // Phase 16
   localInspect: { noteCount: 0, hasSyncTraces: false },
   copyCalls: [] as string[],
+  // Phase 17 (W4)
+  effectiveActive: 'local',
+  updateProfileAuthCalls: [] as Array<{ id: string; patch: Record<string, unknown> }>,
+  clearProfileAuthCalls: [] as string[],
 };
 vi.mock('@owl/core', () => ({
   OWL_APP_VERSION: '0.5.0-dev',
@@ -174,6 +185,16 @@ vi.mock('@owl/core', () => ({
   updateActiveProfileAuth: vi.fn((patch: Record<string, unknown>) => {
     coreState.updateAuthCalls.push(patch);
   }),
+  // Phase 17 (W4)
+  ProfileDbMissingError: MockProfileDbMissingError,
+  readEffectiveActiveProfileId: vi.fn(() => coreState.effectiveActive),
+  updateProfileAuth: vi.fn((id: string, patch: Record<string, unknown>) => {
+    coreState.updateProfileAuthCalls.push({ id, patch });
+    callLog.push('update');
+  }),
+  clearProfileAuth: vi.fn((id: string) => {
+    coreState.clearProfileAuthCalls.push(id);
+  }),
   // Phase 16
   paths: {
     profileDbPath: (id: string) => `/nest/owl/profiles/${id}/owl.db`,
@@ -192,6 +213,7 @@ vi.mock('./daemon.js', () => ({
 
 // Import AFTER the mocks so the SUT picks them up.
 import {
+  QuickSwitchNeedsLoginError,
   SafeStorageUnavailableError,
   SkybridgeServerTooOldError,
   clearRefreshTimer,
@@ -199,6 +221,7 @@ import {
   logout,
   maybeRefreshNow,
   restoreSessionOnStartup,
+  switchToProfile,
 } from './sync-auth.js';
 
 // ─── fetch routing ──────────────────────────────────────────────────
@@ -280,6 +303,9 @@ beforeEach(() => {
   coreState.updateAuthCalls = [];
   coreState.localInspect = { noteCount: 0, hasSyncTraces: false };
   coreState.copyCalls = [];
+  coreState.effectiveActive = 'local';
+  coreState.updateProfileAuthCalls = [];
+  coreState.clearProfileAuthCalls = [];
   sdkState.pullReturn = { changes: [], hasMore: false, latestSeq: 0, serverTime: 0 };
   fsState.profileDbExists = false;
   claimState.choice = 'independent';
@@ -632,5 +658,116 @@ describe('proactive renewal (Phase 15b)', () => {
     sdkState.refreshCalls = 0;
     await maybeRefreshNow();
     expect(sdkState.refreshCalls).toBe(0);
+  });
+});
+
+// ─── switchToProfile (Phase 17 / W4) ─────────────────────────────────
+
+describe('switchToProfile (Phase 17 / W4)', () => {
+  /** The target profile's stored section (flat ProfileConfigSection shape). */
+  function accountSection(over: Record<string, unknown> = {}) {
+    return {
+      server_id: 'srv-B',
+      server_url: 'http://srv-b:8443',
+      user_id: 'u-B',
+      email: 'b@test',
+      encrypted_token: b64('tk-B-access'),
+      encrypted_refresh_token: b64('rt-B-refresh'),
+      device: { id: 'dev-B', name: 'mac-b', app_version: 'owl 0.5.0-dev', client_version: '0.1.4' },
+      workspace: { id: 'ws-B', slug: 'owl/default' },
+      ...over,
+    };
+  }
+  const switchProfileIds = () =>
+    fetchMock.mock.calls
+      .filter(([u]) => String(u).endsWith('/sync/switch'))
+      .map(([, init]) => JSON.parse((init as RequestInit).body as string).profile_id);
+
+  it('switch to local: step-away — switches + setActive(local), no revoke / no token clear', async () => {
+    coreState.effectiveActive = 'pid-A'; // currently on an account
+    await switchToProfile('local');
+    expect(switchProfileIds()).toEqual(['local']);
+    expect(coreState.setActiveCalls).toEqual(['local']);
+    expect(sdkState.logoutCalls).toBe(0); // no revoke (D2 step-away)
+    expect(coreState.clearAuthCalls).toBe(0);
+    expect(coreState.clearProfileAuthCalls).toEqual([]);
+    expect(sdkState.refreshCalls).toBe(0);
+  });
+
+  it('switch to account: refresh → persist-first (before switch) → switch → install → setActive', async () => {
+    coreState.effectiveActive = 'local';
+    coreState.profileSection = accountSection();
+    fsState.profileDbExists = true;
+    await switchToProfile('pid-B');
+
+    expect(sdkState.refreshCalls).toBe(1);
+    // ② persist-first: updateProfileAuth on the target ran BEFORE /sync/switch.
+    expect(coreState.updateProfileAuthCalls).toHaveLength(1);
+    expect(coreState.updateProfileAuthCalls[0]).toMatchObject({
+      id: 'pid-B',
+      patch: { encrypted_token: b64('tk-new'), encrypted_refresh_token: b64('rt-new') },
+    });
+    expect(callLog.indexOf('update')).toBeLessThan(callLog.indexOf('switch'));
+    expect(switchProfileIds()).toEqual(['pid-B']);
+    const sessionCall = fetchMock.mock.calls.find(([u]) => String(u).endsWith('/sync/session'));
+    expect(JSON.parse((sessionCall![1] as RequestInit).body as string).token).toBe('tk-new');
+    expect(coreState.setActiveCalls).toEqual(['pid-B']);
+  });
+
+  it('⑩ db-missing hard gate: refuses before refresh — no refresh / no switch / no empty db', async () => {
+    coreState.effectiveActive = 'local';
+    coreState.profileSection = accountSection();
+    fsState.profileDbExists = false; // ghost — section present but db gone
+    await expect(switchToProfile('pid-B')).rejects.toThrow(/db does not exist/);
+    expect(sdkState.refreshCalls).toBe(0); // gated before refresh
+    expect(switchProfileIds()).toEqual([]); // never reached /sync/switch
+    expect(coreState.setActiveCalls).toEqual([]);
+  });
+
+  it('dead refresh: clears the target creds, never touches the daemon', async () => {
+    coreState.effectiveActive = 'local';
+    coreState.profileSection = accountSection();
+    fsState.profileDbExists = true;
+    sdkState.refreshError = new MockApiError('REFRESH_INVALID');
+    await expect(switchToProfile('pid-B')).rejects.toThrow();
+    expect(coreState.clearProfileAuthCalls).toEqual(['pid-B']);
+    expect(switchProfileIds()).toEqual([]); // daemon untouched
+    expect(coreState.setActiveCalls).toEqual([]);
+  });
+
+  it('no refresh token (legacy section) → QuickSwitchNeedsLoginError, no refresh / no switch', async () => {
+    coreState.effectiveActive = 'local';
+    coreState.profileSection = accountSection({ encrypted_refresh_token: undefined });
+    fsState.profileDbExists = true;
+    await expect(switchToProfile('pid-B')).rejects.toBeInstanceOf(QuickSwitchNeedsLoginError);
+    expect(sdkState.refreshCalls).toBe(0);
+    expect(switchProfileIds()).toEqual([]);
+  });
+
+  it('no-op when target is already the effective active profile', async () => {
+    coreState.effectiveActive = 'pid-B';
+    await switchToProfile('pid-B');
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(coreState.setActiveCalls).toEqual([]);
+  });
+
+  it('install failure after switch → rolls the daemon back to the prior account', async () => {
+    coreState.effectiveActive = 'pid-A'; // prior is an account
+    coreState.profileSection = accountSection(); // read for B + the rollback re-establish
+    fsState.profileDbExists = true;
+    sessionResp = { ok: false, status: 500 }; // /sync/session fails (target + rollback)
+    await expect(switchToProfile('pid-B')).rejects.toThrow();
+    // switched onto B (target), then rolled the daemon back to A.
+    expect(switchProfileIds()).toEqual(['pid-B', 'pid-A']);
+  });
+
+  it('install failure with a local prior → rolls back to local', async () => {
+    coreState.effectiveActive = 'local';
+    coreState.profileSection = accountSection();
+    fsState.profileDbExists = true;
+    sessionResp = { ok: false, status: 500 };
+    await expect(switchToProfile('pid-B')).rejects.toThrow();
+    expect(switchProfileIds()).toEqual(['pid-B', 'local']);
+    expect(coreState.setActiveCalls).toContain('local'); // rollback re-points local
   });
 });

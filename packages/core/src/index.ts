@@ -47,6 +47,7 @@ export * as paths from './config/paths.js';
 export { normalizeServerUrl, computeProfileId, InvalidServerUrlError } from './profile/id.js';
 export {
   readActiveProfileId,
+  readEffectiveActiveProfileId,
   isValidProfileId,
   isHexProfileId,
   resolveActiveProfile,
@@ -184,7 +185,9 @@ export type {
 
 // Skybridge client config (P5-a Step 6 — TOML read/write)
 export {
+  clearProfileAuth,
   clearSkybridgeAuth,
+  listProfiles,
   readProfileSection,
   readSkybridgeConfig,
   removeProfile,
@@ -198,11 +201,13 @@ export {
   SkybridgeNotConfiguredError,
   SkybridgeServerUrlMissingError,
   updateActiveProfileAuth,
+  updateProfileAuth,
   writeProfileConfig,
   writeSkybridgeConfig,
 } from './skybridge/config.js';
 export type {
   ProfileConfigSection,
+  ProfileListEntry,
   SkybridgeAuthSection,
   SkybridgeConfig,
   SkybridgeDeviceSection,

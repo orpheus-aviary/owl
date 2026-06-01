@@ -43,7 +43,8 @@ vi.mock('@/stores/sync-status', () => ({
     selector({ snapshot: snapshotHolder.value }),
 }));
 
-import { SyncStatusBar, formatRelativeTime } from './SyncStatusBar';
+import type { SyncProfilesReply } from '../../../../shared/sync-profiles-types.js';
+import { ProfileSwitcher, SyncStatusBar, formatRelativeTime } from './SyncStatusBar';
 
 function makeSnapshot(overrides: Partial<SyncStatusSnapshot> = {}): SyncStatusSnapshot {
   return {
@@ -364,5 +365,114 @@ describe('SyncStatusBar — W8 manual sync action', () => {
     const content = screen.getByTestId('popover-content');
     fireEvent.click(within(content).getByRole('button', { name: /手动同步/ }));
     await waitFor(() => expect(within(content).getByText(/网络连接失败/)).toBeTruthy());
+  });
+});
+
+describe('ProfileSwitcher — W4 quick switch list', () => {
+  function makeData(profiles: SyncProfilesReply['profiles'], active = 'local'): SyncProfilesReply {
+    return { active, profiles };
+  }
+  const local = (over = {}) => ({
+    id: 'local',
+    email: null,
+    server_url: null,
+    is_active: false,
+    can_quick_switch: true,
+    db_missing: false,
+    ...over,
+  });
+  const account = (id: string, over = {}) => ({
+    id,
+    email: `${id}@test`,
+    server_url: 'http://srv',
+    is_active: false,
+    can_quick_switch: true,
+    db_missing: false,
+    ...over,
+  });
+
+  it('renders nothing when data is null and not loading', () => {
+    const { container } = render(
+      <MemoryRouter>
+        <ProfileSwitcher data={null} loading={false} />
+      </MemoryRouter>,
+    );
+    expect(container.textContent).toBe('');
+  });
+
+  it('shows a loading placeholder while fetching', () => {
+    render(
+      <MemoryRouter>
+        <ProfileSwitcher data={null} loading={true} />
+      </MemoryRouter>,
+    );
+    expect(screen.getByText(/加载账号/)).toBeTruthy();
+  });
+
+  it('marks the active row with （当前） and renders it as non-clickable', () => {
+    render(
+      <MemoryRouter>
+        <ProfileSwitcher
+          data={makeData([local({ is_active: true, can_quick_switch: false }), account('pid-B')])}
+          loading={false}
+        />
+      </MemoryRouter>,
+    );
+    expect(screen.getByText('（当前）')).toBeTruthy();
+    // The active local row is not a button; the switchable account is.
+    expect(screen.getByRole('button', { name: /pid-B@test/ })).toBeTruthy();
+  });
+
+  it('clicking a switchable row calls owlAPI.sync.switchProfile with its id', async () => {
+    const switchMock = vi.mocked(window.owlAPI.sync.switchProfile);
+    switchMock.mockClear();
+    render(
+      <MemoryRouter>
+        <ProfileSwitcher
+          data={makeData([local({ is_active: true, can_quick_switch: false }), account('pid-B')])}
+          loading={false}
+        />
+      </MemoryRouter>,
+    );
+    fireEvent.click(screen.getByRole('button', { name: /pid-B@test/ }));
+    expect(switchMock).toHaveBeenCalledWith('pid-B');
+    await waitFor(() => expect(switchMock).toHaveBeenCalledTimes(1));
+  });
+
+  it('ghost (db_missing) and legacy (no refresh) rows are greyed with a Settings link, not buttons', () => {
+    render(
+      <MemoryRouter>
+        <ProfileSwitcher
+          data={makeData([
+            account('pid-ghost', { can_quick_switch: false, db_missing: true }),
+            account('pid-legacy', { can_quick_switch: false, db_missing: false }),
+          ])}
+          loading={false}
+        />
+      </MemoryRouter>,
+    );
+    expect(screen.queryByRole('button', { name: /pid-ghost@test/ })).toBeNull();
+    expect(screen.getByText('本地副本缺失')).toBeTruthy();
+    expect(screen.getByText('需重新登录')).toBeTruthy();
+    const links = screen.getAllByRole('link');
+    expect(links.every((l) => l.getAttribute('href') === '/settings?tab=sync')).toBe(true);
+  });
+
+  it('surfaces an error message when switchProfile fails', async () => {
+    const switchMock = vi.mocked(window.owlAPI.sync.switchProfile);
+    switchMock.mockResolvedValueOnce({
+      ok: false,
+      message: '该账号无法免密切换，请前往「设置 → 同步」重新登录',
+    });
+    render(
+      <MemoryRouter>
+        <ProfileSwitcher
+          data={makeData([local({ is_active: true, can_quick_switch: false }), account('pid-B')])}
+          loading={false}
+        />
+      </MemoryRouter>,
+    );
+    fireEvent.click(screen.getByRole('button', { name: /pid-B@test/ }));
+    await waitFor(() => expect(screen.getByText(/无法免密切换/)).toBeTruthy());
   });
 });

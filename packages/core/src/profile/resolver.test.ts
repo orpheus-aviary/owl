@@ -24,6 +24,7 @@ import {
   isHexProfileId,
   isValidProfileId,
   readActiveProfileId,
+  readEffectiveActiveProfileId,
   resolveActiveProfile,
   resolveActiveProfileDbPath,
 } from './resolver.js';
@@ -212,5 +213,35 @@ describe('resolveActiveProfileDbPath (Phase 13, behavior-preserving)', () => {
     writeSkybridge(v2(VALID_ID));
     touchDb(profileDbPath(VALID_ID));
     assert.equal(resolveActiveProfileDbPath(), profileDbPath(VALID_ID));
+  });
+});
+
+describe('readEffectiveActiveProfileId (Phase 17 / W4)', () => {
+  it('returns "local" when no config / no active_profile', () => {
+    assert.equal(readEffectiveActiveProfileId(), 'local');
+    writeSkybridge('[server]\nurl = "http://x:8443"\n');
+    assert.equal(readEffectiveActiveProfileId(), 'local');
+  });
+
+  it('returns "local" when active=local', () => {
+    writeSkybridge('active_profile = "local"\n');
+    assert.equal(readEffectiveActiveProfileId(), 'local');
+  });
+
+  it('collapses a ghost (section present, db missing) to "local"', () => {
+    writeSkybridge(v2(VALID_ID)); // section present, but no db touched
+    assert.equal(readEffectiveActiveProfileId(), 'local', 'ghost not marked current');
+  });
+
+  it('collapses a section-less active hex to "local"', () => {
+    writeSkybridge(v2(VALID_ID, { section: false }));
+    touchDb(profileDbPath(VALID_ID));
+    assert.equal(readEffectiveActiveProfileId(), 'local');
+  });
+
+  it('returns the hex id when valid AND section AND db all present', () => {
+    writeSkybridge(v2(VALID_ID));
+    touchDb(profileDbPath(VALID_ID));
+    assert.equal(readEffectiveActiveProfileId(), VALID_ID);
   });
 });

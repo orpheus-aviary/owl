@@ -113,3 +113,17 @@ export function resolveActiveProfile(path?: string): ActiveProfile | null {
 export function resolveActiveProfileDbPath(path?: string): string {
   return resolveActiveProfile(path)?.dbPath ?? dbPath();
 }
+
+/**
+ * P5-d Phase 17 (W4) — the **effective** active profile id: the same three-way
+ * gate as `resolveActiveProfile`, collapsed to `local` whenever the gate fails.
+ *
+ * Quick-switch / profile-list / delete decisions must use this rather than the
+ * raw `readActiveProfileId()`: a `[profiles.<id>]` section whose db is missing
+ * (a "ghost") is what the resolver already treats as local. Reading the raw
+ * `active_profile` could mark such a ghost as current, make a switch into it a
+ * no-op, or roll back onto a profile that doesn't really resolve.
+ */
+export function readEffectiveActiveProfileId(path?: string): string {
+  return resolveActiveProfile(path)?.id ?? LOCAL_PROFILE;
+}

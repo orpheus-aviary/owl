@@ -21,12 +21,15 @@ import {
   type ProfileConfigSection,
   ProfileDbMissingError,
   SkybridgeServerUrlMissingError,
+  clearProfileAuth,
   clearSkybridgeAuth,
+  listProfiles,
   readProfileSection,
   readSkybridgeConfig,
   removeProfile,
   setActiveProfile,
   updateActiveProfileAuth,
+  updateProfileAuth,
   writeProfileConfig,
 } from './config.js';
 
@@ -362,5 +365,95 @@ describe('readProfileSection — read a specific (non-active) profile (Phase 15)
     assert.equal(readProfileSection(ID_A), null, 'no file → null');
     writeToml(`[server]\nurl = "${LEGACY_URL}"\n`);
     assert.equal(readProfileSection(ID_A), null, 'no [profiles] table → null');
+  });
+});
+
+// ─── Phase 17 (W4): quick-switch core helpers ───────────
+
+describe('listProfiles (Phase 17 / W4)', () => {
+  it('returns [] for a missing file / no [profiles] table', () => {
+    assert.deepEqual(listProfiles(), [], 'no file → []');
+    writeToml(`[server]\nurl = "${LEGACY_URL}"\n`);
+    assert.deepEqual(listProfiles(), [], 'no [profiles] → []');
+  });
+
+  it('enumerates every profile with email/server_url/server_id/hasRefreshToken/dbExists', () => {
+    touchDb(profileDbPath(ID_A)); // A has a db
+    writeProfileConfig(ID_A, sectionWithRefresh); // has encrypted_refresh_token
+    writeProfileConfig(ID_B, {
+      server_url: URL_B,
+      user_id: 'usr_b',
+      email: 'b@local',
+      encrypted_token: 'cipher-b', // no refresh
+    }); // B has NO db (ghost)
+
+    const list = listProfiles();
+    const a = list.find((p) => p.id === ID_A);
+    const b = list.find((p) => p.id === ID_B);
+    assert.ok(a && b, 'both profiles enumerated');
+    assert.equal(a?.email, 'a@local');
+    assert.equal(a?.server_url, URL_A);
+    assert.equal(a?.server_id, 'srv-xyz');
+    assert.equal(a?.hasRefreshToken, true);
+    assert.equal(a?.dbExists, true, 'A db present');
+    assert.equal(b?.hasRefreshToken, false, 'B has no refresh token');
+    assert.equal(b?.dbExists, false, 'B is a ghost (no db) → not quick-switchable');
+  });
+
+  it('skips dirty (non-hex) profile ids', () => {
+    writeToml(
+      `[profiles.not-a-hex-id]\nserver_url = "${URL_A}"\n\n[profiles.${ID_A}]\nserver_url = "${URL_A}"\n`,
+    );
+    const ids = listProfiles().map((p) => p.id);
+    assert.deepEqual(ids, [ID_A], 'only the hex id survives');
+  });
+});
+
+describe('updateProfileAuth — by-id rotation (Phase 17 / W4)', () => {
+  it('patches a specific (non-active) profile, preserving server_id/device/workspace/sibling/active', () => {
+    touchDb(profileDbPath(ID_A));
+    writeProfileConfig(ID_A, sectionWithRefresh); // NOT active (active stays unset)
+    writeProfileConfig(ID_B, { server_url: URL_B, user_id: 'usr_b', encrypted_token: 'cipher-b' });
+
+    updateProfileAuth(ID_A, {
+      encrypted_token: 'new-access',
+      encrypted_refresh_token: 'new-refresh',
+    });
+
+    const raw = readRaw();
+    assert.equal(raw.active_profile, undefined, 'active_profile untouched');
+    const profiles = raw.profiles as Record<string, Record<string, unknown>>;
+    assert.equal(profiles[ID_A].encrypted_token, 'new-access', 'access rotated by id');
+    assert.equal(profiles[ID_A].encrypted_refresh_token, 'new-refresh', 'refresh rotated by id');
+    assert.equal(profiles[ID_A].server_id, 'srv-xyz', 'server_id preserved');
+    assert.ok(profiles[ID_A].device, 'device preserved');
+    assert.equal(profiles[ID_B].encrypted_token, 'cipher-b', 'sibling untouched');
+  });
+
+  it('is a no-op when the section is absent', () => {
+    writeProfileConfig(ID_B, { server_url: URL_B });
+    updateProfileAuth(ID_A, { encrypted_token: 'x' }); // ID_A has no section
+    const profiles = readRaw().profiles as Record<string, unknown>;
+    assert.equal(profiles[ID_A], undefined, 'no ghost section created');
+  });
+});
+
+describe('clearProfileAuth — by-id (Phase 17 / W4)', () => {
+  it('clears a specific (non-active) profile, keeps device/workspace/server_id + sibling + active', () => {
+    touchDb(profileDbPath(ID_A));
+    writeProfileConfig(ID_A, sectionA, { setActive: true }); // A active
+    writeProfileConfig(ID_B, sectionWithRefresh); // B not active, has secrets
+
+    clearProfileAuth(ID_B); // clear the NON-active one
+
+    const raw = readRaw();
+    assert.equal(raw.active_profile, ID_A, 'active pointer untouched');
+    const profiles = raw.profiles as Record<string, Record<string, unknown>>;
+    assert.equal(profiles[ID_B].encrypted_token, undefined, 'B access cleared');
+    assert.equal(profiles[ID_B].encrypted_refresh_token, undefined, 'B refresh cleared');
+    assert.equal(profiles[ID_B].user_id, undefined, 'B user_id cleared');
+    assert.equal(profiles[ID_B].server_id, 'srv-xyz', 'B server_id survives (device reuse)');
+    assert.ok(profiles[ID_B].device, 'B device survives');
+    assert.equal(profiles[ID_A].encrypted_token, 'cipher-a', 'active profile A untouched');
   });
 });

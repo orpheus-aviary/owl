@@ -54,6 +54,9 @@ const authState = {
   logoutError: null as Error | null,
   loginCalls: [] as Array<{ serverUrl: string; email: string; password: string }>,
   logoutCalls: 0,
+  // Phase 17 (W4)
+  switchCalls: [] as string[],
+  switchError: null as Error | null,
 };
 vi.mock('./sync-auth.js', () => ({
   loginAndOpenSession: vi.fn(
@@ -73,12 +76,24 @@ vi.mock('./sync-auth.js', () => ({
     authState.logoutCalls += 1;
     if (authState.logoutError) throw authState.logoutError;
   }),
+  switchToProfile: vi.fn(async (id: string) => {
+    authState.switchCalls.push(id);
+    if (authState.switchError) throw authState.switchError;
+  }),
   // Real error class so `err instanceof SafeStorageUnavailableError` works.
   SafeStorageUnavailableError: class SafeStorageUnavailableError extends Error {
     readonly code = 'SAFE_STORAGE_UNAVAILABLE';
     constructor() {
       super('safe storage unavailable');
       this.name = 'SafeStorageUnavailableError';
+    }
+  },
+  // Real error class so `err instanceof QuickSwitchNeedsLoginError` works in safe().
+  QuickSwitchNeedsLoginError: class QuickSwitchNeedsLoginError extends Error {
+    readonly code = 'QUICK_SWITCH_NEEDS_LOGIN';
+    constructor() {
+      super('needs re-login');
+      this.name = 'QuickSwitchNeedsLoginError';
     }
   },
 }));
@@ -95,12 +110,33 @@ vi.mock('@orpheus-aviary/skybridge-client', async () => {
 const coreState = {
   readReturn: null as unknown,
   readError: null as Error | null,
+  // Phase 17 (W4)
+  profileList: [] as Array<{
+    id: string;
+    email?: string;
+    server_url: string;
+    server_id?: string;
+    hasRefreshToken: boolean;
+    dbExists: boolean;
+  }>,
+  effectiveActive: 'local',
 };
 vi.mock('@owl/core', () => ({
+  LOCAL_PROFILE: 'local',
   readSkybridgeConfig: vi.fn(() => {
     if (coreState.readError) throw coreState.readError;
     return coreState.readReturn;
   }),
+  listProfiles: vi.fn(() => coreState.profileList),
+  readEffectiveActiveProfileId: vi.fn(() => coreState.effectiveActive),
+  // Real error class so `err instanceof ProfileDbMissingError` works in safe().
+  ProfileDbMissingError: class ProfileDbMissingError extends Error {
+    readonly code = 'SKYBRIDGE_PROFILE_DB_MISSING';
+    constructor(public readonly profileId: string) {
+      super(`profile ${profileId} db missing`);
+      this.name = 'ProfileDbMissingError';
+    }
+  },
 }));
 
 vi.mock('./daemon.js', () => ({
@@ -141,8 +177,12 @@ beforeEach(() => {
   authState.logoutError = null;
   authState.loginCalls = [];
   authState.logoutCalls = 0;
+  authState.switchCalls = [];
+  authState.switchError = null;
   coreState.readReturn = null;
   coreState.readError = null;
+  coreState.profileList = [];
+  coreState.effectiveActive = 'local';
   safeStorageState.available = true;
   safeStorageState.decryptString = vi.fn((b: Buffer) => b.toString('utf-8'));
   windowState.hasWindow = true;
@@ -575,5 +615,101 @@ describe('sync:run', () => {
     );
     const reply = (await call('sync:run')) as IpcReply<unknown>;
     expect(reply.ok).toBe(false);
+  });
+});
+
+// P5-d Phase 17 (W4) — `sync:profiles` assembles the quick-switch list from the
+// toml alone; `sync:switch-profile` delegates to switchToProfile + notifies.
+describe('sync:profiles', () => {
+  it('synthesises a local entry + marks the effective active + maps can_quick_switch', async () => {
+    coreState.effectiveActive = 'pid-A';
+    coreState.profileList = [
+      {
+        id: 'pid-A',
+        email: 'a@test',
+        server_url: 'http://a',
+        hasRefreshToken: true,
+        dbExists: true,
+      },
+      {
+        id: 'pid-B',
+        email: 'b@test',
+        server_url: 'http://b',
+        hasRefreshToken: true,
+        dbExists: true,
+      },
+      // ghost: section but no db → not quick-switchable
+      {
+        id: 'pid-C',
+        email: 'c@test',
+        server_url: 'http://c',
+        hasRefreshToken: true,
+        dbExists: false,
+      },
+      // legacy: no refresh token
+      {
+        id: 'pid-D',
+        email: 'd@test',
+        server_url: 'http://d',
+        hasRefreshToken: false,
+        dbExists: true,
+      },
+    ];
+    const reply = (await call('sync:profiles')) as IpcReply<{
+      active: string;
+      profiles: Array<{
+        id: string;
+        is_active: boolean;
+        can_quick_switch: boolean;
+        db_missing: boolean;
+        email: string | null;
+      }>;
+    }>;
+    expect(reply.ok).toBe(true);
+    if (!reply.ok) return;
+    expect(reply.data.active).toBe('pid-A');
+    const byId = Object.fromEntries(reply.data.profiles.map((p) => [p.id, p]));
+    expect(byId.local).toMatchObject({ is_active: false, can_quick_switch: true, email: null });
+    expect(byId['pid-A']).toMatchObject({ is_active: true, can_quick_switch: false }); // active
+    expect(byId['pid-B']).toMatchObject({ is_active: false, can_quick_switch: true });
+    expect(byId['pid-C']).toMatchObject({ can_quick_switch: false, db_missing: true }); // ghost
+    expect(byId['pid-D']).toMatchObject({ can_quick_switch: false, db_missing: false }); // no refresh
+  });
+
+  it('local is marked active when nothing is logged in', async () => {
+    coreState.effectiveActive = 'local';
+    coreState.profileList = [];
+    const reply = (await call('sync:profiles')) as IpcReply<{
+      profiles: Array<{ id: string; is_active: boolean; can_quick_switch: boolean }>;
+    }>;
+    expect(reply.ok).toBe(true);
+    if (reply.ok) {
+      const local = reply.data.profiles.find((p) => p.id === 'local');
+      expect(local).toMatchObject({ is_active: true, can_quick_switch: false });
+    }
+  });
+});
+
+describe('sync:switch-profile', () => {
+  it('delegates to switchToProfile and notifies profile:switched on success', async () => {
+    await flushImmediate(); // drain any leftover notify
+    windowState.send = vi.fn();
+    const reply = (await call('sync:switch-profile', 'pid-B')) as IpcReply<void>;
+    await flushImmediate();
+    expect(reply.ok).toBe(true);
+    expect(authState.switchCalls).toEqual(['pid-B']);
+    expect(windowState.send).toHaveBeenCalledWith('profile:switched');
+  });
+
+  it('failure → ok:false + Chinese needs-login message, no notify', async () => {
+    const { QuickSwitchNeedsLoginError } = await import('./sync-auth.js');
+    authState.switchError = new QuickSwitchNeedsLoginError();
+    await flushImmediate();
+    windowState.send = vi.fn();
+    const reply = (await call('sync:switch-profile', 'pid-B')) as IpcReply<void>;
+    await flushImmediate();
+    expect(reply.ok).toBe(false);
+    if (!reply.ok) expect(reply.message).toMatch(/重新登录/);
+    expect(windowState.send).not.toHaveBeenCalled();
   });
 });

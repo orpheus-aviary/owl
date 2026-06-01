@@ -9,9 +9,10 @@ import {
 } from '@/components/ui/popover';
 import type { SyncState, SyncStatusSnapshot } from '@/lib/api';
 import { useSyncStatus } from '@/stores/sync-status';
-import { Loader2 } from 'lucide-react';
+import { Check, Loader2 } from 'lucide-react';
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
+import type { ProfileSummary, SyncProfilesReply } from '../../../../shared/sync-profiles-types.js';
 
 /**
  * P5-b §6.3 / §7 — daemon sync status indicator. Lives at the very
@@ -50,6 +51,20 @@ const STATE_INFO: Record<SyncState, StateInfo> = {
 export function SyncStatusBar({ className = '' }: { className?: string }) {
   const snapshot = useSyncStatus((s) => s.snapshot);
 
+  // P5-d Phase 17 (W4) — saved-profile list for the quick-switch section.
+  // Fetched when the popover opens (a cheap toml read); 16a reloads the whole
+  // window on any profile change, so a freshly-mounted bar always re-fetches.
+  const [profiles, setProfiles] = useState<SyncProfilesReply | null>(null);
+  const [profilesLoading, setProfilesLoading] = useState(false);
+  const loadProfiles = (open: boolean) => {
+    if (!open) return;
+    setProfilesLoading(true);
+    void window.owlAPI.sync.profiles().then((reply) => {
+      setProfiles(reply.ok ? reply.data : null);
+      setProfilesLoading(false);
+    });
+  };
+
   // `null` = haven't heard from daemon yet. Render as idle so the first
   // paint doesn't flash an alarm — SSE / fetch will overwrite within a
   // few hundred ms once the channel is up.
@@ -57,7 +72,7 @@ export function SyncStatusBar({ className = '' }: { className?: string }) {
   const info = STATE_INFO[state];
 
   return (
-    <Popover>
+    <Popover onOpenChange={loadProfiles}>
       <PopoverTrigger asChild>
         <button
           type="button"
@@ -83,6 +98,9 @@ export function SyncStatusBar({ className = '' }: { className?: string }) {
       </PopoverTrigger>
       <PopoverContent side="right" align="end" className="w-72">
         <SyncStatusDetails snapshot={snapshot} state={state} />
+        {/* W4 quick-switch — only when the daemon has reported (account or
+            local view); the cold-start (null) view stays a calm explainer. */}
+        {snapshot && <ProfileSwitcher data={profiles} loading={profilesLoading} />}
       </PopoverContent>
     </Popover>
   );
@@ -208,6 +226,119 @@ function SyncStatusDetails({
         </Link>
       </div>
     </div>
+  );
+}
+
+/**
+ * P5-d Phase 17 (W4) — the sidebar quick-switch list: `local` + every saved
+ * account, the effective-active one marked. Clicking a switchable row does a
+ * password-free `switchProfile`; on success the whole window reloads (16a) so
+ * this component just surfaces failures inline. A profile that can't be
+ * quick-switched (db missing / no refresh token) is greyed with a link into
+ * Settings — never a `/sync/switch` that would revive an empty db (⑦).
+ *
+ * Exported for direct unit testing (the popover mock in tests never fires
+ * `onOpenChange`, so SyncStatusBar's fetch path isn't exercised there).
+ */
+export function ProfileSwitcher({
+  data,
+  loading,
+}: {
+  data: SyncProfilesReply | null;
+  loading: boolean;
+}) {
+  const [switchingId, setSwitchingId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  if (data === null) {
+    return loading ? (
+      <p className="border-t pt-2 px-1 text-xs text-muted-foreground">加载账号…</p>
+    ) : null;
+  }
+
+  const onSwitch = async (id: string) => {
+    setSwitchingId(id);
+    setError(null);
+    const reply = await window.owlAPI.sync.switchProfile(id);
+    // Success → the window reloads (16a) and this unmounts; only failure lands.
+    if (!reply.ok) {
+      setError(reply.message);
+      setSwitchingId(null);
+    }
+  };
+
+  return (
+    <div className="mt-3 flex flex-col gap-1 border-t pt-2">
+      <p className="px-1 text-xs font-medium text-muted-foreground">切换账号</p>
+      <ul className="flex max-h-48 flex-col overflow-y-auto">
+        {data.profiles.map((p) => (
+          <ProfileRow
+            key={p.id}
+            profile={p}
+            switching={switchingId === p.id}
+            disabled={switchingId !== null}
+            onSwitch={() => onSwitch(p.id)}
+          />
+        ))}
+      </ul>
+      {error && <p className="px-1 text-xs text-destructive break-words">{error}</p>}
+    </div>
+  );
+}
+
+function ProfileRow({
+  profile,
+  switching,
+  disabled,
+  onSwitch,
+}: {
+  profile: ProfileSummary;
+  switching: boolean;
+  disabled: boolean;
+  onSwitch: () => void;
+}) {
+  const label =
+    profile.id === 'local' ? '本地工作区' : (profile.email ?? profile.server_url ?? profile.id);
+
+  if (profile.is_active) {
+    return (
+      <li className="flex items-center gap-2 px-1 py-1 text-xs">
+        <Check className="size-3 shrink-0 text-green-600 dark:text-green-400" />
+        <span className="truncate">{label}</span>
+        <span className="shrink-0 text-muted-foreground">（当前）</span>
+      </li>
+    );
+  }
+
+  if (!profile.can_quick_switch) {
+    // Ghost (local copy gone) or legacy (no refresh token) → not switchable.
+    const hint = profile.db_missing ? '本地副本缺失' : '需重新登录';
+    return (
+      <li className="flex items-center justify-between gap-2 px-1 py-1 text-xs text-muted-foreground/60">
+        <span className="truncate">{label}</span>
+        <Link to="/settings?tab=sync" className="shrink-0 underline">
+          {hint}
+        </Link>
+      </li>
+    );
+  }
+
+  return (
+    <li>
+      <button
+        type="button"
+        onClick={onSwitch}
+        disabled={disabled}
+        className="flex w-full items-center gap-2 rounded px-1 py-1 text-left text-xs hover:bg-accent disabled:opacity-50"
+      >
+        {switching ? (
+          <Loader2 className="size-3 shrink-0 animate-spin" />
+        ) : (
+          <span className="size-3 shrink-0" />
+        )}
+        <span className="truncate">{label}</span>
+      </button>
+    </li>
   );
 }
 
