@@ -1,10 +1,37 @@
 # 开发进度
 
-## 当前阶段：P5-d per-profile 隔离 — Phase 12-16 完成；**Phase 17 全完成（GUI 账号/设备管理：17a 手动同步+提醒文案 · 17b 免密快切 · 17c 移除设备 · 17d 删除账号副本）+ 1 个 Phase 15 遗留 bug 修复（setTimeout 32 位溢出）**（五片 commit 落 main 未 push、全绿、**真机手测全过 2026-06-02**）；下一步 **Phase 18（本地全链路验证）**
+## 当前阶段：P5-d per-profile 隔离 — **Phase 19（阿里云部署 + promote latest + 真机 smoke）+ Phase 20（W12 备份恢复 / 网络中断 / W3 错钟）完成（2026-06-04）**；skybridge **0.1.4 已 promote npm latest**；下一步 **Phase 21（CLI compat + `authenticated` cosmetic 修）→ 22（0.5.0 bump+发版）→ 23（push 收尾）**
+
+**✅ Phase 19（阿里云部署 + promote latest + 真机 smoke）2026-06-04 完成** —— plan `docs/plans/2026-06-03-phase19-deploy-promote-smoke.md`（§9 实施记录）。
+- 阿里云 Ubuntu ECS 部署 0.1.4 server（明文 HTTP + 安全组锁源 IP + systemd，`server_id` smXxhd…），`/v1/health` 公网可达。**测试环境已拆；正式环境照 `skybridge/docs/deploy/ubuntu-baota.md`**（已补 §12 日常运维 + §13 拆除/迁移）。TLS 留 0.6。
+- 真机 smoke **S1-S5a 全过**：首登+claim、**D10b 本地库零污染**、免密快切、多账号隔离、refresh 不风暴（3 次 `/v1/auth/refresh` 全来自快切 refresh-first）。
+- **promote `0.1.4 → npm latest`**（proto/client/server 三包 dist-tag move，2026-06-04）。
+- **cosmetic**：daemon `/sync/status` 的 `authenticated`=`Boolean(config?.auth?.token)`（`manual.ts:324`）读老顶层 `[auth].token`，per-profile 下恒 false（功能无碍）→ **Phase 21 顺手修**。
+
+**✅ Phase 20（W12 备份恢复 / 网络中断 / W3 错钟）2026-06-04 完成** —— plan `docs/plans/2026-06-04-phase20-soak-clockskew-recovery.md`（§5 实施记录）。真云 server + mac rig，API+sqlite 驱动核验。
+- **T1 W12 备份恢复**：旧备份覆盖 → 重拉补齐 + **删不复活**（`trash — local row missing, skipped`）+ cursor 追平。**1 条「远端胜出」冲突 = 恢复场景预期安全**（远端为准 + W7 可见 + 零丢失，非风暴）→ **写进 0.5.0 恢复指引**。
+- **T2 网络中断**：离线识别 `SKYBRIDGE_SERVER_UNREACHABLE` + 编辑排队 + 退避 health-probe → 恢复 `sse connected`+`health-probe stopped`+catch-up 补推，无重复 apply/复活。
+- **T3 W3 错钟（libfaketime +10d）**：standalone node daemon（关 GUI+Node ABI 避 better-sqlite3 ABI 冲突）+ 脚本注入 A 会话，`server_time_offset_ms≈-10天` → 错钟设备写入 `updated_at≈真实时间`（距真实 2 秒/距+10d 整 10 天）→ **错钟不成黑洞**。
+- **T4 计时 soak 降范围跳过**（用户定；正确性已由 T1-T3+S1-S5a 覆盖；真·24h 留 GA 前可选）。
+- **owl 零生产代码改动**（Phase 19+20 = 部署 + 文档 + 真机验证 + npm dist-tag）。
+
+---
+
+**✅ Phase 18（本地全链路 per-profile model e2e）2026-06-03 完成（代码待提交，PROCESS+plan 留工作树）** —— 照 `docs/plans/2026-06-03-phase18-local-full-chain.md`（v2 定稿，1 轮 review 已纳；§11 实施记录）。
+- **唯一改动**：新增 gated e2e `packages/daemon/src/sync/profile-chain.e2e.ts`（~390 行，单片）。`sync.dual.e2e.ts` 零改动；无生产代码改动。
+- **覆盖缺口**：现有 dual e2e 只跑 in-memory core-engine，per-profile **存储+切换模型**（真 toml `[profiles.X]`+`active_profile` → resolver → on-disk `profiles/<id>/owl.db` → daemon `POST /sync/switch` 打真 0.1.4 server → 重启重解析 → 快切 → 删除）从无端到端自动化覆盖。新 e2e 把这条链路串起来跑。
+- **9 用例 P0-P8**（P9 ghost 折入 P8）：P0 boots-on-local + 种 local note · P1 首登远端 bootstrap(A) · P2 switch 建库+`/sync/session`+`writeProfileConfig(setActive)` · P3 push 隔离 + **D10b 语义铁证**（local owl.db 从未被账号同步） · P4 `restartDaemonCtx()` resolver 拾取 A · P5 快切 local+重启 · P6 快回 A + **device 复用** + 重装会话 + `/sync/run` + `listDevices()===1` · P7 第二账号 B 共存+各看各笔记 · P8 删 A 副本(先切 local 释放句柄)+B/local 完好+ghost 不复活。
+- **上界（Q2 拍板）**：daemon HTTP 路由打真 server + core resolver/config 真 toml + 真 on-disk profile db。GUI-main 编排（loginAndOpenSession/refresh 定时器/safeStorage/claim）留单测 + Phase 19 真机。
+- **验收（whole-repo 全绿）**：`just build` → `just check`(typecheck + 8 守卫) → `just test`（core **519** / daemon **283** / cli **134** / gui **385**，**单测数全不变**——e2e 独立 gated）→ `just test-skybridge-e2e` **16 → 25（+9）**。
+- **carry-forward**：`restartDaemonCtx()` 拆/重建必做序（scheduler.stop→stopBackgroundHandles→drainManualSync→app.close→sqlite.close→`__resetInflightSync()`，否则 SSE/timer 打已关闭 sqlite）；D10b 是**语义**断言（`synced_at` nullable，pending=`IS NULL`，建本地 note 本就产 pending）；session.ts `SkybridgeClientModule.login` 不含 serverId（daemon 不登录）→ e2e 自声明 richer `E2EClientModule`；`SkybridgeDeviceSection` 必填 app_version+client_version、Workspace 必填 slug；`createDatabase` 不 mkdir。详见 plan §11。
+
+---
+
+## 历史：Phase 12-17 + 插队「多账号 add」（P5-d per-profile 隔离主线，全落 main 已 push）
 
 **Phase 17 子设计**：`docs/plans/2026-06-01-phase17-gui-account-device.md`（经 **3 轮 review**，切片 17a/17b/17c/17d；§9 实施记录有全验收 + 真机手测 + bug 修复诊断）。父设计 `2026-05-29-account-profile-isolation-design.md`（v6，§0.5/§5.4.3 D2/§11/§13 W4/W5/W8/W9 权威）。
 
-**✅ Phase 17 五 commit（本地 main，未 push）**：
+**✅ Phase 17 五 commit（已落 main 已 push）**：
 | Commit | 内容 |
 |---|---|
 | `58fc3f5` | **17a** 手动同步(W8)+提醒文案(W5)：shared `RunSyncResult` + main `sync:run` + SyncStatusBar「手动同步」按钮（账号态显，syncing disabled）+ SyncSection W5 一行。daemon 零改动（复用 `POST /sync/run`）。 |
