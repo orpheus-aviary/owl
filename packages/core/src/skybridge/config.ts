@@ -185,7 +185,7 @@ interface ConfigSource {
 export class SkybridgeNotConfiguredError extends Error {
   readonly code = 'SKYBRIDGE_NOT_CONFIGURED';
   constructor(public readonly path: string) {
-    super(`skybridge config not found at ${path} — run "owl sync login" to create it`);
+    super(`skybridge config not found at ${path} — log in via the owl GUI (Settings → Sync)`);
     this.name = 'SkybridgeNotConfiguredError';
   }
 }
@@ -200,7 +200,7 @@ export class SkybridgeServerUrlMissingError extends Error {
 
 export class SkybridgeAuthRequiredError extends Error {
   readonly code = 'SKYBRIDGE_AUTH_REQUIRED';
-  constructor(message = 'skybridge auth missing — run "owl sync login"') {
+  constructor(message = 'skybridge auth missing — log in via the owl GUI (Settings → Sync)') {
     super(message);
     this.name = 'SkybridgeAuthRequiredError';
   }

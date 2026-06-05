@@ -183,7 +183,7 @@ describe('owl sync run', () => {
         body: {
           success: false,
           error_code: 'SKYBRIDGE_AUTH_REQUIRED',
-          message: 'skybridge token rejected (401); re-run `owl sync login`',
+          message: 'skybridge token rejected (401)',
         },
       },
     ]);
@@ -231,84 +231,25 @@ describe('owl sync status', () => {
   });
 });
 
-// ─── owl sync login ───────────────────────────────────────────────────
+// ─── owl sync login (retired — GUI-only) ──────────────────────────────
 
 describe('owl sync login', () => {
-  it('--direct rejects before prompting for password', async () => {
+  it('always throws USAGE_ERROR redirecting to the GUI, with no daemon call', async () => {
     const { env } = setupEnv();
-    let prompted = false;
-    env.readPassword = async () => {
-      prompted = true;
-      return 'pw';
-    };
-    env.fetch = vi.fn();
-    await expect(runSyncLogin({ email: 'a@b', direct: true }, env)).rejects.toMatchObject({
-      code: 'USAGE_ERROR',
-    });
-    expect(prompted).toBe(false);
-  });
-
-  it('empty password → USAGE_ERROR (no daemon call)', async () => {
-    const { env } = setupEnv();
-    env.readPassword = async () => '';
-    env.fetch = vi.fn();
+    env.fetch = vi.fn(); // would throw if called
     await expect(runSyncLogin({ email: 'a@b' }, env)).rejects.toMatchObject({
       code: 'USAGE_ERROR',
     });
     expect(env.fetch).not.toHaveBeenCalled();
   });
 
-  it('POSTs /sync/login with {email, password, server_url} and writes the response', async () => {
-    const { env, stdout } = setupEnv();
-    env.readPassword = async () => 'longenoughpw';
-    env.fetch = makeFetch([
-      { url: '/status', status: 200, body: { success: true, data: { status: 'ok' } } },
-      {
-        url: '/sync/login',
-        method: 'POST',
-        status: 200,
-        body: {
-          success: true,
-          data: {
-            server_url: 'http://127.0.0.1:18443',
-            email: 'jay@local',
-            user_id: 'usr_1',
-          },
-        },
-      },
-    ]);
-    await runSyncLogin({ email: 'jay@local', serverUrl: 'http://127.0.0.1:18443' }, env);
-    const out = JSON.parse(stdout.read());
-    expect(out.user_id).toBe('usr_1');
-    expect(out.email).toBe('jay@local');
-
-    const loginCall = (env.fetch as unknown as { calls: { url: string; init?: RequestInit }[] })
-      .calls[1];
-    const sent = JSON.parse(loginCall.init?.body as string);
-    expect(sent).toEqual({
-      email: 'jay@local',
-      password: 'longenoughpw',
-      server_url: 'http://127.0.0.1:18443',
-    });
-  });
-
-  it('omits server_url from the body when not provided', async () => {
+  it('ignores --email / --server-url and still redirects', async () => {
     const { env } = setupEnv();
-    env.readPassword = async () => 'pw';
-    env.fetch = makeFetch([
-      { url: '/status', status: 200, body: { success: true, data: { status: 'ok' } } },
-      {
-        url: '/sync/login',
-        method: 'POST',
-        status: 200,
-        body: { success: true, data: { server_url: 'http://x', email: 'a@b', user_id: 'u' } },
-      },
-    ]);
-    await runSyncLogin({ email: 'a@b' }, env);
-    const loginCall = (env.fetch as unknown as { calls: { url: string; init?: RequestInit }[] })
-      .calls[1];
-    const sent = JSON.parse(loginCall.init?.body as string);
-    expect(sent.server_url).toBeUndefined();
+    env.fetch = vi.fn();
+    await expect(runSyncLogin({ email: 'x@y', serverUrl: 'http://x' }, env)).rejects.toMatchObject({
+      code: 'USAGE_ERROR',
+    });
+    expect(env.fetch).not.toHaveBeenCalled();
   });
 });
 

@@ -101,7 +101,10 @@ export function buildProgram(): Command {
     .option('--force', 'allow --direct write while daemon is running (dangerous)')
     .option('--overwrite', 'skip CAS concurrency check on writes')
     .option('--config <path>', 'override owl_config.toml path')
-    .option('--db <path>', 'override sqlite db path (triggers direct mode)');
+    .option(
+      '--db <path>',
+      'override sqlite db path (escape hatch, triggers direct mode; default resolves the active profile db)',
+    );
 
   // ── search [query] ──
   program
@@ -349,10 +352,12 @@ export function buildProgram(): Command {
     });
   syncCmd
     .command('login')
-    .description('write skybridge credentials to skybridge_config.toml')
-    .requiredOption('--email <email>', 'login email')
-    .option('--server-url <url>', 'skybridge server URL (defaults to existing config)')
-    .action(async (flags: { email: string; serverUrl?: string }, cmd: Command) => {
+    .description('(removed) login is GUI-only — log in via the owl GUI (Settings → Sync)')
+    // `--email` / `--server-url` stay registered (and ignored) so old scripts
+    // get the friendly redirect from runSyncLogin, not an "unknown option" error.
+    .option('--email <email>', '(ignored) login email')
+    .option('--server-url <url>', '(ignored) skybridge server URL')
+    .action(async (flags: { email?: string; serverUrl?: string }, cmd: Command) => {
       const opts = cmd.optsWithGlobals() as GlobalOptions;
       await runSyncLogin(
         {

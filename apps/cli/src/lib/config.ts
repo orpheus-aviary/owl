@@ -14,7 +14,11 @@ export interface ResolvedConfig {
 export interface ConfigOverrides {
   /** `--config <path>` — overrides owl_config.toml location. */
   configPath?: string;
-  /** `--db <path>` — overrides `[data].db_path`. Triggers direct mode. */
+  /**
+   * `--db <path>` — escape hatch overriding the db path; triggers direct mode.
+   * Without it, direct mode resolves the active profile db (per-profile
+   * isolation, Phase 12+), not a fixed `owl.db`.
+   */
   dbPath?: string;
 }
 

@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -38,5 +38,28 @@ describe('resolveConfig', () => {
     writeFileSync(cfgPath, '');
     const resolved = resolveConfig({ configPath: cfgPath, dbPath: '/tmp/custom.db' });
     expect(resolved.dbPath).toBe('/tmp/custom.db');
+  });
+
+  it('resolves the active profile db (legacy owl/owl.db fallback) when --db is absent', () => {
+    // No skybridge config / active_profile → the resolver falls back to the
+    // legacy owl/owl.db (Phase 12+ B3: default direct path = active profile db).
+    const nest = mkdtempSync(join(tmpdir(), 'owl-cli-nest-'));
+    created.push(nest);
+    const prevNest = process.env.OWL_NEST_DIR;
+    process.env.OWL_NEST_DIR = nest;
+    try {
+      mkdirSync(join(nest, 'owl'), { recursive: true });
+      const cfgPath = join(nest, 'owl', 'owl_config.toml');
+      writeFileSync(cfgPath, '');
+      const resolved = resolveConfig({ configPath: cfgPath });
+      expect(resolved.dbPath).toBe(join(nest, 'owl', 'owl.db'));
+    } finally {
+      if (prevNest === undefined) {
+        // biome-ignore lint/performance/noDelete: must truly unset, not stringify "undefined"
+        delete process.env.OWL_NEST_DIR;
+      } else {
+        process.env.OWL_NEST_DIR = prevNest;
+      }
+    }
   });
 });

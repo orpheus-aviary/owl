@@ -1,19 +1,20 @@
 /**
  * P5-a Step 8 — `owl sync …` command family.
  *
- * Strictly daemon-mediated: every subcommand except `config show` hits a
- * daemon HTTP endpoint. Direct sqlite mode is rejected with USAGE_ERROR
- * because the engine lives in the daemon process (inflight-Promise dedupe
- * + shared sqlite handle); a second CLI-side connection would race for
- * the same write lock.
+ * `run` / `status` are strictly daemon-mediated (Direct sqlite mode is
+ * rejected with USAGE_ERROR — the sync engine lives in the daemon process).
+ *
+ * `login` is **not** a CLI capability: per-profile login needs the GUI's
+ * safeStorage to encrypt the token plus the GUI-main profile orchestration
+ * (switch + device reuse + refresh flow), and the daemon deliberately can't
+ * decrypt. The retired `/sync/login` route is gone; `owl sync login` now
+ * surfaces a friendly "log in via the GUI" error.
  *
  * `config show` reads `~/orpheus-aviary-nest/skybridge/skybridge_config.toml`
  * directly via core's `readSkybridgeConfig` and prints the parsed shape
  * with the token masked — debugging aid, no daemon round-trip.
  */
 
-import { createInterface } from 'node:readline';
-import { Writable } from 'node:stream';
 import {
   type SkybridgeConfig,
   SkybridgeNotConfiguredError,
@@ -31,11 +32,6 @@ export interface SyncCommandEnv {
   streams: OutputStreams;
   /** Override for tests; defaults to global `fetch`. */
   fetch?: typeof fetch;
-  /**
-   * Override for tests; defaults to `readPasswordSilently`. Resolves the
-   * password the user typed at the password prompt.
-   */
-  readPassword?: (prompt: string) => Promise<string>;
   /** Test override for the local skybridge_config.toml read. */
   readConfig?: typeof readSkybridgeConfig;
 }
@@ -46,8 +42,9 @@ export interface SyncFlags {
 }
 
 export interface SyncLoginFlags extends SyncFlags {
-  email: string;
-  /** P5-a passes `--server-url` to override; if absent, reuse on-disk config. */
+  /** Accepted but ignored — login is GUI-only (kept so old scripts get the
+   *  friendly redirect, not an "unknown option" error). */
+  email?: string;
   serverUrl?: string;
 }
 
@@ -108,44 +105,6 @@ async function getOrThrow<T>(doFetch: typeof fetch, url: string): Promise<T> {
   return envelope.data as T;
 }
 
-// ─── Password prompt (raw-mode readline, no echo) ─────────────────────
-
-/**
- * Prompts the user for a password on stdin without echoing keystrokes.
- *
- * Implementation: a writable sink that swallows readline's terminal
- * echo + a normal readline interface with `terminal: true`. The prompt
- * itself is written manually to stdout so it stays visible. EOL handling
- * is left to readline.
- *
- * Tests inject `env.readPassword` to bypass stdin entirely.
- */
-function readPasswordSilently(prompt: string): Promise<string> {
-  const muted = new Writable({
-    write(_chunk, _enc, cb) {
-      cb();
-    },
-  });
-  process.stdout.write(prompt);
-  const rl = createInterface({
-    input: process.stdin,
-    output: muted,
-    terminal: true,
-  });
-  return new Promise<string>((resolve, reject) => {
-    rl.question('', (answer) => {
-      process.stdout.write('\n');
-      rl.close();
-      resolve(answer);
-    });
-    rl.once('close', () => {
-      // If the readline closed without a question reply (Ctrl-D), reject
-      // with USER_CANCELLED so the action wrapper exits cleanly.
-      reject(new CliError('USER_CANCELLED', 'password prompt cancelled'));
-    });
-  });
-}
-
 // ─── Subcommands ──────────────────────────────────────────────────────
 
 export async function runSyncRun(flags: SyncFlags, env: SyncCommandEnv): Promise<void> {
@@ -162,32 +121,16 @@ export async function runSyncStatus(flags: SyncFlags, env: SyncCommandEnv): Prom
   writeResult(result, { pretty: flags.pretty, streams: env.streams });
 }
 
-export async function runSyncLogin(flags: SyncLoginFlags, env: SyncCommandEnv): Promise<void> {
-  if (!flags.email) {
-    throw new CliError('USAGE_ERROR', '--email is required');
-  }
-  // --direct refuses BEFORE prompting so we never read the user's
-  // password into memory only to throw it away.
-  if (flags.direct) {
-    throw new CliError(
-      'USAGE_ERROR',
-      'sync commands require the daemon; --direct is not supported',
-    );
-  }
-  const readPwd = env.readPassword ?? readPasswordSilently;
-  const password = await readPwd(`Password for ${flags.email}: `);
-  if (!password) {
-    throw new CliError('USAGE_ERROR', 'password cannot be empty');
-  }
-  const result = await withDaemonHttp(flags, env, async (base, doFetch) => {
-    return postOrThrow<Record<string, unknown>>(doFetch, `${base}/sync/login`, {
-      email: flags.email,
-      password,
-      // `server_url` is optional; daemon falls back to existing config when omitted
-      ...(flags.serverUrl ? { server_url: flags.serverUrl } : {}),
-    });
-  });
-  writeResult(result, { pretty: flags.pretty, streams: env.streams });
+// `owl sync login` is retired. Login is GUI-only: per-profile login needs the
+// GUI's safeStorage to encrypt the token plus the GUI-main profile
+// orchestration (switch / device reuse / refresh), and the daemon can't
+// decrypt. `--email` / `--server-url` are still accepted (and ignored) so old
+// scripts hit this redirect instead of an "unknown option" error.
+export async function runSyncLogin(_flags: SyncLoginFlags, _env: SyncCommandEnv): Promise<void> {
+  throw new CliError(
+    'USAGE_ERROR',
+    'login is not available from the CLI — log in via the owl GUI (Settings → Sync)',
+  );
 }
 
 // ─── `owl sync config show` ───────────────────────────────────────────
@@ -245,7 +188,7 @@ export async function runSyncConfigShow(flags: SyncFlags, env: SyncCommandEnv): 
     if (err instanceof SkybridgeNotConfiguredError) {
       throw new CliError(
         'SKYBRIDGE_NOT_CONFIGURED',
-        `skybridge config not found at ${err.path} — run \`owl sync login\` first`,
+        `skybridge config not found at ${err.path} — log in via the owl GUI (Settings → Sync)`,
         { path: err.path },
       );
     }
