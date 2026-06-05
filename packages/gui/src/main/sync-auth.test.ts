@@ -228,6 +228,17 @@ vi.mock('@owl/core', () => ({
     coreState.copyCalls.push(target);
     callLog.push('copy');
   }),
+  // Phase 21 (W10) — cross-process switch lockfile. Tracked via callLog so
+  // tests can assert the lock is taken inside the critical section (after the
+  // claim copy, before the swap) and released afterwards.
+  newSwitchLockNonce: vi.fn(() => 'nonce'),
+  writeSwitchLock: vi.fn(() => {
+    callLog.push('lock');
+  }),
+  touchSwitchLock: vi.fn(),
+  releaseSwitchLock: vi.fn(() => {
+    callLog.push('unlock');
+  }),
 }));
 
 vi.mock('./daemon.js', () => ({
@@ -239,12 +250,14 @@ import {
   QuickSwitchNeedsLoginError,
   SafeStorageUnavailableError,
   SkybridgeServerTooOldError,
+  __resetSwitchQueueForTests,
   clearRefreshTimer,
   deleteProfileLocalCopy,
   loginAndOpenSession,
   logout,
   maybeRefreshNow,
   restoreSessionOnStartup,
+  runSwitchExclusive,
   switchToProfile,
 } from './sync-auth.js';
 
@@ -310,6 +323,7 @@ beforeEach(() => {
   vi.useFakeTimers();
   vi.setSystemTime(BASE);
   clearRefreshTimer(); // module-level singleton — reset between tests
+  __resetSwitchQueueForTests(); // ditto: the switch serialization queue
   // clearAllMocks resets call counts but NOT implementations, so re-establish
   // the default safeStorage behavior (a test may have stubbed it to throw).
   safeStorageState.encryptString.mockImplementation((s: string) =>
@@ -360,6 +374,43 @@ afterEach(() => {
   clearRefreshTimer();
   vi.useRealTimers();
   vi.unstubAllGlobals();
+});
+
+// ─── switch serialization (Phase 21, layer B) ────────────────────────
+
+describe('runSwitchExclusive (switch/refresh serialization)', () => {
+  it('serializes: the second body does not start until the first settles', async () => {
+    const order: string[] = [];
+    let release1!: () => void;
+    const gate1 = new Promise<void>((resolve) => {
+      release1 = resolve;
+    });
+    const p1 = runSwitchExclusive(async () => {
+      order.push('1-start');
+      await gate1;
+      order.push('1-end');
+    });
+    const p2 = runSwitchExclusive(async () => {
+      order.push('2-start');
+    });
+    // Drain microtasks: p1 starts and blocks on gate1; p2 must stay queued.
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(order).toEqual(['1-start']);
+
+    release1();
+    await Promise.all([p1, p2]);
+    expect(order).toEqual(['1-start', '1-end', '2-start']);
+  });
+
+  it('a rejecting body does not poison the queue for the next op', async () => {
+    await expect(
+      runSwitchExclusive(async () => {
+        throw new Error('boom');
+      }),
+    ).rejects.toThrow('boom');
+    await expect(runSwitchExclusive(async () => 'ok')).resolves.toBe('ok');
+  });
 });
 
 // ─── loginAndOpenSession ─────────────────────────────────────────────
@@ -479,6 +530,12 @@ describe('loginAndOpenSession (Phase 15)', () => {
     const switchCalls = fetchMock.mock.calls.filter(([u]) => String(u).endsWith('/sync/switch'));
     const last = JSON.parse((switchCalls.at(-1)![1] as RequestInit).body as string);
     expect(last.profile_id).toBe('local');
+    // W10: the switch lockfile is always released, even on the failure path
+    // (the rollback swap runs under the lock; `finally` releases it after).
+    expect(callLog).toContain('lock');
+    expect(callLog.filter((e) => e === 'lock').length).toBe(
+      callLog.filter((e) => e === 'unlock').length,
+    );
   });
 });
 
@@ -498,7 +555,9 @@ describe('loginAndOpenSession — claim empty account (Phase 16)', () => {
     expect(claimState.calls).toBe(1);
     expect(coreState.copyCalls).toEqual(['/nest/owl/profiles/pid-srv-1-u-A/owl.db']);
     // B9: the claim copy must land before the daemon switches onto the target.
-    expect(callLog).toEqual(['copy', 'switch']);
+    // W10: the switch lockfile is taken AFTER the copy/claim (not around the
+    // prompt) and released afterwards.
+    expect(callLog).toEqual(['copy', 'lock', 'switch', 'unlock']);
   });
 
   it('first login + empty account + local has notes + independent → no copy', async () => {
@@ -509,7 +568,8 @@ describe('loginAndOpenSession — claim empty account (Phase 16)', () => {
 
     expect(claimState.calls).toBe(1);
     expect(coreState.copyCalls).toHaveLength(0);
-    expect(callLog).toEqual(['switch']); // switch still creates an empty db
+    // switch still creates an empty db; lock taken before the swap, released after.
+    expect(callLog).toEqual(['lock', 'switch', 'unlock']);
   });
 
   it('first login + empty account + local empty → no prompt, no copy', async () => {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { CliError } from '../lib/errors.js';
-import { decideMode } from './resolve.js';
+import { decideMode, resolveDirectDbPath } from './resolve.js';
 
 describe('decideMode — reads', () => {
   it('picks http when daemon alive', () => {
@@ -71,5 +71,66 @@ describe('decideMode — writes', () => {
     const d = decideMode({ isWrite: true, daemonAlive: false, direct: true });
     expect(d.mode).toBe('direct');
     expect(d.warnings).toEqual([]);
+  });
+});
+
+describe('resolveDirectDbPath — W10 switch lockfile', () => {
+  const base = { isWrite: false, daemonAlive: false, port: 47010, dbPath: '/eager/owl.db' };
+
+  it('explicit --db is never lock-gated (returned as-is, lock not consulted)', () => {
+    let consulted = false;
+    const path = resolveDirectDbPath({
+      ...base,
+      db: '/explicit/x.db',
+      isSwitchInProgress: () => {
+        consulted = true;
+        return true; // even a "live" switch must not block an explicit --db
+      },
+    });
+    expect(path).toBe('/explicit/x.db');
+    expect(consulted).toBe(false);
+  });
+
+  it('default direct re-resolves FRESH (not the eager dbPath) when no switch', () => {
+    const path = resolveDirectDbPath({
+      ...base,
+      resolveDbPath: () => '/fresh/active/owl.db',
+      isSwitchInProgress: () => false,
+    });
+    expect(path).toBe('/fresh/active/owl.db');
+  });
+
+  it('throws SWITCH_IN_PROGRESS before resolving when a switch is already active', () => {
+    let resolved = false;
+    try {
+      resolveDirectDbPath({
+        ...base,
+        resolveDbPath: () => {
+          resolved = true;
+          return '/x';
+        },
+        isSwitchInProgress: () => true,
+      });
+      expect.fail('should throw');
+    } catch (err) {
+      expect(err).toBeInstanceOf(CliError);
+      expect((err as CliError).code).toBe('SWITCH_IN_PROGRESS');
+    }
+    expect(resolved).toBe(false); // refused before touching the toml
+  });
+
+  it('throws SWITCH_IN_PROGRESS when a switch starts DURING resolve (second check)', () => {
+    const checks = [false, true]; // clear at first check, active by the second
+    let i = 0;
+    try {
+      resolveDirectDbPath({
+        ...base,
+        resolveDbPath: () => '/x',
+        isSwitchInProgress: () => checks[i++] ?? true,
+      });
+      expect.fail('should throw');
+    } catch (err) {
+      expect((err as CliError).code).toBe('SWITCH_IN_PROGRESS');
+    }
   });
 });

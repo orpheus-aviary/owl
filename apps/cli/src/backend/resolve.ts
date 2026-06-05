@@ -1,3 +1,4 @@
+import { isSwitchLockActive, readSwitchLock, resolveActiveProfileDbPath } from '@owl/core';
 import { CliError } from '../lib/errors.js';
 import { createDirectBackend } from './direct.js';
 import { createHttpBackend } from './http.js';
@@ -67,6 +68,10 @@ export interface ResolveBackendInput extends DecideModeInput {
   dbPath: string;
   /** Override fetch for tests. */
   fetch?: typeof fetch;
+  /** Re-resolve the active profile db at open time (default: core). Test seam. */
+  resolveDbPath?: () => string;
+  /** Is a GUI profile switch in flight? (default: core lockfile). Test seam. */
+  isSwitchInProgress?: () => boolean;
 }
 
 export interface ResolveBackendResult {
@@ -75,11 +80,53 @@ export interface ResolveBackendResult {
   warnings: string[];
 }
 
+function defaultIsSwitchInProgress(): boolean {
+  return isSwitchLockActive(readSwitchLock());
+}
+
+function assertNoActiveSwitch(isSwitching: () => boolean): void {
+  if (isSwitching()) {
+    throw new CliError(
+      'SWITCH_IN_PROGRESS',
+      'a profile switch is in progress in the owl GUI — retry shortly',
+    );
+  }
+}
+
+/**
+ * Pick the db path for a direct open (W10).
+ *
+ * An explicit `--db <path>` names a specific file — an active-profile switch is
+ * irrelevant to it, so it is NOT lock-gated (gating would falsely refuse opening
+ * `local` / a non-active profile during an unrelated account switch).
+ *
+ * The default path is the active profile db. We re-resolve it FRESH here, inside
+ * a lock bracket, rather than trusting the value `resolveConfig` resolved
+ * eagerly (a switch can complete between that resolve and this open). The double
+ * check catches a switch that starts while we read the toml.
+ */
+export function resolveDirectDbPath(input: ResolveBackendInput): string {
+  if (input.db !== undefined) return input.db;
+  const isSwitching = input.isSwitchInProgress ?? defaultIsSwitchInProgress;
+  const resolveDbPath = input.resolveDbPath ?? resolveActiveProfileDbPath;
+  assertNoActiveSwitch(isSwitching);
+  const dbPath = resolveDbPath();
+  assertNoActiveSwitch(isSwitching);
+  return dbPath;
+}
+
 export async function resolveBackend(input: ResolveBackendInput): Promise<ResolveBackendResult> {
   const decision = decideMode(input);
-  const backend =
-    decision.mode === 'http'
-      ? createHttpBackend({ port: input.port, ...(input.fetch ? { fetch: input.fetch } : {}) })
-      : await createDirectBackend({ dbPath: input.dbPath });
-  return { backend, mode: decision.mode, warnings: decision.warnings };
+  if (decision.mode === 'http') {
+    return {
+      backend: createHttpBackend({
+        port: input.port,
+        ...(input.fetch ? { fetch: input.fetch } : {}),
+      }),
+      mode: 'http',
+      warnings: decision.warnings,
+    };
+  }
+  const backend = await createDirectBackend({ dbPath: resolveDirectDbPath(input) });
+  return { backend, mode: 'direct', warnings: decision.warnings };
 }

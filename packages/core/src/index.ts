@@ -222,6 +222,16 @@ export {
 } from './skybridge/identity.js';
 export { redactToken } from './skybridge/redact.js';
 export type { RedactTokenOptions } from './skybridge/redact.js';
+export {
+  type SwitchLock,
+  SWITCH_LOCK_TTL_MS,
+  isSwitchLockActive,
+  newSwitchLockNonce,
+  readSwitchLock,
+  releaseSwitchLock,
+  touchSwitchLock,
+  writeSwitchLock,
+} from './skybridge/switch-lock.js';
 export { OWL_APP_VERSION } from './version.js';
 
 // Conversations (AI chat persistence)

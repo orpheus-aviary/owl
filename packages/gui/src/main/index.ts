@@ -6,9 +6,15 @@ import { setGlobalShortcut, unregisterGlobalShortcut } from './global-shortcut.j
 import { registerMigrationIpc } from './migration-ipc.js';
 import type { StartupMode } from './migration-precheck.js';
 import { runMigrationPrecheck } from './migration-precheck.js';
+import { acquireSingleInstanceLock } from './single-instance.js';
 import { maybeRefreshNow, restoreSessionOnStartup } from './sync-auth.js';
 import { registerSyncIpc } from './sync-ipc.js';
 import { createWindow } from './window.js';
+
+// Acquire the single-instance lock as early as possible (Phase 21, layer A). A
+// second launch quits here; the primary keeps booting and focuses its window on
+// relaunch. `whenReady` is guarded so a losing instance does zero boot work.
+const isPrimaryInstance = acquireSingleInstanceLock();
 
 let isQuitting = false;
 let pendingQuitCheck = false;
@@ -70,6 +76,8 @@ function askRendererAboutUnsaved(): Promise<boolean> {
 }
 
 app.whenReady().then(async () => {
+  // A losing second instance has already been told to quit — do no boot work.
+  if (!isPrimaryInstance) return;
   // P5-d Phase 12 (B6): resolve the active profile's db; falls back to the
   // legacy global db pre-migration, so this is behavior-preserving today.
   const dbPath = resolveActiveProfileDbPath();

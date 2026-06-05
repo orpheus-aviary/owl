@@ -70,16 +70,20 @@ import {
   copyLocalProfileDbInto,
   deleteProfileDb,
   inspectLocalProfile,
+  newSwitchLockNonce,
   normalizeServerUrl,
   paths,
   readEffectiveActiveProfileId,
   readProfileSection,
   readSkybridgeConfig,
+  releaseSwitchLock,
   removeProfile,
   setActiveProfile,
+  touchSwitchLock,
   updateActiveProfileAuth,
   updateProfileAuth,
   writeProfileConfig,
+  writeSwitchLock,
 } from '@owl/core';
 import { safeStorage } from 'electron';
 import type { LoginAndOpenSessionInput } from '../shared/sync-auth-types.js';
@@ -142,7 +146,67 @@ let refreshTimer: ReturnType<typeof setTimeout> | null = null;
 /** Expiry of the currently-installed access token, or null when none. */
 let currentExpiresAt: number | null = null;
 
-export async function loginAndOpenSession(
+// ─── profile-switch serialization (Phase 21, layer B) ───────────────
+//
+// Every top-level op that swaps the daemon's active profile or (re)installs a
+// session — login / logout / quick-switch / delete-local-copy / refresh /
+// startup-restore — runs through one in-process queue. Two interleaving would
+// race the same toml `active_profile` + /sync/session install; a stray refresh
+// landing mid-switch could write the prior account's token into the switched-to
+// profile. Each body re-reads config, so serialization alone pins every op to
+// one consistent active profile. This is the GUI-internal partner of the
+// cross-process switch lockfile (Phase 21c) and the daemon's switch-gate.
+//
+// NON-REENTRANT: a wrapped function must never call another wrapped function
+// (it would deadlock waiting on the queue tail it's holding). Verified: the six
+// wrapped entries only call private helpers, never each other.
+
+let switchQueue: Promise<unknown> = Promise.resolve();
+
+export function runSwitchExclusive<T>(fn: () => Promise<T>): Promise<T> {
+  const run = switchQueue.then(() => fn());
+  // Swallow rejections on the queue tail so one failed op doesn't poison the
+  // next; the caller still observes the real rejection via the returned promise.
+  switchQueue = run.catch(() => undefined);
+  return run;
+}
+
+/** Test-only: reset the serialization queue between cases. */
+export function __resetSwitchQueueForTests(): void {
+  switchQueue = Promise.resolve();
+}
+
+// ─── cross-process switch lockfile (Phase 21, layer C / W10) ─────────
+//
+// Held ONLY across a switch's critical section — the window where the daemon's
+// active db and toml `active_profile` can disagree (first /sync/switch → toml
+// write, plus the unwind's rollback swap). Pre-switch work (remote login,
+// device register, the claim prompt) stays OUTSIDE so an idle user never pins
+// the lock. We heartbeat the timestamp so a genuinely slow switch never looks
+// stale to a CLI reader; the interval is unref'd so it can't keep the app alive.
+
+const SWITCH_LOCK_HEARTBEAT_MS = 10_000;
+
+/** Acquire the cross-process switch lockfile + heartbeat it; returns a release fn. */
+function acquireSwitchLockFile(): () => void {
+  const nonce = newSwitchLockNonce();
+  writeSwitchLock(nonce);
+  const heartbeat = setInterval(() => touchSwitchLock(nonce), SWITCH_LOCK_HEARTBEAT_MS);
+  heartbeat.unref?.();
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    clearInterval(heartbeat);
+    releaseSwitchLock(nonce);
+  };
+}
+
+export function loginAndOpenSession(input: LoginAndOpenSessionInput): Promise<SyncSessionSummary> {
+  return runSwitchExclusive(() => loginAndOpenSessionImpl(input));
+}
+
+async function loginAndOpenSessionImpl(
   input: LoginAndOpenSessionInput,
 ): Promise<SyncSessionSummary> {
   // safeStorage is process-wide; check once up-front instead of doing the
@@ -176,6 +240,9 @@ export async function loginAndOpenSession(
   const priorExpiresAt = currentExpiresAt;
   clearRefreshTimer();
   let switched = false;
+  // Acquired lazily right before the first /sync/switch (NOT around the claim
+  // prompt above it), released in `finally` — covers the toml write + unwind.
+  let releaseLock: (() => void) | null = null;
   try {
     // Steps 3–4 split on whether this machine already holds a copy of the
     // account (Phase 16, B9). A first login is the only time a local→account
@@ -189,6 +256,7 @@ export async function loginAndOpenSession(
     if (existsSync(paths.profileDbPath(profileId))) {
       // Return visit — switch first, reuse the remembered device (§5.3). No
       // claim: the account already has a local copy here.
+      releaseLock = acquireSwitchLockFile();
       const { device_id: existingDeviceId } = await postSyncSwitch(profileId);
       switched = true; // daemon is on the target now (Phase 14: throw = abort)
       device = existingDeviceId
@@ -206,6 +274,7 @@ export async function loginAndOpenSession(
       if (prior === LOCAL_PROFILE) {
         await maybeClaimLocalInto(client, workspace.id, profileId, auth.user.email);
       }
+      releaseLock = acquireSwitchLockFile(); // after the claim prompt, before the swap
       await postSyncSwitch(profileId); // opens the claimed copy, or creates empty
       switched = true;
     }
@@ -262,11 +331,17 @@ export async function loginAndOpenSession(
     if (switched) await rollbackToPrior(prior, priorExpiresAt);
     else reschedulePrior(prior, priorExpiresAt);
     throw err;
+  } finally {
+    releaseLock?.();
   }
   // auth.token falls out of scope here.
 }
 
-export async function logout(): Promise<void> {
+export function logout(): Promise<void> {
+  return runSwitchExclusive(logoutImpl);
+}
+
+async function logoutImpl(): Promise<void> {
   // Stop renewing immediately — no timer should fire mid-logout.
   clearRefreshTimer();
 
@@ -279,17 +354,24 @@ export async function logout(): Promise<void> {
     await remoteRevoke(cfg);
   }
 
-  // 2. Return the daemon to local — switchProfile clears its in-memory
-  //    session as part of the swap. Survives a daemon that's already down.
-  await bestEffortSwitchLocal();
+  // Critical section: the daemon swap → toml write window (remoteRevoke above
+  // doesn't move the daemon, so it stays outside the lock).
+  const releaseLock = acquireSwitchLockFile();
+  try {
+    // 2. Return the daemon to local — switchProfile clears its in-memory
+    //    session as part of the swap. Survives a daemon that's already down.
+    await bestEffortSwitchLocal();
 
-  // 3. Clear the active profile's credentials (keeps device/workspace/server_id
-  //    so a re-login reuses the device, §5.3) and repoint active_profile at
-  //    local. We do NOT clearSyncIdentity (that would drop the db's remembered
-  //    skybridge_device_id) and do NOT remove the [profiles.<id>] section
-  //    (deleting the local copy is a separate destructive action, Phase 17).
-  clearSkybridgeAuth();
-  setActiveProfile(LOCAL_PROFILE);
+    // 3. Clear the active profile's credentials (keeps device/workspace/server_id
+    //    so a re-login reuses the device, §5.3) and repoint active_profile at
+    //    local. We do NOT clearSyncIdentity (that would drop the db's remembered
+    //    skybridge_device_id) and do NOT remove the [profiles.<id>] section
+    //    (deleting the local copy is a separate destructive action, Phase 17).
+    clearSkybridgeAuth();
+    setActiveProfile(LOCAL_PROFILE);
+  } finally {
+    releaseLock();
+  }
 }
 
 /**
@@ -318,7 +400,11 @@ export async function logout(): Promise<void> {
  * never revoke — re-entry is password-free. A full logout (revoke) stays the
  * Settings `logout()` action.
  */
-export async function switchToProfile(targetId: string): Promise<void> {
+export function switchToProfile(targetId: string): Promise<void> {
+  return runSwitchExclusive(() => switchToProfileImpl(targetId));
+}
+
+async function switchToProfileImpl(targetId: string): Promise<void> {
   if (!safeStorage.isEncryptionAvailable()) throw new SafeStorageUnavailableError();
 
   const prior = readEffectiveActiveProfileId();
@@ -328,18 +414,24 @@ export async function switchToProfile(targetId: string): Promise<void> {
   clearRefreshTimer();
 
   if (targetId === LOCAL_PROFILE) {
+    const releaseLock = acquireSwitchLockFile();
     try {
       await postSyncSwitch(LOCAL_PROFILE); // daemon opens owl/owl.db + clears session
       setActiveProfile(LOCAL_PROFILE); // keep [profiles.<prior>] (tokens stay)
     } catch (err) {
       reschedulePrior(prior, priorExpiresAt);
       throw err;
+    } finally {
+      releaseLock();
     }
     return; // local has no renewal — leave the timer stopped
   }
 
   // Account target — refresh-first + persist-first; whole branch in one catch.
   let switched = false;
+  // Acquired after planQuickSwitch (a remote refresh that doesn't move the
+  // daemon), right before the swap; released in `finally`.
+  let releaseLock: (() => void) | null = null;
   try {
     // ⑩ main-side hard gate (authoritative, before refresh): never let a
     // db-less section reach /sync/switch and get revived into an empty db.
@@ -347,6 +439,7 @@ export async function switchToProfile(targetId: string): Promise<void> {
       throw new ProfileDbMissingError(targetId);
     }
     const plan = await planQuickSwitch(targetId); // refresh + persist-first
+    releaseLock = acquireSwitchLockFile();
     await postSyncSwitch(targetId); // Phase 14: throw = abort, daemon stays on prior
     switched = true;
     await installSessionFor(targetId, plan); // session + setActive + reschedule
@@ -354,6 +447,8 @@ export async function switchToProfile(targetId: string): Promise<void> {
     if (switched) await rollbackToPrior(prior, priorExpiresAt);
     else reschedulePrior(prior, priorExpiresAt);
     throw err;
+  } finally {
+    releaseLock?.();
   }
 }
 
@@ -476,7 +571,11 @@ async function rollbackToPrior(prior: string, priorExpiresAt: number | null): Pr
  * Returns `{ wasActive }` so the IPC layer reloads the renderer only when the
  * deletion changed the active profile.
  */
-export async function deleteProfileLocalCopy(targetId: string): Promise<{ wasActive: boolean }> {
+export function deleteProfileLocalCopy(targetId: string): Promise<{ wasActive: boolean }> {
+  return runSwitchExclusive(() => deleteProfileLocalCopyImpl(targetId));
+}
+
+async function deleteProfileLocalCopyImpl(targetId: string): Promise<{ wasActive: boolean }> {
   // Read the stored creds before anything clears them — needed for remote cleanup.
   const section = readProfileSection(targetId);
   const wasActive = readEffectiveActiveProfileId() === targetId;
@@ -484,17 +583,24 @@ export async function deleteProfileLocalCopy(targetId: string): Promise<{ wasAct
   if (wasActive) {
     const activeExpiresAt = currentExpiresAt;
     clearRefreshTimer();
+    // Critical section: the daemon swap → toml write. The remote revoke + db
+    // delete below run after the daemon is consistently on local (no divergence).
+    const releaseLock = acquireSwitchLockFile();
     try {
-      await postSyncSwitchStrict(LOCAL_PROFILE); // ④ hard handle release
-    } catch (err) {
-      if (!(err instanceof NetworkError)) {
-        // daemon up but the switch failed → it may still hold the db → abort.
-        if (activeExpiresAt !== null) scheduleRefresh(activeExpiresAt);
-        throw err;
+      try {
+        await postSyncSwitchStrict(LOCAL_PROFILE); // ④ hard handle release
+      } catch (err) {
+        if (!(err instanceof NetworkError)) {
+          // daemon up but the switch failed → it may still hold the db → abort.
+          if (activeExpiresAt !== null) scheduleRefresh(activeExpiresAt);
+          throw err;
+        }
+        // NetworkError → daemon unreachable → no handle held → safe to continue.
       }
-      // NetworkError → daemon unreachable → no handle held → safe to continue.
+      setActiveProfile(LOCAL_PROFILE);
+    } finally {
+      releaseLock();
     }
-    setActiveProfile(LOCAL_PROFILE);
   }
 
   if (section) {
@@ -511,7 +617,11 @@ export async function deleteProfileLocalCopy(targetId: string): Promise<{ wasAct
   return { wasActive };
 }
 
-export async function restoreSessionOnStartup(): Promise<SyncSessionSummary | null> {
+export function restoreSessionOnStartup(): Promise<SyncSessionSummary | null> {
+  return runSwitchExclusive(restoreSessionOnStartupImpl);
+}
+
+async function restoreSessionOnStartupImpl(): Promise<SyncSessionSummary | null> {
   const cfg = safeReadConfig();
   if (!cfg?.auth?.user_id || !cfg.auth.email) return null;
   if (!cfg.device?.id || !cfg.device.name) return null;
@@ -571,7 +681,15 @@ export async function restoreSessionOnStartup(): Promise<SyncSessionSummary | nu
  * triggers. A dead refresh token stops renewal (user re-logs in); a transient
  * network failure backs off and retries.
  */
-async function refreshSession(): Promise<void> {
+// Routed through the switch queue so a refresh can never interleave with a
+// profile switch: `refreshSessionImpl` re-reads config at its top, so under the
+// queue it always targets whatever profile is active *now*, never a stale one
+// captured before a switch (layer B, Phase 21).
+function refreshSession(): Promise<void> {
+  return runSwitchExclusive(refreshSessionImpl);
+}
+
+async function refreshSessionImpl(): Promise<void> {
   const cfg = safeReadConfig();
   const refreshTok = decryptB64(cfg?.auth?.encrypted_refresh_token);
   if (

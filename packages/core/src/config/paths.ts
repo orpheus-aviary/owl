@@ -85,6 +85,15 @@ export function pidPath(): string {
   return join(owlDir(), 'daemon.pid');
 }
 
+/**
+ * Cross-process profile-switch lockfile (P5-d Phase 21, W10). GUI main holds it
+ * while swapping the active profile; CLI direct mode reads it to refuse opening
+ * a db mid-swap. Lives in the owl tree so it migrates with the nest.
+ */
+export function switchLockPath(): string {
+  return join(owlDir(), 'profile-switch.lock');
+}
+
 /** Aviary shared config (LLM fallback) */
 export function aviaryConfigPath(): string {
   return join(nestDir(), 'aviary', 'aviary_config.toml');
