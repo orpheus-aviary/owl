@@ -23,7 +23,7 @@ type TodoFilter = 'open' | 'all';
  *  view is stale, so we re-parse the tab's content directly. See §3.4.1 of
  *  the P2 design doc.
  */
-function mergeWithDirtyTabs(
+export function mergeWithDirtyTabs(
   remote: TodoGroup[],
   dirtyTabs: { noteId: string; content: string; dirty: boolean }[],
   filter: TodoFilter,
@@ -41,17 +41,23 @@ function mergeWithDirtyTabs(
       continue;
     }
 
+    // Keep the note's real creation time when it already exists on the server; a
+    // brand-new unsaved draft has none, so treat it as just-created (newest →
+    // top), consistent with creation-order sorting.
+    const createdAt = merged.get(tab.noteId)?.created_at ?? new Date().toISOString();
     merged.set(tab.noteId, {
       note_id: tab.noteId,
       note_title: parseTitle(tab.content),
-      // Local dirty edits are newer than anything daemon reports.
-      updated_at: new Date().toISOString(),
+      created_at: createdAt,
       items: localItems,
       hasUnsaved: true,
     });
   }
 
-  return Array.from(merged.values()).sort((a, b) => b.updated_at.localeCompare(a.updated_at));
+  // Creation order, newest first — NOT modification order. A dirty edit of an
+  // existing note keeps its creation position; only a brand-new draft tops the
+  // list (it was just created).
+  return Array.from(merged.values()).sort((a, b) => b.created_at.localeCompare(a.created_at));
 }
 
 function TodoGroupRow({

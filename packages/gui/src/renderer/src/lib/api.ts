@@ -238,7 +238,7 @@ export interface TodoItem {
 export interface TodoGroup {
   note_id: string;
   note_title: string;
-  updated_at: string;
+  created_at: string;
   items: TodoItem[];
 }
 

@@ -21,7 +21,7 @@ export interface TodoItem {
 export interface TodoGroup {
   note_id: string;
   note_title: string;
-  updated_at: string;
+  created_at: string;
   items: TodoItem[];
 }
 
@@ -69,7 +69,7 @@ function parseTodoQuery(query: {
 }
 
 function buildTodoGroup(
-  note: { id: string; content: string; updatedAt: Date },
+  note: { id: string; content: string; createdAt: Date },
   filterChecked: boolean | undefined,
 ): TodoGroup | null {
   const items = parseTodosFromContent(note.content);
@@ -82,7 +82,7 @@ function buildTodoGroup(
   return {
     note_id: note.id,
     note_title: extractTitle(note.content),
-    updated_at: note.updatedAt.toISOString(),
+    created_at: note.createdAt.toISOString(),
     items: visible,
   };
 }
@@ -109,8 +109,9 @@ export function registerTodoRoutes(app: FastifyInstance, ctx: AppContext): void 
       if (group) groups.push(group);
     }
 
-    // Sort by note updated_at desc so the most recently edited notes surface first.
-    groups.sort((a, b) => b.updated_at.localeCompare(a.updated_at));
+    // Sort by note created_at desc so the most recently created notes surface
+    // first (creation order, not modification order).
+    groups.sort((a, b) => b.created_at.localeCompare(a.created_at));
 
     ok(reply, groups, undefined, groups.length);
   });
