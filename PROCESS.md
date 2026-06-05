@@ -1,6 +1,17 @@
 # 开发进度
 
-## 当前阶段：P5-d per-profile 隔离 — **Phase 19（阿里云部署 + promote latest + 真机 smoke）+ Phase 20（W12 备份恢复 / 网络中断 / W3 错钟）完成（2026-06-04）**；skybridge **0.1.4 已 promote npm latest**；下一步 **Phase 21（CLI compat + `authenticated` cosmetic 修）→ 22（0.5.0 bump+发版）→ 23（push 收尾）**
+## 当前阶段：P5-d per-profile 隔离 — **Phase 21（CLI compat 收尾 + W10 switch lockfile + GUI 切换并发安全）完成（2026-06-06，未提交→待提交）**；下一步 **22（0.5.0 bump+发版）→ 23（push 收尾）**
+
+**✅ Phase 21（CLI compat 收尾 + W10 + 并发安全）2026-06-06 完成** —— plan `docs/plans/2026-06-05-phase21-cli-compat.md`（v3 定稿，经用户 4 轮 review；§7 实施记录）。三 slice：
+- **21a cosmetic + CLI sync login 退役 + 文案**：daemon `manual.ts:324` `authenticated: config?.auth != null`（per-profile 只写 `encrypted_token`，老 `auth.token` 恒空 → 改读 auth 段是否装配）；core `config.ts` 两处 `owl sync login` 文案 → 指向 GUI；cli `runSyncLogin` 立即抛友好 USAGE_ERROR（删 prompt + 死 `/sync/login` POST），`--email` 改 optional 保留兼容，`--db` help + `config show` 文案。
+- **21b GUI 切换并发安全（层 A+B）**：`sync-auth.ts` 模块级 `runSwitchExclusive` 互斥队列串行 login/logout/switch/delete **+ refresh/restore**（refresh 防污染 = 走 mutex + body 内新鲜读 config）；新 `single-instance.ts` `app.requestSingleInstanceLock()` + `whenReady` guard（**真机手测过**：第二实例聚焦已有窗口）。
+- **21c W10 switch lockfile（层 C）**：core 新 `skybridge/switch-lock.ts`（atomic temp+rename / nonce owner-token / shape 校验 / pidAlive+TTL 30s）+ `paths.switchLockPath()`；gui `acquireSwitchLockFile()`（nonce + 10s heartbeat unref）只包 4 个 switch 的 critical section（首 postSyncSwitch→toml，含 unwind；claim prompt 在锁外）；cli `errors.SWITCH_IN_PROGRESS`→CONFLICT + `resolve.ts` `resolveDirectDbPath`（显式 `--db` 不 gate / 默认 assertNoActiveSwitch→新鲜重解析→复检）。
+- **三层正交**：A 单实例（进程级）/ B mutex（GUI 内，包整函数含 prompt）/ C lockfile（跨进程，仅 critical section + heartbeat + nonce）。mutex ⊃ lockfile（prompt 持 mutex 不持 lockfile）；refresh 走 mutex 不碰 lockfile。
+- **验收全绿**：`just build` + `just check`（lint+typecheck+8 守卫）+ core **528**(+9) / daemon **284**(+1) / cli **137**(+3) / gui **392**(+7) + gated e2e **25/25**。CLI 行为已用 dist 二进制 smoke（login 跳转 / `--db` help）。
+- **提交**：3 code commit（daemon authenticated / cli sync login / skybridge 并发+lockfile）+ 1 docs commit，落本地 main 未 push（Phase 23 统一 push）。
+- **0.6+ backlog 不变**：W7 冲突双向 / W11 附件 / 跨 profile 视图 / TLS（设计稿 §11）。
+
+---
 
 **✅ Phase 19（阿里云部署 + promote latest + 真机 smoke）2026-06-04 完成** —— plan `docs/plans/2026-06-03-phase19-deploy-promote-smoke.md`（§9 实施记录）。
 - 阿里云 Ubuntu ECS 部署 0.1.4 server（明文 HTTP + 安全组锁源 IP + systemd，`server_id` smXxhd…），`/v1/health` 公网可达。**测试环境已拆；正式环境照 `skybridge/docs/deploy/ubuntu-baota.md`**（已补 §12 日常运维 + §13 拆除/迁移）。TLS 留 0.6。
