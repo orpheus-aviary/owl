@@ -18,8 +18,10 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { type ConflictRecord, ignoreConflict as apiIgnoreConflict } from '@/lib/api';
 import { useConflictsStore } from '@/stores/conflicts-store';
 import { useDataBus } from '@/stores/data-bus';
-import { AlertTriangle, EyeOff, RefreshCw } from 'lucide-react';
-import { useCallback, useEffect } from 'react';
+import { openNoteById } from '@/stores/editor-store';
+import { AlertTriangle, Check, Copy, EyeOff, RefreshCw, SquarePen } from 'lucide-react';
+import { useCallback, useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 
 function formatTimestamp(ms: number | null): string {
   if (ms === null) return '—';
@@ -37,7 +39,7 @@ function parsePayloadContent(raw: string | null): string {
   }
 }
 
-function ConflictRow({
+export function ConflictRow({
   row,
   onIgnore,
 }: {
@@ -46,6 +48,23 @@ function ConflictRow({
 }) {
   const local = parsePayloadContent(row.local_payload);
   const remote = parsePayloadContent(row.remote_payload);
+  const navigate = useNavigate();
+  const [copied, setCopied] = useState(false);
+  // Open the conflicting note in the editor (shows the winning/remote version —
+  // the user can paste the copied losing content to recover/merge).
+  const handleOpen = useCallback(() => {
+    openNoteById(row.entity_id);
+    navigate('/');
+  }, [navigate, row.entity_id]);
+  const handleCopy = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(local);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch (err) {
+      console.warn('[conflicts] copy failed:', err);
+    }
+  }, [local]);
   return (
     <div className="border border-border rounded-md p-3 mb-3 bg-card">
       <div className="flex items-start justify-between gap-2 mb-2">
@@ -57,16 +76,46 @@ function ConflictRow({
           </Badge>
           <span className="text-[11px]">检测于 {formatTimestamp(row.detected_at)}</span>
         </div>
-        <Button variant="ghost" size="sm" onClick={() => void onIgnore(row.id)} className="text-xs">
-          <EyeOff className="size-3.5 mr-1" /> 忽略
-        </Button>
+        <div className="flex items-center gap-1 shrink-0">
+          <Button variant="ghost" size="sm" onClick={handleOpen} className="text-xs">
+            <SquarePen className="size-3.5 mr-1" /> 打开笔记
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => void onIgnore(row.id)}
+            className="text-xs"
+          >
+            <EyeOff className="size-3.5 mr-1" /> 忽略
+          </Button>
+        </div>
       </div>
       <div className="grid grid-cols-2 gap-2 text-xs">
         <div>
-          <div className="font-medium text-muted-foreground mb-1">
-            本地副本 ({formatTimestamp(row.local_updated_at_ms)})
+          <div className="flex items-center justify-between gap-2 mb-1">
+            <span className="font-medium text-muted-foreground">
+              本地副本 ({formatTimestamp(row.local_updated_at_ms)})
+            </span>
+            {row.local_payload && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => void handleCopy()}
+                className="h-5 px-1.5 text-[11px]"
+              >
+                {copied ? (
+                  <>
+                    <Check className="size-3 mr-1" /> 已复制
+                  </>
+                ) : (
+                  <>
+                    <Copy className="size-3 mr-1" /> 复制
+                  </>
+                )}
+              </Button>
+            )}
           </div>
-          <pre className="whitespace-pre-wrap break-words bg-muted/30 p-2 rounded text-foreground">
+          <pre className="whitespace-pre-wrap break-words bg-muted/30 p-2 rounded text-foreground max-h-60 overflow-auto">
             {local}
           </pre>
         </div>
@@ -74,7 +123,7 @@ function ConflictRow({
           <div className="font-medium text-muted-foreground mb-1">
             远端胜出 ({formatTimestamp(row.remote_updated_at_ms)})
           </div>
-          <pre className="whitespace-pre-wrap break-words bg-muted/30 p-2 rounded text-foreground">
+          <pre className="whitespace-pre-wrap break-words bg-muted/30 p-2 rounded text-foreground max-h-60 overflow-auto">
             {remote}
           </pre>
         </div>
