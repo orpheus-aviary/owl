@@ -1,6 +1,12 @@
 # 开发进度
 
-## 当前阶段：P5-d per-profile 隔离 — **Phase 21（CLI compat 收尾 + W10 switch lockfile + GUI 切换并发安全）完成（2026-06-06，未提交→待提交）**；下一步 **22（0.5.0 bump+发版）→ 23（push 收尾）**
+## 当前阶段：P5-d per-profile 隔离 — **Phase 21 完成 + 0.5.0 GA 前 UX 顺手批（待办创建排序 + 冲突页复制/打开/限高）完成（2026-06-06）**；下一步 **22（0.5.0 bump+发版）→ 23（push 收尾）**
+
+**✅ 0.5.0 GA 前 UX 顺手批（2026-06-06，2 commit 落本地 main 未 push）** —— Phase 21 之后、用户逐项确认：
+- `9a66e6c` **feat(todo)**：待办页改按笔记 **created_at desc**（创建顺序，新→旧）而非 updated_at；脏编辑旧笔记不再浮顶、只有刚建草稿置顶；删掉随之失活的 `TodoGroup.updated_at`（daemon `todos.ts` + api + `TodoPage.tsx`，4 测试）。
+- `62d0591` **feat(gui)**：冲突页 **「复制」输方全文**（`conflict_record.local_payload` 存整段 content 快照 → 复制= 输方笔记完整全文，非某处差异；缓解 W7 = 兑现「Feature A」GA-prep todo）+ **「打开笔记」**跳编辑器（`openNoteById(entity_id)`，打开看到的是赢方/远端版本）+ **内容块限高 `max-h-60 overflow-auto`**（长笔记块内滚动，行保持紧凑）。3 测试。
+- 真机手测（隔离 nest + 种真实冲突 + 真笔记）：复制/打开均符合预期；测试数据已清。基线 core **528** / daemon **284** / cli **137** / gui **399**(+7) + `just check` 全绿。
+- **0.5.0 GA 前剩余待决：SSE idle watchdog（原 Phase 11，sse-bridge.ts 无 idle 检测，半开连接静默假死无法识别）—— 进 0.5.0 还是推 0.6 未定。**
 
 **✅ Phase 21（CLI compat 收尾 + W10 + 并发安全）2026-06-06 完成** —— plan `docs/plans/2026-06-05-phase21-cli-compat.md`（v3 定稿，经用户 4 轮 review；§7 实施记录）。三 slice：
 - **21a cosmetic + CLI sync login 退役 + 文案**：daemon `manual.ts:324` `authenticated: config?.auth != null`（per-profile 只写 `encrypted_token`，老 `auth.token` 恒空 → 改读 auth 段是否装配）；core `config.ts` 两处 `owl sync login` 文案 → 指向 GUI；cli `runSyncLogin` 立即抛友好 USAGE_ERROR（删 prompt + 死 `/sync/login` POST），`--email` 改 optional 保留兼容，`--db` help + `config show` 文案。
