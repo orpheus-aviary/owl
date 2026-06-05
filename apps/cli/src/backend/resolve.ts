@@ -64,8 +64,6 @@ export function decideMode(input: DecideModeInput): DecideModeResult {
 export interface ResolveBackendInput extends DecideModeInput {
   /** Daemon HTTP port, for the http backend. */
   port: number;
-  /** SQLite db path, for the direct backend. */
-  dbPath: string;
   /** Override fetch for tests. */
   fetch?: typeof fetch;
   /** Re-resolve the active profile db at open time (default: core). Test seam. */

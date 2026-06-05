@@ -75,7 +75,7 @@ describe('decideMode — writes', () => {
 });
 
 describe('resolveDirectDbPath — W10 switch lockfile', () => {
-  const base = { isWrite: false, daemonAlive: false, port: 47010, dbPath: '/eager/owl.db' };
+  const base = { isWrite: false, daemonAlive: false, port: 47010 };
 
   it('explicit --db is never lock-gated (returned as-is, lock not consulted)', () => {
     let consulted = false;

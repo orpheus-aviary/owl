@@ -68,7 +68,6 @@ export async function buildContext(input: BuildContextInput): Promise<CommandCon
     ...(input.opts.force !== undefined ? { force: input.opts.force } : {}),
     ...(input.opts.db !== undefined ? { db: input.opts.db } : {}),
     port: config.daemonPort,
-    dbPath: config.dbPath,
     ...(input.fetch ? { fetch: input.fetch } : {}),
   };
   const { backend, mode, warnings } = await resolveBackend(resolveInput);
