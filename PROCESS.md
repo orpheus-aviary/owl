@@ -8,7 +8,7 @@
 - **21c W10 switch lockfile（层 C）**：core 新 `skybridge/switch-lock.ts`（atomic temp+rename / nonce owner-token / shape 校验 / pidAlive+TTL 30s）+ `paths.switchLockPath()`；gui `acquireSwitchLockFile()`（nonce + 10s heartbeat unref）只包 4 个 switch 的 critical section（首 postSyncSwitch→toml，含 unwind；claim prompt 在锁外）；cli `errors.SWITCH_IN_PROGRESS`→CONFLICT + `resolve.ts` `resolveDirectDbPath`（显式 `--db` 不 gate / 默认 assertNoActiveSwitch→新鲜重解析→复检）。
 - **三层正交**：A 单实例（进程级）/ B mutex（GUI 内，包整函数含 prompt）/ C lockfile（跨进程，仅 critical section + heartbeat + nonce）。mutex ⊃ lockfile（prompt 持 mutex 不持 lockfile）；refresh 走 mutex 不碰 lockfile。
 - **验收全绿**：`just build` + `just check`（lint+typecheck+8 守卫）+ core **528**(+9) / daemon **284**(+1) / cli **137**(+3) / gui **392**(+7) + gated e2e **25/25**。CLI 行为已用 dist 二进制 smoke（login 跳转 / `--db` help）。
-- **提交**：3 code commit（daemon authenticated / cli sync login / skybridge 并发+lockfile）+ 1 docs commit，落本地 main 未 push（Phase 23 统一 push）。
+- **提交**：3 code commit（`6b5d658` daemon authenticated / `fde19b9` cli sync login / `8559ed6` skybridge 并发+lockfile）+ docs `6448609` + **清理 `a675f7d` refactor(cli) 删 vestigial `ResolveBackendInput.dbPath`**，落本地 main 未 push（Phase 23 统一 push）。
 - **0.6+ backlog 不变**：W7 冲突双向 / W11 附件 / 跨 profile 视图 / TLS（设计稿 §11）。
 
 ---
