@@ -158,6 +158,32 @@ describe('sync routes (P5-a Step 7)', () => {
       assert.equal(status.last_sync_at, null);
     });
 
+    it('authenticated=true for a per-profile config with only encrypted_token', async () => {
+      // Per-profile logins persist `encrypted_token` (the daemon can't decrypt
+      // it) and never the legacy plaintext `token`. Keying `authenticated` off
+      // `auth.token` read false even when logged in (the Phase 20 cosmetic bug);
+      // `auth != null` is the real signal.
+      writeSkybridgeConfig(
+        {
+          server: { url: TEST_SERVER_URL },
+          auth: { user_id: 'u', email: 'e', encrypted_token: 'BASE64CIPHERTEXT==' },
+          device: {
+            id: 'dev_1',
+            name: 'mb',
+            app_version: 'owl 0.5.0-dev',
+            client_version: '0.1.0',
+          },
+          workspace: { id: 'ws_1', slug: 'owl/default' },
+        },
+        skybridgeConfigPath(),
+      );
+
+      const res = await app.inject({ method: 'GET', url: '/sync/status' });
+      const data = res.json().data;
+      assert.equal(data.configured, true);
+      assert.equal(data.authenticated, true);
+    });
+
     it('counts only outbox rows where synced_at IS NULL', async () => {
       // 2 pending + 1 already-synced row
       emitSyncChange(sqlite, {

@@ -321,7 +321,11 @@ export function readSyncStatus(ctx: AppContext): SyncStatusResult {
     .get() as { n: number };
   return {
     configured: config !== null,
-    authenticated: Boolean(config?.auth?.token),
+    // Per-profile configs store credentials as `encrypted_token` (the daemon
+    // can't decrypt it); the legacy plaintext `auth.token` is never present, so
+    // keying off it read false even when logged in. `assembleConfig` only
+    // populates `auth` when *some* credential exists — that's the real signal.
+    authenticated: config?.auth != null,
     server_url: serverUrl,
     device_id: config?.device?.id ?? null,
     workspace_id: config?.workspace?.id ?? null,
