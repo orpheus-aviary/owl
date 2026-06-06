@@ -498,7 +498,7 @@ toml 从单 `[auth]` 改 `[profiles.X]` + `active_profile`。**采用低风险�
 
 | Phase | 内容 | 备注 |
 |---|---|---|
-| 11 | SSE idle watchdog | 原 P5-d Phase 11，与 profile 正交（**状态待确认是否已做**） |
+| **11 ✅** | SSE idle watchdog | 原 P5-d Phase 11，与 profile 正交。**已完成（2026-06-06，0.5.0）** —— `d998d13`，60s 半开假死检测。详见 `2026-06-06-sse-idle-watchdog.md` |
 | **12 ✅** | **profile 地基**：core resolver(B6) + 三入口切 resolver(含 B3) + B10 bypass 审计 + redact globs + D8 闭包审计 | **已完成并落 main**（45eef1e/a4c61bd/d15c9cd），behavior diff=0。详见 `2026-05-29-phase12-profile-foundation.md` |
 | **S** | **skybridge 0.1.4 server**（跨仓）：①暴露 server_id（config，§14）②同步回 server 时间 ③`/auth/refresh`(带轮换) ④device revoke 端点 + SDK 升 | **新增**。可与 13/14 并行；**Phase 15 前必须 ready + 部署**（阿里云在 Phase 19 正式上） |
 | 13 | **存储 + 迁移**：`[profiles.X]`+`active_profile` schema + resolver 真返回 profile 路径 + **local 重映射到 owl/owl.db**(D10a) + adapter(readSkybridgeConfig)内部改 active-profile 视图 + **写侧同步改**(§5.9) | W2 简化：**强制留 local、不搬旧库**（B5 基本消失、B8 降告警） |
