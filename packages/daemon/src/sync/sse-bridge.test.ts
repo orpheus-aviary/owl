@@ -4,11 +4,13 @@ import { type Logger, createDatabase, ensureDeviceId } from '@owl/core';
 import type { AppContext } from '../context.js';
 import { EventsBus } from '../events/bus.js';
 import { backoffFor, createSseBridge } from './sse-bridge.js';
+import { getSyncStatusBroadcaster } from './status-broadcaster.js';
 
 // ─── Test doubles ────────────────────────────────────────────────────
 
 interface CapturedHandlers {
   onChange: (latestSeq: number) => void;
+  onFrame?: (frame: { event: string; data: string; id?: string }) => void;
   onOpen?: () => void;
   onError?: (err: Error) => void;
 }
@@ -42,6 +44,9 @@ class FakeRealClient {
   }
   fireChange(latestSeq: number): void {
     this.lastHandlers?.onChange(latestSeq);
+  }
+  fireFrame(event = 'ping'): void {
+    this.lastHandlers?.onFrame?.({ event, data: '{}' });
   }
   fireError(message = 'boom'): void {
     this.lastHandlers?.onError?.(new Error(message));
@@ -355,6 +360,113 @@ describe('createSseBridge — reconnect with backoff (P5-b §6.2)', () => {
     assert.equal(throwing.subscribeCalls, 1, 'one attempted subscribe');
     assert.equal(sched.pending.length, 1, 'reconnect scheduled');
     assert.equal(sched.pending[0]?.ms, 2_000);
+    bridge.stop();
+  });
+});
+
+// ─── idle watchdog (2026-06-06) ──────────────────────────────────────
+//
+// onError only recovers explicit disconnects. The watchdog covers the
+// half-open / downstream-stall case: socket alive but the server stopped
+// pushing. Server pings every 25s and the SDK forwards every frame to
+// onFrame; we arm a 60s watchdog on open, reset it on each frame, and on
+// timeout take the same recovery path as onError.
+
+describe('createSseBridge — idle watchdog (2026-06-06)', () => {
+  let client: FakeRealClient;
+  let reconnectSched: FakeScheduler;
+  let watchdogSched: FakeScheduler;
+  let logger: Logger & { lines: string[] };
+  let ctx: AppContext;
+
+  beforeEach(() => {
+    client = new FakeRealClient();
+    reconnectSched = new FakeScheduler();
+    watchdogSched = new FakeScheduler();
+    logger = silentLogger();
+    ctx = makeCtx();
+  });
+
+  function makeBridge(hooks: { onErrorHook?: () => void; onOpenHook?: () => void } = {}) {
+    return createSseBridge({
+      realClient: client as never,
+      workspaceId: 'ws-1',
+      ctx,
+      logger,
+      schedule: reconnectSched.schedule,
+      armWatchdog: watchdogSched.schedule,
+      watchdogMs: 60_000,
+      jitter: (b) => b,
+      ...hooks,
+    });
+  }
+
+  it('arms the watchdog on onOpen (not before) at watchdogMs', () => {
+    const bridge = makeBridge();
+    bridge.start();
+    assert.equal(watchdogSched.pending.length, 0, 'not armed before onOpen');
+    client.fireOpen();
+    assert.equal(watchdogSched.pending.length, 1, 'armed on open');
+    assert.equal(watchdogSched.pending[0]?.ms, 60_000);
+    bridge.stop();
+  });
+
+  it('onFrame resets the watchdog (cancel + re-arm, stays a single timer)', () => {
+    const bridge = makeBridge();
+    bridge.start();
+    client.fireOpen();
+    const first = watchdogSched.pending[0];
+    client.fireFrame('ping');
+    assert.equal(watchdogSched.pending.length, 1, 'still exactly one watchdog timer');
+    assert.notEqual(watchdogSched.pending[0], first, 'old timer replaced by a fresh one');
+    bridge.stop();
+  });
+
+  it('firing aborts the zombie connection and recovers like onError', () => {
+    const hookCalls: string[] = [];
+    const bridge = makeBridge({ onErrorHook: () => hookCalls.push('onError') });
+    bridge.start();
+    client.fireOpen();
+    assert.equal(watchdogSched.pending.length, 1);
+
+    watchdogSched.fireNext(); // idle timeout
+
+    assert.equal(client.unsubscribeCalls, 1, 'zombie connection aborted');
+    assert.deepEqual(hookCalls, ['onError'], 'health probe kicked via onErrorHook');
+    assert.equal(reconnectSched.pending.length, 1, 'reconnect scheduled');
+    assert.equal(reconnectSched.pending[0]?.ms, 2_000, 'first backoff step');
+    assert.equal(getSyncStatusBroadcaster(ctx).snapshot().state, 'offline');
+    bridge.stop();
+  });
+
+  it('onError clears the watchdog (no stale fire during backoff)', () => {
+    const bridge = makeBridge();
+    bridge.start();
+    client.fireOpen();
+    assert.equal(watchdogSched.pending.length, 1);
+    client.fireError('drop');
+    assert.equal(watchdogSched.pending.length, 0, 'watchdog cleared on explicit error');
+    bridge.stop();
+  });
+
+  it('stop() clears the watchdog', () => {
+    const bridge = makeBridge();
+    bridge.start();
+    client.fireOpen();
+    assert.equal(watchdogSched.pending.length, 1);
+    bridge.stop();
+    assert.equal(watchdogSched.pending.length, 0);
+  });
+
+  it('re-arms the watchdog after a reconnect onOpen', () => {
+    const bridge = makeBridge();
+    bridge.start();
+    client.fireOpen();
+    watchdogSched.fireNext(); // watchdog fires → reconnect scheduled
+    assert.equal(watchdogSched.pending.length, 0, 'cleared after fire');
+    reconnectSched.fireNext(); // backoff elapses → subscribe again
+    client.fireOpen(); // new connection opens
+    assert.equal(watchdogSched.pending.length, 1, 're-armed on the reconnect open');
     bridge.stop();
   });
 });

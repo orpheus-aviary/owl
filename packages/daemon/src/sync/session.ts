@@ -54,8 +54,26 @@ export interface SkybridgeAuthContext {
   user: { id: string; email: string };
 }
 
+/**
+ * One parsed SSE block. Mirrors the SDK's `SseFrame` shape (we duck-type
+ * the skybridge client, so we never import its type). The bridge's idle
+ * watchdog only cares *that* a frame arrived, not its contents.
+ */
+export interface SseFrame {
+  event: string;
+  data: string;
+  id?: string;
+}
+
 export interface SseHandlers {
   onChange: (latestSeq: number) => void;
+  /**
+   * Fires for every parsed SSE block — server keep-alive (`:ok` synthesised
+   * as `{event:'comment'}`), `event:ping`, and `event:change`. The SSE
+   * bridge uses this as a liveness signal for its idle watchdog: any frame
+   * proves the stream is still alive. Available since skybridge-client 0.1.4.
+   */
+  onFrame?: (frame: SseFrame) => void;
   onOpen?: () => void;
   onError?: (err: Error) => void;
 }
