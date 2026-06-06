@@ -11,7 +11,7 @@
 
 ## 下载安装（macOS arm64）
 
-1. 前往 GitHub Releases 下载最新 `Owl-0.2.0-arm64.dmg`
+1. 前往 GitHub Releases 下载最新 `Owl-<version>-arm64.dmg`
 2. 双击 dmg，把 `Owl.app` 拖进 `/Applications`
 3. 在 Finder 中 **右键点击 `Owl.app` → 打开**，在弹窗中再次点"打开"
    （不要双击 — macOS 会拦截未签名应用；右键"打开"只需做一次，之后可直接启动）

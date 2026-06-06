@@ -1,6 +1,17 @@
 # 开发进度
 
-## 当前阶段：P5-d per-profile 隔离 — **Phase 21 + UX 批 + SSE idle watchdog 完成（2026-06-06），0.5.0 GA 前已无待决**；下一步 **22（0.5.0 bump+发版）→ 23（push 收尾）**
+## 当前阶段：P5-d per-profile 隔离 — **Phase 22（0.5.0 bump + release notes）完成（2026-06-06），本地可逆全绿**；下一步 **23（npm publish + tag + GitHub Release + 三仓 push + 收尾）**
+
+**✅ Phase 22（owl 0.5.0 bump + release notes）2026-06-06 完成（待 commit；停在 push 前）** —— 用户 2 项拍板：①本次执行到 **push 前**（bump+构建+验证全本地可逆，tag/Release/publish/push 留 23）②**CLI 对齐 0.5.0 并 publish**（publish 本体留 23）。
+- **版本 bump（3 处）**：`packages/core/src/version.ts` `OWL_APP_VERSION` `0.5.0-dev`→`0.5.0`（device 注册上报单一来源）；`packages/gui/package.json` `0.4.2`→`0.5.0`（驱动 dmg 名）；`apps/cli/package.json` `0.4.0`→`0.5.0`（CLI `--version` + publish manifest 均读此）。
+- **退役 `0.5.0-dev` 字面量**：唯一会挂的真断言 `session.install.test.ts:132` `/owl 0\.5\.0-dev/`→`/owl 0\.5\.0/`（走真 `OWL_APP_VERSION`）；其余 10 文件 fixture/mock 串一并清扫 → `rg "0.5.0-dev"` 全空（兑现 §44 单源原则）。
+- **release notes**：新建 `docs/history/0.5.0-release-notes.md`（中文，0.4.2→0.5.0 delta：per-profile 隔离 + 免密快切 + 账号/设备管理 + W3 错钟/watchdog/单实例/切换并发可靠性 + 待办排序/冲突复制·打开 UX + W11 附件 local-only/W5 提醒仅 active/W12 备份恢复指引/明文 HTTP 已知限制 + 安装/校验）。sha256 已填。
+- **housekeeping**：README.md 下载行 `Owl-0.2.0` → `Owl-<version>`；PROCESS.md（本段）。
+- **dmg 已出**：`packages/gui/release/Owl-0.5.0-arm64.dmg`（124M，afterPack ad-hoc 签名 verified ok），sha256 `a158ebd54940fb47a7b3a9aceef5c5e87157be3390f8da29038d45105702c2ce`。
+- **验收（whole-repo 全绿，先测后打包避 ABI 翻转）**：`pnpm -r build` + `just check`（8 守卫；零新增 biome warning）+ core **528** / daemon **290** / cli **137** / gui **399** + gated e2e **25/25** + CLI dist `--version`=`0.5.0` & `sync login`→GUI 跳转。
+- **留 Phase 23**：`v0.5.0` git tag + GitHub Release（传 dmg + notes body）+ `@orpheus-aviary/owl-cli@0.5.0` npm publish + `cli-v0.5.0` tag + 三仓 push（owl/skybridge/aviary，含 aviary ROADMAP 0.5.0 gate）+ next-session-brief/memory 更新。
+
+---
 
 **✅ SSE idle watchdog（原 Phase 11，0.5.0 GA 前唯一待决）2026-06-06 完成（待 commit）** —— 设计 `docs/plans/2026-06-06-sse-idle-watchdog.md`（§10 实施记录）。用户 3 项拍板：①阈值 **60s** ②**写死常量**不做用户旋钮 ③真机 **可选/留 soak**。
 - **补的洞**：`sse-bridge.ts` 原本只从 onError（显式断开）恢复；**半开/下行假死**（socket 活但 server 静默停推，无 frame 无 onError）识别不了，只能靠手动同步按钮(W8)兜。
