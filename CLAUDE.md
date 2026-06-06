@@ -34,19 +34,9 @@ just dev-daemon   # 启动 daemon dev
 - **daemon 自启动**：GUI 启动时检测并拉起 daemon，daemon 独立于 GUI 生命周期
 - **统一响应格式**：`{"success": bool, "data": {}, "message": "..."}`
 - **数据目录**：`~/orpheus-aviary-nest/owl/`
-- **skybridge 对接**：P4 起在 `owl.db` 加 `sync_changes` / `sync_cursor` / `conflict_record` 表，架构见 `aviary/docs/SKYBRIDGE_ARCH.md`。旧 `owl.sync.db` 文件为 rclone bisync 方案遗留，skybridge 路线下不再使用
-- **skybridge SSE bridge（P5-b Step 10a 起）**：daemon 启动后只有 `skybridge_config.toml` 同时有 `[auth] + [device.id] + [workspace.id]` 才会 auto-start bridge（见 `packages/daemon/src/sync/bridge-lifecycle.ts`）。半启动状态（login 完但还没跑过 `owl sync run`）silent skip 等下次 daemon 重启。debug 时盯 `daemon.log` 关键字 `sse-bridge`：`started` / `skipped` / `connected` / `SSE error`。手动逐发 `change`：`POST /sync/run` 触发 markSyncing → markSuccess/markError 推送 `sync:status_changed`。彻底重启 bridge：`just stop-daemon && just dev-daemon`。SSE 重连永久退避 `[2,4,8,16,30]s + 0-1s jitter`，cap 30s 不放弃 —— offline 是信息态，**没有手动 reconnect 按钮**（GUI sidebar SyncStatusBar 只显示状态）。**idle watchdog（0.5.0，`sse-bridge.ts`）**：onError 之外补「半开/下行假死」（socket 活但 server 静默停推，无 frame 无 onError）—— server 每 25s ping，SDK 转发每帧到 `onFrame`，daemon onOpen 武装 60s（`SSE_IDLE_TIMEOUT_MS`）计时器、每帧重置、超时 = `idle watchdog fired`（warn）→ abort 僵尸 + markOffline + 拉 health-probe + 重连。阈值写死非用户旋钮。设计 `docs/plans/2026-06-06-sse-idle-watchdog.md`
-- **skybridge debug 关键字（P5-c）**：daemon.log 里按需 grep：
-  - `kind:'sync'` — `runSync` 主线（push/pull/apply/LWW skip 路径）
-  - `kind:'sync-scheduler'` — 后台定时 sync（`[sync].interval_min`, default 5min, `<=0` 禁用）
-  - `kind:'health-probe'` — onError 退避期 10s `/health` 探针（仅在 SSE bridge 退避时跑，重连成功立即 stop）
-  - `kind:'mid-session-bootstrap'` — `ensureBackgroundHandles` 在首次 login + sync run 后拉起 bridge/scheduler 的幂等记录
-  - `[REDACTED]` — `createLogger` + `createConsoleLogger` 默认 redact 命中 `*.token` / `*.auth.token` / `authorization` / `headers.authorization` / `req.headers.authorization`
-- **skybridge token / 凭证（P5-c §6.27 路 C 安全模型）**：`skybridge_config.toml` 是 **local user secret**（unix 下 `chmod 0600`，见 `packages/core/src/skybridge/config.ts:177`）。token 不准进入：
-  - **log**：pino redact 自动盖结构化字段；字符串模板拼接由 `just token-not-templated`（`scripts/check-token-not-templated.sh`）grep 守卫拦下
-  - **UI**：sidebar `SyncStatusBar` popover 只渲染 `SyncStatusSnapshot`（无 token 字段），单测 `SyncStatusBar.test.tsx` 验证 `text` 不含 `token`/`authorization`/`Bearer`
-  - **字符串拼接 helper**：`redactToken()` 来自 `@owl/core/skybridge/redact.js`，留前 4 + 后 4 字符方便诊断，剩余打 `…`，输入短于 prefix+suffix+2 直接 `[REDACTED]`
-  - safeStorage keychain 加密 **不在 P5-c**，留 P5-d 与 token refresh / device pair 一起重设
+- **skybridge 同步**（per-profile，0.5.0/P5-d）：`owl.db` 有 `sync_changes`/`sync_cursor`/`conflict_record` 表；每账号 `profiles/<id>/owl.db`，**local `owl/owl.db` 永不被账号同步写**（D10b）。登录/切换/设备管理全在 GUI（Settings → 同步），daemon 不写 toml、靠 GUI main 经 `POST /sync/session` 注入明文 token。架构 `aviary/docs/SKYBRIDGE_ARCH.md`；完整实施 `docs/history/P5-d-shipped.md`；本地开发/部署 `skybridge/docs/deploy/ubuntu-baota.md`
+- **skybridge daemon.log debug 关键字**：`sse-bridge`（started/skipped/connected/SSE error/`idle watchdog fired`）· `kind:'sync'`（runSync push/pull/apply/LWW）· `kind:'sync-scheduler'`（`[sync].interval_min` default 5min，`<=0` 禁用）· `kind:'health-probe'`（onError 退避期 10s `/health`）· `kind:'mid-session-bootstrap'` · `[REDACTED]`（pino redact）。SSE 永久重连退避 `[2,4,8,16,30]s+jitter`（无手动重连按钮，offline 是信息态）+ idle watchdog 60s 半开假死自动重连。彻底重启 bridge：`just stop-daemon && just dev-daemon`
+- **skybridge token 安全（路 C）**：`skybridge_config.toml` chmod 0600（local secret）+ GUI safeStorage keychain 加密（`encrypted_token`/`encrypted_refresh_token`）；token 不进 log/UI（pino redact + `redactToken()` 拼接 helper）。`just check` 8 守卫含 core-convergence / token-not-templated / daemon-no-electron-storage / no-prod-env-token / session-body-not-logged / daemon-no-toml-write
 
 ## Commit 规范
 遵循上级 `orpheus-aviary/.claude/CLAUDE.md` 中的 Conventional Commits 规范。
@@ -73,4 +63,6 @@ Scope: `db` / `config` / `notes` / `tags` / `daemon` / `gui` / `editor` / `brows
 - 测试完成后用户反馈结果，再决定是否继续
 
 ## 当前进度
-见 `PROCESS.md`，完整计划见 `docs/plans/COEDIT_PLAN.md`。
+**🎉 owl 0.5.0 已公开发版（2026-06-06，per-profile 隔离 + 免密快切）**。当前状态 + 下一步见 `PROCESS.md`；
+P5-d 完整归档 `docs/history/P5-d-shipped.md`；跨仓路线 `aviary/docs/ROADMAP.md`；0.6 计划
+`docs/plans/2026-06-06-0.6.0-plan.md`。
