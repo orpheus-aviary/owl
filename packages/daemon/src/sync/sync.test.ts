@@ -170,7 +170,7 @@ describe('sync routes (P5-a Step 7)', () => {
           device: {
             id: 'dev_1',
             name: 'mb',
-            app_version: 'owl 0.5.0-dev',
+            app_version: 'owl 0.5.0',
             client_version: '0.1.0',
           },
           workspace: { id: 'ws_1', slug: 'owl/default' },
@@ -222,7 +222,7 @@ describe('sync routes (P5-a Step 7)', () => {
           device: {
             id: 'dev_1',
             name: 'mb',
-            app_version: 'owl 0.5.0-dev',
+            app_version: 'owl 0.5.0',
             client_version: '0.1.0',
           },
           workspace: { id: 'ws_1', slug: 'owl/default' },

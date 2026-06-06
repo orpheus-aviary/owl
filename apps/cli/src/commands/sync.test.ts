@@ -275,7 +275,7 @@ email = "jay@local"
 [device]
 id = "dev_1"
 name = "macbook"
-app_version = "owl 0.5.0-dev"
+app_version = "owl 0.5.0"
 client_version = "0.1.0"
 `,
       'utf8',

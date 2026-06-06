@@ -140,7 +140,7 @@ interface Profile {
   cleanup: () => void;
 }
 
-const APP_VERSION = 'owl 0.5.0-dev';
+const APP_VERSION = 'owl 0.5.0';
 
 /**
  * Build a fully bootstrapped profile against the given skybridge server.

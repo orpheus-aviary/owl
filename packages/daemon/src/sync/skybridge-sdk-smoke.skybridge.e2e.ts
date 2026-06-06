@@ -134,7 +134,7 @@ describe('skybridge client 0.1.3 SDK smoke (owl-side P5-d Phase 4)', { skip: !ga
     const device = await client.registerDevice({
       name: 'smoke-mac',
       platform: 'darwin',
-      appVersion: '0.5.0-dev',
+      appVersion: '0.5.0',
       clientVersion: sb.CLIENT_VERSION,
     });
     assert.ok(device.id, 'registerDevice returns id');
@@ -157,7 +157,7 @@ describe('skybridge client 0.1.3 SDK smoke (owl-side P5-d Phase 4)', { skip: !ga
     assert.equal(row.id, device.id);
     assert.equal(row.name, 'smoke-mac');
     assert.equal(row.platform, 'darwin');
-    assert.equal(row.appVersion, '0.5.0-dev');
+    assert.equal(row.appVersion, '0.5.0');
     assert.equal(row.clientVersion, sb.CLIENT_VERSION);
     assert.ok(typeof row.createdAt === 'number');
     assert.ok(typeof row.lastSeenAt === 'number');
@@ -192,7 +192,7 @@ describe('skybridge client 0.1.3 SDK smoke (owl-side P5-d Phase 4)', { skip: !ga
     const device = await client.registerDevice({
       name: 'smoke-sse',
       platform: 'darwin',
-      appVersion: '0.5.0-dev',
+      appVersion: '0.5.0',
       clientVersion: sb.CLIENT_VERSION,
     });
     client = sb.createSkybridgeClient({ authContext: auth, deviceId: device.id });

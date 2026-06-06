@@ -75,7 +75,7 @@ import type { RealSkybridgeClient } from './session.js';
 import { createSwitchGate } from './switch-gate.js';
 
 const gate = process.env.SKYBRIDGE_E2E === '1';
-const APP_VERSION = 'owl 0.5.0-dev';
+const APP_VERSION = 'owl 0.5.0';
 
 // ─── Structural skybridge surfaces (never named in `import`) ─────────
 

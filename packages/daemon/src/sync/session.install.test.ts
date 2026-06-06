@@ -129,7 +129,7 @@ describe('installSkybridgeSession (P5-d Phase 6)', () => {
     });
     assert.match(
       session.config.device?.app_version ?? '',
-      /owl 0\.5\.0-dev/,
+      /owl 0\.5\.0/,
       'app_version defaults to current OWL_APP_VERSION',
     );
     assert.equal(session.config.workspace?.slug, 'owl/default', 'slug defaults to owl/default');

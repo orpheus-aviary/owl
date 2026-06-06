@@ -86,7 +86,7 @@ const sectionA: ProfileConfigSection = {
   user_id: 'usr_a',
   email: 'a@local',
   encrypted_token: 'cipher-a',
-  device: { id: 'dev_a', name: 'mb (owl)', app_version: 'owl 0.5.0-dev', client_version: '0.1.4' },
+  device: { id: 'dev_a', name: 'mb (owl)', app_version: 'owl 0.5.0', client_version: '0.1.4' },
   workspace: { id: 'ws_a', slug: 'owl/default' },
 };
 
@@ -284,7 +284,7 @@ const sectionWithRefresh: ProfileConfigSection = {
   email: 'a@local',
   encrypted_token: 'cipher-access',
   encrypted_refresh_token: 'cipher-refresh',
-  device: { id: 'dev_a', name: 'mb (owl)', app_version: 'owl 0.5.0-dev', client_version: '0.1.4' },
+  device: { id: 'dev_a', name: 'mb (owl)', app_version: 'owl 0.5.0', client_version: '0.1.4' },
   workspace: { id: 'ws_a', slug: 'owl/default' },
 };
 

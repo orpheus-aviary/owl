@@ -45,7 +45,7 @@ function fullyBootstrappedConfig(): SkybridgeConfig {
   return {
     server: { url: 'http://localhost:48080' },
     auth: { user_id: 'u1', token: 't1', email: 'j@test' },
-    device: { id: 'dev-1', name: 'mac', app_version: 'owl 0.5.0-dev', client_version: '0.1.0' },
+    device: { id: 'dev-1', name: 'mac', app_version: 'owl 0.5.0', client_version: '0.1.0' },
     workspace: { id: 'ws-1', slug: 'owl/default' },
   };
 }

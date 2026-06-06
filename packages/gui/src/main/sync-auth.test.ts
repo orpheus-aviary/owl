@@ -178,7 +178,7 @@ const coreState = {
   removeProfileCalls: [] as string[],
 };
 vi.mock('@owl/core', () => ({
-  OWL_APP_VERSION: '0.5.0-dev',
+  OWL_APP_VERSION: '0.5.0',
   LOCAL_PROFILE: 'local',
   readSkybridgeConfig: vi.fn(() => {
     if (coreState.cfgReadError) throw coreState.cfgReadError;
@@ -308,7 +308,7 @@ function profileCfg(over: Record<string, unknown> = {}) {
       encrypted_token: b64('tk-access'),
       encrypted_refresh_token: b64('rt-refresh'),
     },
-    device: { id: 'dev-A', name: 'mac-a', app_version: 'owl 0.5.0-dev', client_version: '0.1.4' },
+    device: { id: 'dev-A', name: 'mac-a', app_version: 'owl 0.5.0', client_version: '0.1.4' },
     workspace: { id: 'ws-A', slug: 'owl/default' },
     ...over,
   };
@@ -615,7 +615,7 @@ describe('loginAndOpenSession — multi-account add (D-add)', () => {
       email: 'a@test',
       encrypted_token: b64('tk-A-access'),
       encrypted_refresh_token: b64('rt-A-refresh'),
-      device: { id: 'dev-A', name: 'mac-a', app_version: 'owl 0.5.0-dev', client_version: '0.1.4' },
+      device: { id: 'dev-A', name: 'mac-a', app_version: 'owl 0.5.0', client_version: '0.1.4' },
       workspace: { id: 'ws-A', slug: 'owl/default' },
       ...over,
     };
@@ -895,7 +895,7 @@ describe('switchToProfile (Phase 17 / W4)', () => {
       email: 'b@test',
       encrypted_token: b64('tk-B-access'),
       encrypted_refresh_token: b64('rt-B-refresh'),
-      device: { id: 'dev-B', name: 'mac-b', app_version: 'owl 0.5.0-dev', client_version: '0.1.4' },
+      device: { id: 'dev-B', name: 'mac-b', app_version: 'owl 0.5.0', client_version: '0.1.4' },
       workspace: { id: 'ws-B', slug: 'owl/default' },
       ...over,
     };
@@ -1001,7 +1001,7 @@ describe('deleteProfileLocalCopy (Phase 17 / destructive)', () => {
       email: 'b@test',
       encrypted_token: b64('tk-B-access'),
       encrypted_refresh_token: b64('rt-B-refresh'),
-      device: { id: 'dev-B', name: 'mac-b', app_version: 'owl 0.5.0-dev', client_version: '0.1.4' },
+      device: { id: 'dev-B', name: 'mac-b', app_version: 'owl 0.5.0', client_version: '0.1.4' },
       workspace: { id: 'ws-B', slug: 'owl/default' },
       ...over,
     };

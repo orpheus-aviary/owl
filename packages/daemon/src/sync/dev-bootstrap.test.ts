@@ -17,7 +17,7 @@ function completeConfig(): SkybridgeConfig {
     device: {
       id: 'dev-A',
       name: 'mac-a',
-      app_version: 'owl 0.5.0-dev',
+      app_version: 'owl 0.5.0',
       client_version: '0.1.0',
     },
     workspace: { id: 'ws-A', slug: 'owl/default' },

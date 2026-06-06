@@ -91,7 +91,7 @@ describe('writeSkybridgeConfig + readSkybridgeConfig — round-trip', () => {
       device: {
         id: 'dev_1',
         name: "Jay's MacBook (owl)",
-        app_version: 'owl 0.5.0-dev',
+        app_version: 'owl 0.5.0',
         client_version: '0.1.0',
       },
       workspace: { id: 'ws_1', slug: 'owl/default' },
