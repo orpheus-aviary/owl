@@ -14,8 +14,11 @@
 
 计划文档 → `docs/plans/2026-06-06-0.6.0-plan.md`。**首步 = 系统性项目审视/整理**（冗余清理、
 死代码、小重构、非功能优化——开发期累积的计划外内容阶段性整理），之后再排 feature backlog
-（W7 冲突双向解决/合并 · W11 附件同步 · 跨 profile 视图 · `resetAllStores` 免闪烁 · TLS · 真·24h soak
+（W7 冲突双向解决/合并 · ~~W11 附件同步~~[text-first 废弃] · 跨 profile 视图 · `resetAllStores` 免闪烁 · TLS · 真·24h soak
 · P6 skybridge Phase 5 多设备 GA → owl 1.0.0）。详见 0.6.0 plan + 设计稿 §11「0.5.0 之外」。
+
+> **扩生态方向（0.5.0 后新增）**：网页版 + 移动端架构定稿 → `docs/plans/2026-06-06-mobile-web-ecosystem-arch.md`
+> （云端 daemon 共享后端 · RN 移动端 · web 先行 · text-first 砍附件）。
 
 ---
 
