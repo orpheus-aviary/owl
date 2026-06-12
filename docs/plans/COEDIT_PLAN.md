@@ -1,5 +1,9 @@
 # owl + migration 重构计划
 
+> ⚠️ **已作废 / 历史归档**（2026-06-12 标注）：owl 早已完成 Go → TypeScript 重写，
+> `migration` 仓已重命名为 `skybridge` 并改方向（operation-log 同步桥，见
+> `aviary/docs/SKYBRIDGE_ARCH.md`）。本文仅作早期规划的历史参考，**不反映现状**。
+
 > owl Go → TypeScript 重写 + migration TS 实现
 
 ## 1. 技术栈（已确定）
