@@ -185,6 +185,9 @@ importers:
       '@lezer/highlight':
         specifier: ^1.2.3
         version: 1.2.3
+      '@orpheus-aviary/owl-shared':
+        specifier: workspace:*
+        version: link:../shared
       '@orpheus-aviary/skybridge-client':
         specifier: 0.1.4
         version: 0.1.4
@@ -303,6 +306,12 @@ importers:
       vitest:
         specifier: ^4.1.4
         version: 4.1.4(@types/node@25.5.2)(jsdom@25.0.1)(vite@7.3.1(@types/node@25.5.2)(jiti@2.6.1)(lightningcss@1.32.0)(tsx@4.21.0))
+
+  packages/shared:
+    devDependencies:
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
 
 packages:
 

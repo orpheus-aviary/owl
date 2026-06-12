@@ -60,8 +60,14 @@ daemon-no-toml-write:
 renderer-owlapi-confined:
     bash scripts/check-renderer-owlapi-confined.sh
 
+# Step 0 (G9) — @orpheus-aviary/owl-shared must stay mobile-safe: no Node /
+# Electron / window.owlAPI references, so web and React Native can consume it.
 [group('lint')]
-check: lint typecheck core-convergence token-not-templated daemon-no-electron-storage no-prod-env-token session-body-not-logged daemon-no-toml-write renderer-owlapi-confined
+shared-no-node-electron:
+    bash scripts/check-shared-no-node-electron.sh
+
+[group('lint')]
+check: lint typecheck core-convergence token-not-templated daemon-no-electron-storage no-prod-env-token session-body-not-logged daemon-no-toml-write renderer-owlapi-confined shared-no-node-electron
     @echo "All checks passed."
 
 # ─── Test ───────────────────────────────────────────────
@@ -83,6 +89,10 @@ test-daemon: ensure-node-abi
 [group('build')]
 build:
     pnpm run build
+
+[group('build')]
+build-shared:
+    pnpm --filter @orpheus-aviary/owl-shared run build
 
 [group('build')]
 build-core:
@@ -200,7 +210,7 @@ ensure-electron-abi:
 
 # Stop daemon + rebuild core/daemon + launch GUI (safe default)
 [group('dev')]
-dev: ensure-electron-abi stop-daemon build-core build-daemon
+dev: ensure-electron-abi stop-daemon build-shared build-core build-daemon
     pnpm run dev
 
 # Launch GUI without touching the daemon (faster HMR iteration)

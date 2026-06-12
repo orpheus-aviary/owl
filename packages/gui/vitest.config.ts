@@ -13,10 +13,16 @@ const REACT_DOM = resolve(__dirname, '../../node_modules/react-dom');
 const REACT_ROUTER = resolve(__dirname, '../../node_modules/react-router');
 const REACT_ROUTER_DOM = resolve(__dirname, '../../node_modules/react-router-dom');
 
+// Resolve @orpheus-aviary/owl-shared to its source so the unit-test loop never
+// needs the package's dist built (electron-vite / tsc still use the built
+// package via node_modules in dev / typecheck).
+const OWL_SHARED = resolve(__dirname, '../shared/src/index.ts');
+
 export default defineConfig({
   resolve: {
     alias: {
       '@': resolve(__dirname, 'src/renderer/src'),
+      '@orpheus-aviary/owl-shared': OWL_SHARED,
     },
   },
   test: {
@@ -26,6 +32,7 @@ export default defineConfig({
         resolve: {
           alias: {
             '@': resolve(__dirname, 'src/renderer/src'),
+            '@orpheus-aviary/owl-shared': OWL_SHARED,
             react: REACT,
             'react-dom': REACT_DOM,
             'react-router': REACT_ROUTER,

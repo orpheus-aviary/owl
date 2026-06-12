@@ -10,7 +10,7 @@
     "preview": "electron-vite preview",
     "test": "vitest run",
     "build:icons": "node scripts/build-icons.mjs",
-    "build:deps": "pnpm -F @owl/core build && pnpm -F @owl/daemon build",
+    "build:deps": "pnpm -F @orpheus-aviary/owl-shared build && pnpm -F @owl/core build && pnpm -F @owl/daemon build",
     "package": "pnpm build:deps && pnpm build:icons && electron-vite build && electron-builder install-app-deps && electron-builder --mac --arm64 --config electron-builder.yml"
   },
   "dependencies": {
@@ -27,6 +27,7 @@
     "@dnd-kit/modifiers": "^9.0.0",
     "@electron-toolkit/utils": "^4.0.0",
     "@lezer/highlight": "^1.2.3",
+    "@orpheus-aviary/owl-shared": "workspace:*",
     "@orpheus-aviary/skybridge-client": "0.1.4",
     "@orpheus-aviary/skybridge-proto": "0.1.4",
     "@owl/core": "workspace:*",

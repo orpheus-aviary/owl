@@ -1,25 +1,8 @@
-/**
- * Wire shape returned by `GET /sync/status`. Daemon source of truth is
- * `SyncStatusResult` in `packages/daemon/src/sync/manual.ts:273`. This
- * mirror lives in `shared/` so both renderer (`lib/api.ts`) and main
- * (`sync-ipc.ts`) reference the same type — main can't borrow from
- * renderer's `lib/`, and renderer can't borrow from main.
- *
- * Reflects configured-ness + cursor truth from sqlite; does NOT carry
- * the live `state` / `last_error` overlay (those are broadcaster-only
- * and only show up on SSE).
- */
-export interface SyncStatusResult {
-  configured: boolean;
-  authenticated: boolean;
-  server_url: string | null;
-  device_id: string | null;
-  workspace_id: string | null;
-  pending_count: number;
-  pulled_seq: number;
-  pushed_seq: number;
-  last_sync_at: number | null;
-}
+// `SyncStatusResult` is an HTTP wire type — it now lives in
+// @orpheus-aviary/owl-shared (the neutral contract both renderer and mobile
+// consume). Re-exported here so main's `sync-ipc.ts` import path stays stable.
+import type { SyncStatusResult } from '@orpheus-aviary/owl-shared';
+export type { SyncStatusResult };
 
 /**
  * Discriminated union returned by every sync:* IPC handler. `ok: true`
