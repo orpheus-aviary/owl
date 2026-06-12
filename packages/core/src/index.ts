@@ -193,7 +193,6 @@ export {
   readSkybridgeConfig,
   removeProfile,
   removeSkybridgeConfig,
-  requireAuth,
   setActiveProfile,
   skybridgeConfigPath,
   InvalidProfileIdError,
@@ -205,6 +204,8 @@ export {
   updateProfileAuth,
   writeProfileConfig,
   writeSkybridgeConfig,
+  // `requireAuth` is intentionally NOT re-exported — only core's own test uses
+  // it, via a direct `./skybridge/config.js` import.
 } from './skybridge/config.js';
 export type {
   ProfileConfigSection,
