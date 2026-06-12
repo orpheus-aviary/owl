@@ -54,6 +54,16 @@ export function baseUrl(): string {
   return config.baseUrl();
 }
 
+/**
+ * The host-supplied headers to attach to every request (REST + SSE). Step 0
+ * default is empty; Phase A supplies the session bearer / CSRF header through
+ * `configureTransport`, covering REST, POST `/ai/chat`, and the `/events`
+ * subscription in one place.
+ */
+export function authHeaders(): Record<string, string> {
+  return config.getAuthHeaders();
+}
+
 export async function request<T>(
   method: string,
   path: string,

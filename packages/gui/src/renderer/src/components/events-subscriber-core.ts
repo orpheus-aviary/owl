@@ -15,8 +15,11 @@ import type { SyncStatusSnapshot } from '@/lib/api';
  * unhandled rejection. The emit side already surfaces real failures
  * to the CLI; renderer-side we just want to stay silent.
  *
- * P5-c §6.30 — `EVENT_TYPES` drives the `addEventListener` loop in
- * `EventsSubscriber.tsx`. Adding a new daemon event type requires:
+ * P5-c §6.30 — `EVENT_TYPES` enumerates the daemon→GUI events the renderer
+ * handles, asserted against the daemon's `OwlEvent` union in the test below.
+ * `EventsSubscriber` forwards every SSE frame to `handleDaemonEvent`, which
+ * branches by event name (unknown names like the keep-alive 'hello' no-op).
+ * Adding a new daemon event type requires:
  *   1. Add a branch to `handleDaemonEvent` below.
  *   2. Append the event name to `EVENT_TYPES`.
  * The matching `OwlEvent` union lives in

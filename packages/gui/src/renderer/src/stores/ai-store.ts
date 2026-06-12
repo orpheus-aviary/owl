@@ -1,6 +1,5 @@
 import * as api from '@/lib/api';
 import type { AiHistoryMessage } from '@/lib/api';
-import { baseUrl } from '@/lib/api';
 import { type SseHttpError, streamSse } from '@/lib/sse-client';
 import { create } from 'zustand';
 import { type NoteAppliedNotice, dispatchAgentEvent } from './ai-dispatcher';
@@ -304,7 +303,7 @@ export const useAiStore = create<AiState>((set, get) => ({
 
     try {
       await streamSse({
-        url: `${baseUrl()}/ai/chat`,
+        path: '/ai/chat',
         // Always pass conversation_id — our UUID becomes the DB primary key.
         body: { message: trimmed, conversation_id: conversationId },
         signal: controller.signal,

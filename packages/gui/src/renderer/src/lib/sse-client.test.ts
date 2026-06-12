@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { SseHttpError, streamSse } from './sse-client';
+import { SseHttpError, parseSseBlock, streamSse, subscribeSse } from './sse-client';
 
 /**
  * Build a Response whose body streams the given chunks. Each chunk is
@@ -26,7 +26,7 @@ describe('streamSse', () => {
 
     const events: Array<[string, unknown]> = [];
     await streamSse({
-      url: '/ai/chat',
+      path: '/ai/chat',
       body: { message: 'hi' },
       onEvent: (e, d) => events.push([e, d]),
     });
@@ -50,7 +50,7 @@ describe('streamSse', () => {
 
     const events: Array<[string, unknown]> = [];
     await streamSse({
-      url: '/ai/chat',
+      path: '/ai/chat',
       body: {},
       onEvent: (e, d) => events.push([e, d]),
     });
@@ -73,7 +73,7 @@ describe('streamSse', () => {
     );
     const events: Array<[string, unknown]> = [];
     await streamSse({
-      url: '/x',
+      path: '/x',
       body: {},
       onEvent: (e, d) => events.push([e, d]),
     });
@@ -94,7 +94,7 @@ describe('streamSse', () => {
     );
     const events: Array<[string, unknown]> = [];
     await streamSse({
-      url: '/x',
+      path: '/x',
       body: {},
       onEvent: (e, d) => events.push([e, d]),
     });
@@ -110,7 +110,7 @@ describe('streamSse', () => {
     );
     const events: Array<[string, unknown]> = [];
     await streamSse({
-      url: '/x',
+      path: '/x',
       body: {},
       onEvent: (e, d) => events.push([e, d]),
     });
@@ -127,7 +127,7 @@ describe('streamSse', () => {
           new Response('LLM not configured', { status: 400, statusText: 'Bad Request' }),
         ),
     );
-    await expect(streamSse({ url: '/x', body: {}, onEvent: () => {} })).rejects.toBeInstanceOf(
+    await expect(streamSse({ path: '/x', body: {}, onEvent: () => {} })).rejects.toBeInstanceOf(
       SseHttpError,
     );
     vi.unstubAllGlobals();
@@ -152,7 +152,7 @@ describe('streamSse', () => {
 
     const events: Array<[string, unknown]> = [];
     await streamSse({
-      url: '/x',
+      path: '/x',
       body: {},
       signal: controller.signal,
       onEvent: (e, d) => {
@@ -173,7 +173,7 @@ describe('streamSse', () => {
     );
     const events: Array<[string, unknown]> = [];
     await streamSse({
-      url: '/x',
+      path: '/x',
       body: {},
       onEvent: (e, d) => events.push([e, d]),
     });
@@ -189,13 +189,117 @@ describe('streamSse', () => {
     );
     const events: Array<[string, unknown]> = [];
     await streamSse({
-      url: '/x',
+      path: '/x',
       body: {},
       warn,
       onEvent: (e, d) => events.push([e, d]),
     });
     expect(events).toEqual([['ok', 1]]);
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('unrecognised'));
+    vi.unstubAllGlobals();
+  });
+});
+
+describe('parseSseBlock', () => {
+  it('parses an event + single data line', () => {
+    expect(parseSseBlock('event: x\ndata: hi')).toEqual({ event: 'x', data: 'hi' });
+  });
+
+  it('returns null when there is no event field', () => {
+    expect(parseSseBlock('data: orphan')).toBeNull();
+  });
+
+  it('joins multi-line data with newline and skips comments', () => {
+    expect(parseSseBlock(':keepalive\nevent: m\ndata: a\ndata: b')).toEqual({
+      event: 'm',
+      data: 'a\nb',
+    });
+  });
+
+  it('warns on unrecognised lines', () => {
+    const warn = vi.fn();
+    parseSseBlock('event: ok\nweird: nope\ndata: 1', warn);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('unrecognised'));
+  });
+});
+
+describe('subscribeSse', () => {
+  it('delivers RAW data strings and reconnects after the stream closes', async () => {
+    const controller = new AbortController();
+    let calls = 0;
+    const fetchMock = vi.fn(() => {
+      calls += 1;
+      if (calls === 1) return Promise.resolve(makeStreamingResponse(['event: a\ndata: 1\n\n']));
+      if (calls === 2) return Promise.resolve(makeStreamingResponse(['event: b\ndata: 2\n\n']));
+      // 3rd connect: stop the loop, hand back an already-drained stream.
+      controller.abort();
+      return Promise.resolve(makeStreamingResponse([]));
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const events: Array<[string, string]> = [];
+    subscribeSse({
+      path: '/events',
+      signal: controller.signal,
+      backoffMs: [0],
+      onEvent: (e, d) => events.push([e, d]),
+    });
+
+    await vi.waitFor(() => expect(events.length).toBeGreaterThanOrEqual(2));
+    // RAW strings — NOT JSON-parsed (handleDaemonEvent parses downstream).
+    expect(events).toEqual([
+      ['a', '1'],
+      ['b', '2'],
+    ]);
+    vi.unstubAllGlobals();
+  });
+
+  it('stops on abort without reconnecting', async () => {
+    const controller = new AbortController();
+    const fetchMock = vi.fn().mockResolvedValue(makeStreamingResponse(['event: a\ndata: 1\n\n']));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const events: Array<[string, string]> = [];
+    subscribeSse({
+      path: '/events',
+      signal: controller.signal,
+      backoffMs: [1000],
+      onEvent: (e, d) => events.push([e, d]),
+    });
+
+    await vi.waitFor(() => expect(events).toEqual([['a', '1']]));
+    controller.abort();
+    await new Promise((r) => setTimeout(r, 20));
+    // Loop was sleeping out the backoff when aborted → no second connect.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    vi.unstubAllGlobals();
+  });
+
+  it('invokes onError and retries on a non-2xx connection', async () => {
+    const controller = new AbortController();
+    let calls = 0;
+    const fetchMock = vi.fn(() => {
+      calls += 1;
+      if (calls === 1) {
+        return Promise.resolve(new Response('boom', { status: 500, statusText: 'Server Error' }));
+      }
+      controller.abort();
+      return Promise.resolve(makeStreamingResponse([]));
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const errors: unknown[] = [];
+    subscribeSse({
+      path: '/events',
+      signal: controller.signal,
+      backoffMs: [0],
+      onEvent: () => {},
+      onError: (e) => errors.push(e),
+      warn: () => {},
+    });
+
+    await vi.waitFor(() => expect(errors.length).toBe(1));
+    expect(errors[0]).toBeInstanceOf(SseHttpError);
     vi.unstubAllGlobals();
   });
 });
