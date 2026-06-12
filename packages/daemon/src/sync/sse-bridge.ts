@@ -96,8 +96,10 @@ function defaultJitter(base: number): number {
 
 /** Pick the backoff in ms for the n-th retry (n is 0-indexed). */
 export function backoffFor(retryAttempt: number): number {
+  // `i` is clamped to a valid index of the non-empty const tuple, so the
+  // element is always defined (no fallback / assertion needed).
   const i = Math.min(retryAttempt, BACKOFF_STEPS_MS.length - 1);
-  return BACKOFF_STEPS_MS[i] ?? BACKOFF_STEPS_MS[BACKOFF_STEPS_MS.length - 1]!;
+  return BACKOFF_STEPS_MS[i];
 }
 
 export function createSseBridge(opts: SseBridgeOptions): SseBridge {

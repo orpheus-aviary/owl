@@ -890,6 +890,7 @@ export async function runSync(deps: RunSyncDeps): Promise<RunSyncResult> {
     warn: (obj: object, msg: string) => logger.warn?.({ kind: 'sync', ...obj }, msg),
   };
   const retryPush = (): Promise<PushResultLike> =>
+    // biome-ignore lint/style/noNonNullAssertion: localChangesRef.value is set before retryPush runs in the push loop (hot sync path; cleaner narrowing deferred with the engine.ts split)
     withRetry(() => client.pushChanges(workspaceId, localChangesRef.value!), {
       ...retryOptions,
       logger: retryLogger,

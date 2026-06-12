@@ -78,6 +78,9 @@ export function tryConsumeDevSession(deps: DevBootstrapDeps = {}): DevBootstrapR
   const del =
     deps.deleteEnv ??
     ((e: NodeJS.ProcessEnv, key: string): void => {
+      // `delete` (not `e[key] = undefined`, which coerces to the string
+      // "undefined") is the only correct way to remove an env var. noDelete is
+      // disabled for this file in biome.json.
       delete e[key];
     });
   const readConfig = deps.readSkybridgeConfig ?? defaultReadSkybridgeConfig;

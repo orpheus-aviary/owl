@@ -27,7 +27,6 @@ function completeConfig(): SkybridgeConfig {
 function deleter(deleted: string[]): (env: NodeJS.ProcessEnv, key: string) => void {
   return (env: NodeJS.ProcessEnv, key: string): void => {
     deleted.push(key);
-    // biome-ignore lint/performance/noDelete: matches production helper semantics
     delete env[key];
   };
 }

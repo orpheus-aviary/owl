@@ -34,5 +34,27 @@
   },
   "files": {
     "ignore": ["node_modules", "dist", "out", "release", "*.db"]
-  }
+  },
+  "overrides": [
+    {
+      "include": ["**/*.test.ts", "**/*.test.tsx", "**/*.e2e.ts"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noNonNullAssertion": "off"
+          }
+        }
+      }
+    },
+    {
+      "include": ["**/sync/dev-bootstrap.ts", "**/sync/dev-bootstrap.test.ts"],
+      "linter": {
+        "rules": {
+          "performance": {
+            "noDelete": "off"
+          }
+        }
+      }
+    }
+  ]
 }
