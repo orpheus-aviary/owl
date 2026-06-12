@@ -1,24 +1,25 @@
 # 开发进度
 
-## 当前阶段：🎉 owl 0.5.0 公开发版完成（2026-06-06）；下一步 0.6 / P6
+## 当前阶段：✅ 扩生态 Step 0 全部完成（2026-06-12）；下一步 Phase A 云端 daemon
 
-**0.5.0 = per-profile 账号隔离 + 免密快切**（P5-d 主线，Phase 2-23）。已 push 三仓、tag
-`v0.5.0`/`cli-v0.5.0`、GitHub Release（`Owl-0.5.0-arm64.dmg`，Latest）、npm
-`@orpheus-aviary/owl-cli@0.5.0`=latest。依赖 skybridge server **0.1.4**（npm latest）。
+**0.5.0**（per-profile 隔离 + 免密快切）已公开发版（2026-06-06，三仓 push / tag / GitHub Release /
+npm `@orpheus-aviary/owl-cli@0.5.0`=latest，依赖 skybridge server **0.1.4**）。
+**扩生态 Step 0** = 让 renderer 与 Electron 解耦、抽出 `@orpheus-aviary/owl-shared`，为 web/移动铺路。
 
-- **最终基线**：core **528** / daemon **290** / cli **137** / gui **399** + gated e2e **25/25**；`just check` 8 守卫全绿。
-- **P5-d 完整实施记录已归档** → `docs/history/P5-d-shipped.md`（Phase 索引 + commit 表 + 不变量 + 真机手测 + 基线演进）。
-- **用户可见 release notes** → `docs/history/0.5.0-release-notes.md`。
+- **Step 0 子设计** → `docs/plans/2026-06-12-step0-platform-adapter-shared.md`（§实施记录）。findings → `…-0.6.0-cleanup-findings.md`。
+- **Step 0 7 commit（main，未 push）**：`cfe76cf` 子设计 · `1a5e561` **0a** 平台适配（`getPlatform()`+G10）·
+  `b190a4c` **0b-1** owl-shared（api client+类型+transport+G9）· `0c5d1ac` **0b-2** fetch-SSE 全切（`subscribeSse` 重连，真机验证）·
+  `2ee659a` **0c** findings+文档 hygiene · `1757eb4` **0d** lint（warnings 53→20）· `eb48c17` **0d** de-export `requireAuth`。
+- **新基线**：core **528** / daemon **290** / cli **137** / gui **406**（+7 SSE 测试）+ gated e2e 25；`just check` **11 守卫**（+G9 owl-shared-mobile-safe / +G10 renderer-owlapi-confined）；biome warnings **20**（全是延后的 `noExcessiveCognitiveComplexity`）。
+- **新增 `packages/shared`** = `@orpheus-aviary/owl-shared`（private，Phase C 发布）：`types`/`transport`/`client`/`sse`。
 
-### 下一步：0.6 / P6
+### 下一步
 
-计划文档 → `docs/plans/2026-06-06-0.6.0-plan.md`。**首步 = 系统性项目审视/整理**（冗余清理、
-死代码、小重构、非功能优化——开发期累积的计划外内容阶段性整理），之后再排 feature backlog
-（W7 冲突双向解决/合并 · ~~W11 附件同步~~[text-first 废弃] · 跨 profile 视图 · `resetAllStores` 免闪烁 · TLS · 真·24h soak
-· P6 skybridge Phase 5 多设备 GA → owl 1.0.0）。详见 0.6.0 plan + 设计稿 §11「0.5.0 之外」。
+1. **Phase A — 云端 daemon**（扩生态主线，拉独立子设计稿）：`[daemon].mode` cloud/local + 端点鉴权 + CORS allowlist + Host 校验 + mutating 请求认证（daemon auth provider 覆盖 CLI/GUI/web）+ bind 矩阵 + 启动守卫 + 两层会话 + `account_lock` + 凭据内存态 + daemon 自发起 login/registerDevice/ensureWorkspace + `GET /config` secret redaction。详见 arch §3/§7/§12。
+2. **延后的重构一轮**（Step 0 显式延后，同源）：20 个复杂度 warning + 8 个 `>500` 行大文件（`sync-auth.ts` 1042 / `engine.ts` 1040 / …）+ 类型 mirror dedup。
+3. **0.6 feature backlog**（设计稿 §11）：W7 冲突双向解决/合并 · 跨 profile 视图 · `resetAllStores` 免闪烁 · TLS/反代 · 真·24h soak · P6 skybridge Phase 5 多设备 GA → owl 1.0.0。
 
-> **扩生态方向（0.5.0 后新增）**：网页版 + 移动端架构定稿 → `docs/plans/2026-06-06-mobile-web-ecosystem-arch.md`
-> （云端 daemon 共享后端 · RN 移动端 · web 先行 · text-first 砍附件）。
+> **扩生态架构定稿** → `docs/plans/2026-06-06-mobile-web-ecosystem-arch.md`（v6：云端 daemon 共享后端 · RN 移动 · web 先行 · text-first 砍附件）。开发流：Step 0 ✅ → **Phase A** → B 网页版 → C 发 owl-shared → D 移动 v1 → E 移动 v2。
 
 ---
 

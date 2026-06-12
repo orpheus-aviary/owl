@@ -199,4 +199,19 @@ Electron 手测：`just dev`（renderer）+ `just dev-daemon`（daemon 生命周
 
 ---
 
-*（Step 0 子设计 v1，2026-06-12。决策已锁，待通审后从 Phase 0a 起手。）*
+## 实施记录（2026-06-12，全部完成）
+
+7 commit 落本地 `main`（**未 push**）：
+
+| commit | 阶段 | 内容 |
+|--------|------|------|
+| `cfe76cf` | — | docs: 本子设计稿（v3，两轮 review 收口）|
+| `1a5e561` | **0a** | 平台适配层：`renderer/src/platform/{types,electron,web,index}.ts`；~25 处 `window.owlAPI` 改走 `getPlatform()`；electronAdapter live getter + 懒构造；webAdapter（session ops 返 typed failure、Electron-only 能力缺省）；守卫 **G10** renderer-owlapi-confined。**0 测试改动，399 全过。** |
+| `b190a4c` | **0b-1** | `@orpheus-aviary/owl-shared`（private）：`types`（含迁入的 `SyncStatusResult`）/`transport`（`configureTransport`，默认空 auth header、相对 baseUrl）/`client`（~51 端点）；`lib/api.ts` 495→9 行 re-export shim；prod `main.tsx` + 测试 `test-setup.ts` 各 configure；build 链（root tsconfig ref + gui dep + `build:deps` + justfile `build-shared` + vitest src-alias）；守卫 **G9** shared-no-node-electron。 |
+| `0c5d1ac` | **0b-2** | fetch-SSE 全切：shared `sse.ts`（`parseSseBlock`/`streamSse[path]`/`subscribeSse` 退避重连）；`EventsSubscriber` 弃用原生 EventSource，`handleDaemonEvent` 零改（收 raw）；`streamSse` 走 transport。**真机验证**：daemon 重启后 `subscribeSse` 自动重连（`POST /events/emit` 回 `subscribers:1` + GUI 跳转），AI 流式正常。+7 单测（parseSseBlock + subscribe 重连/abort/非2xx）。 |
+| `2ee659a` | **0c+0d批3** | findings 清单 + 文档 hygiene（COEDIT/p3-plan 标注 + `docs/plans/README.md`）。 |
+| `1757eb4` | **0d批1** | biome warnings 53→20：测试目录 override（noNonNull off）+ dev-bootstrap override（noDelete off，env 删除合法）+ `main.tsx` root guard + `sse-bridge` backoffFor 简化 + `engine` 1 处 biome-ignore。 |
+| `eb48c17` | **0d批2** | de-export `requireAuth`（core-test-only）；`writeSkybridgeConfig` 保留（daemon 测试跨包用，0d 实测纠 findings）。 |
+
+**显式延后**（Step 0 之外，另排一轮）：20 个 `noExcessiveCognitiveComplexity` + 8 个 `>500` 行大文件 + 类型 mirror dedup（同源）。
+**下一步** = Phase A 云端 daemon（见 PROCESS.md「下一步」+ arch §3/§7/§12）。
