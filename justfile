@@ -53,8 +53,15 @@ session-body-not-logged:
 daemon-no-toml-write:
     bash scripts/check-daemon-no-toml-write.sh
 
+# Step 0 (G10) — renderer must reach the Electron preload (window.owlAPI) only
+# through the platform adapter (getPlatform / packages/.../platform), so the
+# same bundle stays web-safe.
 [group('lint')]
-check: lint typecheck core-convergence token-not-templated daemon-no-electron-storage no-prod-env-token session-body-not-logged daemon-no-toml-write
+renderer-owlapi-confined:
+    bash scripts/check-renderer-owlapi-confined.sh
+
+[group('lint')]
+check: lint typecheck core-convergence token-not-templated daemon-no-electron-storage no-prod-env-token session-body-not-logged daemon-no-toml-write renderer-owlapi-confined
     @echo "All checks passed."
 
 # ─── Test ───────────────────────────────────────────────

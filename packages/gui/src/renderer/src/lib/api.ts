@@ -5,6 +5,7 @@
 // Type-only import so callers can still reference `SyncStatusResult` via
 // `from '@/lib/api'` (re-export below); local `import type` keeps it in
 // this module's scope for `request<SyncStatusResult>` use.
+import { getPlatform } from '@/platform';
 import type { SyncStatusResult } from '../../../shared/sync-status-types.js';
 export type { SyncStatusResult };
 
@@ -75,11 +76,12 @@ export interface FolderReorderItem {
 // ─── API Client ─────────────────────────────────────────
 
 /**
- * Resolve the daemon base URL. Exported so `sse-client` callers can
- * compose the `/ai/chat` URL without re-implementing this lookup.
+ * Resolve the daemon base URL via the host platform adapter. Exported so
+ * `sse-client` callers can compose the `/ai/chat` URL without re-implementing
+ * this lookup.
  */
 export function baseUrl(): string {
-  return window.owlAPI?.daemonUrl ?? 'http://127.0.0.1:47010';
+  return getPlatform().daemonBaseUrl();
 }
 
 export class ApiError extends Error {

@@ -1,8 +1,9 @@
 import { MainApp } from './MainApp';
 import { MigrationDialog } from './pages/MigrationDialog';
+import { getPlatform } from './platform';
 
 /**
- * Top-level branch based on `window.owlAPI.startupMode`. The main process
+ * Top-level branch based on the host's `startupMode`. The main process
  * decides the mode before the window is constructed (see main/window.ts
  * `additionalArguments`) so this is a synchronous, first-render decision.
  *
@@ -12,7 +13,7 @@ import { MigrationDialog } from './pages/MigrationDialog';
  * `--startup-mode` arg; the new renderer picks MainApp.
  */
 export function App() {
-  const startupMode = window.owlAPI.startupMode;
+  const startupMode = getPlatform().startupMode;
   if (startupMode.mode !== 'normal') {
     return <MigrationDialog startupMode={startupMode} />;
   }

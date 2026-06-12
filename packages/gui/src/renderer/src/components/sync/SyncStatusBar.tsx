@@ -9,6 +9,7 @@ import {
   PopoverTrigger,
 } from '@/components/ui/popover';
 import type { SyncState, SyncStatusSnapshot } from '@/lib/api';
+import { getPlatform } from '@/platform';
 import { useSyncStatus } from '@/stores/sync-status';
 import { Check, Loader2, Plus } from 'lucide-react';
 import { useState } from 'react';
@@ -59,8 +60,11 @@ export function SyncStatusBar({ className = '' }: { className?: string }) {
   const [profilesLoading, setProfilesLoading] = useState(false);
   const loadProfiles = (open: boolean) => {
     if (!open) return;
+    // Optional Electron-local capability — the web host has no quick-switch.
+    const profilesFn = getPlatform().sync.profiles;
+    if (!profilesFn) return;
     setProfilesLoading(true);
-    void window.owlAPI.sync.profiles().then((reply) => {
+    void profilesFn().then((reply) => {
       setProfiles(reply.ok ? reply.data : null);
       setProfilesLoading(false);
     });
@@ -121,7 +125,7 @@ function SyncStatusDetails({
   const runSync = async () => {
     setRunning(true);
     setRunError(null);
-    const reply = await window.owlAPI.sync.run();
+    const reply = await getPlatform().sync.run();
     setRunning(false);
     // Success path needs no local update — the daemon broadcasts
     // `sync:status_changed` over SSE and `useSyncStatus` picks it up.
@@ -258,9 +262,12 @@ export function ProfileSwitcher({
   }
 
   const onSwitch = async (id: string) => {
+    // Optional Electron-local capability — the web host has no profile switch.
+    const switchFn = getPlatform().sync.switchProfile;
+    if (!switchFn) return;
     setSwitchingId(id);
     setError(null);
-    const reply = await window.owlAPI.sync.switchProfile(id);
+    const reply = await switchFn(id);
     // Success → the window reloads (16a) and this unmounts; only failure lands.
     if (!reply.ok) {
       setError(reply.message);

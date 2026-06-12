@@ -7,6 +7,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { getPlatform } from '@/platform';
 import { useEditorStore } from '@/stores/editor-store';
 import type { TabState } from '@/stores/editor-store';
 import { useCallback, useEffect, useState } from 'react';
@@ -55,15 +56,15 @@ export function UnsavedTabsDialog() {
   const requestSaveOrConflict = useEditorStore((s) => s.requestSaveOrConflict);
 
   const respond = useCallback((proceed: boolean) => {
-    window.owlAPI.quit.respond(proceed);
+    getPlatform().quit?.respond(proceed);
     setState(IDLE);
   }, []);
 
   useEffect(() => {
-    const unsubscribe = window.owlAPI.quit.onCheckUnsaved(() => {
+    const unsubscribe = getPlatform().quit?.onCheckUnsaved(() => {
       const unsaved = getUnsavedTabs();
       if (unsaved.length === 0) {
-        window.owlAPI.quit.respond(true);
+        getPlatform().quit?.respond(true);
         return;
       }
       setState({ phase: 'prompting', queue: unsaved, index: 0 });

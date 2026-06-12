@@ -7,6 +7,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { getPlatform } from '@/platform';
 import { Loader2 } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ProfileSummary } from '../../../../shared/sync-profiles-types.js';
@@ -34,7 +35,10 @@ export function SavedProfilesCard() {
   const mounted = useRef(true);
 
   const loadProfiles = useCallback(async () => {
-    const reply = await window.owlAPI.sync.profiles();
+    // Optional Electron-local capability — the web host has no profile mgmt.
+    const profilesFn = getPlatform().sync.profiles;
+    if (!profilesFn) return;
+    const reply = await profilesFn();
     if (!mounted.current || !reply.ok) return;
     // local is implicit (id 'local') — never deletable, so drop it from the list.
     setProfiles(reply.data.profiles.filter((p) => p.id !== 'local'));
@@ -52,9 +56,11 @@ export function SavedProfilesCard() {
 
   const onConfirmDelete = async () => {
     if (!pendingDelete) return;
+    const deleteFn = getPlatform().sync.deleteProfile;
+    if (!deleteFn) return;
     setDeleting(true);
     setError(null);
-    const reply = await window.owlAPI.sync.deleteProfile(pendingDelete.id);
+    const reply = await deleteFn(pendingDelete.id);
     if (reply.ok) {
       // wasActive → the window reloads (16a) and this unmounts; otherwise the
       // row is gone, so re-fetch the list and close the dialog.

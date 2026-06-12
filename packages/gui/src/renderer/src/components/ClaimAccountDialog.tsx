@@ -7,6 +7,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { getPlatform } from '@/platform';
 import { useCallback, useEffect, useState } from 'react';
 import type { ClaimChoice, ClaimPromptInput } from '../../../shared/sync-claim-types.js';
 
@@ -27,11 +28,11 @@ export function ClaimAccountDialog() {
   const [prompt, setPrompt] = useState<ClaimPromptInput | null>(null);
 
   useEffect(() => {
-    return window.owlAPI.sync.onClaimPrompt((input) => setPrompt(input));
+    return getPlatform().sync.onClaimPrompt?.((input) => setPrompt(input));
   }, []);
 
   const respond = useCallback((choice: ClaimChoice) => {
-    window.owlAPI.sync.respondClaim(choice);
+    getPlatform().sync.respondClaim?.(choice);
     setPrompt(null);
   }, []);
 

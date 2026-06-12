@@ -1,5 +1,6 @@
 import * as api from '@/lib/api';
 import type { OwlConfig, ShortcutsConfig } from '@/lib/api';
+import { getPlatform } from '@/platform';
 import { create } from 'zustand';
 
 // Fallback defaults — mirror @owl/core DEFAULT_CONFIG so that pre-fetch UI
@@ -28,11 +29,12 @@ const DEFAULT_SHORTCUTS: ShortcutsConfig = {
  * picks a different key.
  */
 async function syncGlobalShortcutWithMain(canonical: string): Promise<void> {
-  // Guard against renderer-only test environments where owlAPI isn't injected.
-  const api = typeof window !== 'undefined' ? window.owlAPI : undefined;
-  if (!api?.shortcut?.setGlobal) return;
+  // Electron-only capability — absent in the web host and in renderer-only
+  // test environments where no platform is injected.
+  const shortcut = getPlatform().shortcut;
+  if (!shortcut?.setGlobal) return;
   try {
-    await api.shortcut.setGlobal(canonical);
+    await shortcut.setGlobal(canonical);
   } catch {
     // Swallow IPC errors — main is best-effort, no UI surface here.
   }

@@ -1,4 +1,5 @@
 import { Button } from '@/components/ui/button';
+import { getPlatform } from '@/platform';
 import { Loader2 } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
@@ -56,7 +57,7 @@ export function SyncSection() {
   const [loginError, setLoginError] = useState<string | null>(null); // form-level: login
 
   const refreshStatus = useCallback(async () => {
-    const reply = await window.owlAPI.sync.status();
+    const reply = await getPlatform().sync.status();
     if (!reply.ok) {
       setError(reply.message);
       return;
@@ -77,7 +78,7 @@ export function SyncSection() {
   const handleLogin = async (values: LoginFormValues) => {
     setLoginError(null);
     setSubmitting(true);
-    const reply = await window.owlAPI.sync.login(values);
+    const reply = await getPlatform().sync.login(values);
     setSubmitting(false);
     if (!reply.ok) {
       setLoginError(reply.message);
@@ -102,7 +103,7 @@ export function SyncSection() {
     setConfirmingLogout(false);
     setError(null);
     setSubmitting(true);
-    const reply = await window.owlAPI.sync.logout();
+    const reply = await getPlatform().sync.logout();
     setSubmitting(false);
     if (!reply.ok) {
       setError(reply.message);

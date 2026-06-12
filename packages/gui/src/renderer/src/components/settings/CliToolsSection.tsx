@@ -1,4 +1,5 @@
 import { Button } from '@/components/ui/button';
+import { getPlatform } from '@/platform';
 import type { CliDetectResult } from '@/types/owl-api';
 import { Check, Copy, RefreshCw, X } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
@@ -18,7 +19,7 @@ export function CliToolsSection() {
   const refresh = useCallback(async () => {
     setLoading(true);
     try {
-      setResult(await window.owlAPI.cli.detect());
+      setResult((await getPlatform().cli?.detect()) ?? null);
     } finally {
       setLoading(false);
     }

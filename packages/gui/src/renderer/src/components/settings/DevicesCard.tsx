@@ -1,4 +1,5 @@
 import { Button } from '@/components/ui/button';
+import { getPlatform } from '@/platform';
 import { ChevronDownIcon, ChevronRightIcon, Loader2, RefreshCw } from 'lucide-react';
 import { useCallback, useState } from 'react';
 import type { SyncDeviceEntry } from '../../../../shared/sync-devices-types.js';
@@ -31,7 +32,7 @@ export function DevicesCard() {
 
   const fetchDevices = useCallback(async () => {
     setPhase({ kind: 'loading' });
-    const reply = await window.owlAPI.sync.devices();
+    const reply = await getPlatform().sync.devices();
     if (!reply.ok) {
       setPhase({ kind: 'error', message: reply.message });
       return;
@@ -131,7 +132,7 @@ function DeviceRow({ device, onRemoved }: { device: SyncDeviceEntry; onRemoved: 
   const onRemove = async () => {
     setRemoving(true);
     setError(null);
-    const reply = await window.owlAPI.sync.revokeDevice(device.id);
+    const reply = await getPlatform().sync.revokeDevice(device.id);
     if (reply.ok) {
       onRemoved(); // re-fetch — this row disappears
       return;

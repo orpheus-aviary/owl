@@ -15,6 +15,7 @@ import { type ShortcutsConfig, moveNoteToFolder } from '@/lib/api';
 import { type DragData, isDragData, isDropTarget } from '@/lib/dnd-types';
 import { LAYOUT_KEYS } from '@/lib/layout-keys';
 import { matchesShortcut } from '@/lib/shortcuts';
+import { getPlatform } from '@/platform';
 import { useBrowserStore } from '@/stores/browser-store';
 import { useConfigStore } from '@/stores/config-store';
 import { useConflictsStore } from '@/stores/conflicts-store';
@@ -268,7 +269,7 @@ export function MainApp() {
   // into the new one. Defer one macrotask so the triggering sync:login/logout
   // IPC reply has fully settled before the document tears down.
   useEffect(() => {
-    return window.owlAPI.sync.onProfileSwitched(() => {
+    return getPlatform().sync.onProfileSwitched?.(() => {
       setTimeout(() => window.location.reload(), 0);
     });
   }, []);
