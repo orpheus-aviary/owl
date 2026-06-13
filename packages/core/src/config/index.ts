@@ -45,6 +45,33 @@ export interface NavigationConfig {
 export interface DaemonConfig {
   poll_interval_min: number;
   port: number;
+  /**
+   * Phase A — deployment mode (drives endpoint auth). `local` = no login UX,
+   * loopback only (auth preHandler no-ops until A6); `cloud` = per-endpoint
+   * bearer auth + CORS allowlist + Host check. Default `local`.
+   */
+  mode: 'local' | 'cloud';
+  /** Phase A — listen host. Default `127.0.0.1`. Non-loopback requires `mode='cloud'`. */
+  bind: string;
+  // ── cloud-only deployment fields (ignored when mode='local') ──
+  /** The fixed skybridge server URL — login can't pick an arbitrary URL (anti-SSRF). */
+  server_url?: string;
+  /**
+   * Owner profileId (`computeProfileId(serverId, userId)`) or the literal
+   * `'off'` (switchable single-tenant). Absent → daemon refuses to start
+   * (fail-closed; see Phase A design §3.3 ①).
+   */
+  account_lock?: string;
+  /** The daemon's own public origin (e.g. `https://owl.example.com`); drives Host allowlist + same-origin CORS. */
+  public_url?: string;
+  /** Extra CORS origins beyond the public_url-derived same-origin. */
+  allowed_origins?: string[];
+  /** Extra allowed Host header values (`host[:port]` / IP) beyond public_url + loopback. */
+  allowed_hosts?: string[];
+  /** Layer-2 browser session TTL in minutes (sliding). Default 720 (12h). */
+  session_ttl_min?: number;
+  /** Trust `X-Forwarded-For` (Fastify trustProxy) so login rate-limit can key per client IP behind a reverse proxy. Default false. */
+  trust_proxy?: boolean;
 }
 
 /**
@@ -144,7 +171,7 @@ export const DEFAULT_CONFIG: OwlConfig = {
   window: { width: 1000, height: 700 },
   font: { global_offset: 0, editor_font_size: 14, editor_line_height: 1.6 },
   navigation: { order: ['editor', 'browser', 'trash', 'reminders', 'ai', 'todo', 'settings'] },
-  daemon: { poll_interval_min: 1, port: 47010 },
+  daemon: { poll_interval_min: 1, port: 47010, mode: 'local', bind: '127.0.0.1' },
   sync: { interval_min: 5 },
   ai: { context_rounds: 3, max_recent_notes: 5, max_context_chars: 30000 },
   trash: { auto_delete_days: 30 },

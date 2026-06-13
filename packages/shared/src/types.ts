@@ -128,7 +128,21 @@ export interface OwlConfig {
   window: { width: number; height: number };
   font: { global_offset: number; editor_font_size: number; editor_line_height: number };
   navigation: { order: string[] };
-  daemon: { poll_interval_min: number; port: number };
+  daemon: {
+    poll_interval_min: number;
+    port: number;
+    // Phase A — mirrors core DaemonConfig. `mode`/`bind` always present;
+    // the cloud-only fields are present only on a cloud daemon's config.
+    mode: 'local' | 'cloud';
+    bind: string;
+    server_url?: string;
+    account_lock?: string;
+    public_url?: string;
+    allowed_origins?: string[];
+    allowed_hosts?: string[];
+    session_ttl_min?: number;
+    trust_proxy?: boolean;
+  };
   ai: {
     context_rounds: number;
     max_recent_notes: number;

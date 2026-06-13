@@ -47,6 +47,37 @@ width = 1200
     assert.equal(config.window.height, 700);
     assert.equal(config.daemon.poll_interval_min, 1);
     assert.equal(config.log.level, 'info');
+    // Phase A — [daemon].mode/bind backfill to the local defaults when absent.
+    assert.equal(config.daemon.mode, 'local');
+    assert.equal(config.daemon.bind, '127.0.0.1');
+  });
+
+  it('reads Phase A cloud [daemon] fields from toml', () => {
+    const cloud = `
+[daemon]
+mode = "cloud"
+bind = "0.0.0.0"
+server_url = "http://127.0.0.1:18443"
+account_lock = "off"
+public_url = "https://owl.example.com"
+allowed_origins = ["https://owl.example.com"]
+allowed_hosts = ["owl.example.com"]
+session_ttl_min = 60
+trust_proxy = true
+`;
+    const cloudPath = join(TEST_DIR, 'cloud.toml');
+    writeFileSync(cloudPath, cloud, 'utf-8');
+
+    const config = loadConfig(cloudPath);
+    assert.equal(config.daemon.mode, 'cloud');
+    assert.equal(config.daemon.bind, '0.0.0.0');
+    assert.equal(config.daemon.server_url, 'http://127.0.0.1:18443');
+    assert.equal(config.daemon.account_lock, 'off');
+    assert.equal(config.daemon.public_url, 'https://owl.example.com');
+    assert.deepEqual(config.daemon.allowed_origins, ['https://owl.example.com']);
+    assert.deepEqual(config.daemon.allowed_hosts, ['owl.example.com']);
+    assert.equal(config.daemon.session_ttl_min, 60);
+    assert.equal(config.daemon.trust_proxy, true);
   });
 
   it('saves and reloads config', () => {

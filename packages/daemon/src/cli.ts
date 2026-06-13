@@ -13,6 +13,7 @@ import {
   paths,
   readSkybridgeConfig,
   resolveActiveProfileDbPath,
+  resolveLlmConfig,
 } from '@owl/core';
 import { Command } from 'commander';
 import { ConversationStore } from './ai/conversations.js';
@@ -23,6 +24,7 @@ import { EventsBus } from './events/bus.js';
 import { isDaemonRunning, readPid, removePid, writePid } from './pid.js';
 import { ReminderScheduler } from './scheduler.js';
 import { buildServer } from './server.js';
+import { DaemonStartupError, assertDaemonStartupSafe } from './startup-guard.js';
 import { ensureBackgroundHandles, stopBackgroundHandles } from './sync/bridge-lifecycle.js';
 import { DevTokenInProductionError, tryConsumeDevSession } from './sync/dev-bootstrap.js';
 import { type ParentProbeHandle, startParentProbe } from './sync/parent-probe.js';
@@ -52,6 +54,22 @@ program
       config: config.log,
       name: 'daemon',
     });
+
+    // Phase A (A0) — fail-closed startup guards. Refuse to boot on an unsafe /
+    // incoherent [daemon] config (mode×bind matrix, cloud account_lock /
+    // public_url, off + server AI key, field validation). Runs before any side
+    // effect (no pid written, no db opened on refusal). local defaults pass
+    // unchanged → today's desktop behaviour is untouched.
+    try {
+      assertDaemonStartupSafe(config, { resolvedApiKey: resolveLlmConfig(config).api_key });
+    } catch (err) {
+      if (err instanceof DaemonStartupError) {
+        logger.error({ kind: 'startup-guard' }, err.message);
+        console.error(`\n${err.message}\n`);
+        process.exit(1);
+      }
+      throw err;
+    }
 
     // Write pid BEFORE opening the database so the migration runner's Layer 1
     // daemon probe can see us the instant this process exists. If DB open
@@ -148,7 +166,7 @@ program
 
     try {
       const address = await server.listen({
-        host: '127.0.0.1',
+        host: config.daemon.bind,
         port: config.daemon.port,
       });
       logger.info({ address, pid: process.pid }, 'Daemon started');
