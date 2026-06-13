@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { type Logger, createDatabase, ensureDeviceId } from '@owl/core';
+import { DEFAULT_CONFIG, type Logger, createDatabase, ensureDeviceId } from '@owl/core';
 import type { AppContext } from '../context.js';
 import { EventsBus } from '../events/bus.js';
 import { createSseBridge } from './sse-bridge.js';
@@ -57,8 +57,13 @@ function makeCtx(): AppContext {
   // here (no real session) and its .catch tries ctx.logger.warn — without
   // a logger that throws TypeError and surfaces as an unhandled rejection.
   // Stub a logger so the catch handler can fire harmlessly.
-  // biome-ignore lint/suspicious/noExplicitAny: minimal stub
-  return { db, sqlite, eventsBus: new EventsBus(), logger: silentLogger() } as any;
+  return {
+    db,
+    sqlite,
+    eventsBus: new EventsBus(),
+    logger: silentLogger(),
+    config: structuredClone(DEFAULT_CONFIG),
+  } as unknown as AppContext;
 }
 
 describe(

@@ -339,8 +339,9 @@ cloud 模式（`config.ts`）：
 
 ## 实施记录（2026-06-13）
 
-**A0–A3 已实现 + 全绿，6 commit 落本地 `main`（未 push）**。基线：core **529** / cli **137** /
-daemon **364** / gui **406** + gated e2e **25**；`just check` **9 守卫**（+`cloud-creds-no-disk`）。
+**A0–A4 已实现 + 全绿，落本地 `main`（未 push）**。A0–A3 = 6 commit（`d92b958`…`2d495e3`）+ docs
+`6ace4a4`；**A4 = 2 commit**（`208e767` core + e2e/docs 本提交）。基线：core **529** / cli **137** /
+daemon **385**（+21）/ gui **406** + gated e2e **29**（+4）；`just check` **9 守卫**。
 **桌面端零行为变更**，唯一触及 local 的是 A1 的 CORS/Host 收紧（已 `just dev` 真机验证无回归）。
 
 | slice | commit | 内容 | 测试 Δ |
@@ -351,13 +352,20 @@ daemon **364** / gui **406** + gated e2e **25**；`just check` **9 守卫**（+`
 | A3a | `64dbfc0` | SDK duck-type ext（login→serverId/refreshToken/expiresAt + `refresh`/`getServerInfo`）；`profileDbPathFor`/`switchToProfileId`（DRY `/sync/switch`）；`CredentialStore`（RAM）+ `cloud-creds-no-disk` 守卫 | daemon +5 |
 | A3b | `3ab2b07` | `cloud-login.ts`：`cloudLogin`（两分支 + multi-device 捷径 + account_lock owner 检查 + 失败补偿 + per-ctx login mutex）；`rebindSession`；refresh（`scheduleRefresh` 自重排防溢出 + `refreshCloudSession` rotate+rebind / 失败 teardown）；`installSkybridgeSession` 加可选 sb 参数（mock 穿透）；ctx `credentialStore`/`refreshTimer`；`RealSkybridgeClient.logout` | daemon +9 |
 | A3c | `2d495e3` | `computeOwnerProfileId` + `owl-server compute-owner` CLI（hidden prompt / `--password-stdin`，只打印 profileId） | daemon +2 |
+| A4 | `208e767` | `routes/auth.ts`：`/auth/login`(`cloudLogin`+铸 Layer-2+`login-throttle.ts` email/global/per-IP 限速)·`/auth/logout`(单 revoke / `{all}`→`logoutAllCloudSessions` remote-revoke+teardown)·`/auth/session` whoami；cloud 禁 `/sync/{session,switch,logout-local}`→404；`readSyncStatus` cloud 读 `CredentialStore`/session（非 toml）；off 抢占闸 `AccountBusyError`+`SessionStore.liveCount`+rebind `revokeAll`；`server.ts` `trustProxy` wiring + **`/auth/login`∈`SWITCH_INITIATING_PATHS`**（自死锁修复）；ctx `skybridgeLoader`（mock 注入）；3 broadcaster/bridge fixture 补 `config` | daemon +21 |
+| A4(e2e) | 本提交 | `cloud-auth.skybridge.e2e.ts`（真 in-process skybridge：`/auth/login` 真密码→token→鉴权 CRUD→401→account_lock 403→重启 device reuse→plumbing 404） | e2e +4 |
 
-### A4（下一步，capstone）
-- `POST /auth/login`（wire `cloudLogin` → 铸 Layer-2 session + 限速/退避；key=email+global，per-IP 仅 `trust_proxy`）/`POST /auth/logout`(单/all→`teardownCloudSession`)/`GET /auth/session`（whoami，public allowlist 已含 `/auth/login`）。
-- **cloud 禁用 GUI-main plumbing**：`/sync/session`+`/sync/switch`+`/sync/logout-local`（§4.3 ③；现仅 A2 bearer 挡得住，但同账号 bearer 仍能调 → 需 mode==='cloud' 显式 404/403）。
-- **account_lock `off` 释放规则**（§5.3）：Y 顶活着的 X → 拒（查 `SessionStore` 有无活跃 session）；`cloudLogin` 现允许 off 切换（A3 留的 gap，A4 补）。
-- **`readSyncStatus` cloud 状态源**（§6 末 / §9 #7）：cloud 从 `CredentialStore`/`ctx.skybridgeSession` 取 configured/server_url/device/workspace，非 toml（`manual.ts:305`）。
-- **真·本地 skybridge 端到端冒烟**（A4 才跑得通）：起本地 skybridge → cloud daemon → `POST /auth/login` 真密码 → token → 鉴权 CRUD → 401 → account_lock 拒 → 重启重登 → device reuse。
+### A4（已完成 2026-06-13，capstone）
+全部 5 项 scope 落地 + 全绿（daemon **385** unit / gated e2e **29**）：`/auth/*` 三端点（cloud-only，local→404）·
+cloud 禁 GUI-main plumbing·off 释放闸·`readSyncStatus` cloud 源·真·本地 skybridge 端到端冒烟（自动化 gated e2e）。
+
+**deadlock 实测捕获 + 修复**：`POST /auth/login` 是 mutating POST，被 switch-gate 计为 in-flight mutation；但 handler 内
+`cloudLogin → switchToProfileId → switchProfile` 在换库前要 drain 所有 in-flight mutation —— login 请求自己就是那个 mutation
+（只在响应 `onResponse` 才释放）→ **自死锁**。同 `/sync/switch` 既有解：把 `/auth/login` 加进 `SWITCH_INITIATING_PATHS`
+（豁免 tracking；switch 进行中仍 503）。standalone repro（`buildServer`+inject）定位。
+
+**off 生命周期 deferred**：本 A4 只实现 §5.3 的「Y 不顶活着的 X」抢占闸（brief 明确收窄到此）；完整引用计数 **grace-quiesce**
+（最后一个 session 消失后自动停 Layer-1）未做——资源在下一账号绑定时被 `rebindSession` 懒回收。完整生命周期留后续。
 
 ### carry-forward（复用必看，下一会话坑）
 - **测试 = `node:test`（非 vitest）跑 `dist/**/*.test.js`** → 改 daemon 后必 `just build-daemon` 再 `just test-daemon`。
@@ -368,3 +376,14 @@ daemon **364** / gui **406** + gated e2e **25**；`just check` **9 守卫**（+`
 - **fish**：`env VAR=val cmd`（无 `VAR=val` 前缀）；无 heredoc（用 `printf`/Write）；`set X (cmd)` 命令替换对含 `[]` 的 pattern 会 parse error；`cmd; and cmd` 的 `and` 易踩 → 用普通顺序命令；后台进程 `$last_pid` 不一定有值，从 boot.log 抓 PID。
 - **本地/LAN 模拟 rig**：隔离 nest `/tmp/owl-aX/owl/owl_config.toml`（mode=cloud, server_url, account_lock=off, public_url, port），`env OWL_NEST_DIR=… node packages/daemon/dist/cli.js daemon`，curl 验证后 kill + `rm -rf`（**别用宽 pattern 误杀**）。
 - **每 slice 后** `biome check --write <files>`（formatter diff 当 error）；commit 前问用户。
+- **switch-initiating 路由必豁免 mutation tracking**：任何 handler 内部会调 `switchProfile`（drain in-flight mutation 后换库）的
+  mutating 路由，必须进 `server.ts:SWITCH_INITIATING_PATHS`，否则该请求自己被 track → drain 等自己 → 自死锁。现有成员
+  `/sync/switch` + `/auth/login`。**症状**：node:test 报 `Promise resolution is still pending but the event loop has already
+  resolved`（inject 永不返回）；用 standalone `buildServer`+inject repro（脚本放 `packages/daemon/`，bare import 解析 node_modules）逐步定位。
+- **改 `readSyncStatus`（或任何读 `ctx.config` 的共享函数）会波及 broadcaster/bridge 的 minimal ctx stub**：
+  `status-broadcaster.test`/`sse-bridge.test`/`sse-bridge.skybridge.e2e` 的 `makeCtx` 历史上省略 `config`（非空字段），靠
+  `readSyncStatus` 旧实现不读 config 而侥幸通过；新增 `ctx.config.daemon` 访问后全 `TypeError: ...reading 'daemon'`。补
+  `config: structuredClone(DEFAULT_CONFIG)` + 用 `as unknown as AppContext`（非 `as any`，免 `noExplicitAny` warning + 免 biome-ignore 错位）。
+- **node --test 单文件 vs 全 glob**：`node --test <单文件>` 无 `--test-force-exit` 时，cloudLogin 系测试因后台句柄/pending promise
+  会挂（`just test-daemon` 用 `--test-force-exit` 故全绿）；调试单测加 `--test-name-pattern` + `--test-force-exit`，但**最终判定以
+  `just test-daemon` / `just test-skybridge-e2e` 全 glob 为准**。
