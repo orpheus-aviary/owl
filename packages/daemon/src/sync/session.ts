@@ -143,7 +143,28 @@ export interface SkybridgeClientModule {
     serverUrl: string;
     token: string;
     user: { id: string; email: string };
+    /** 0.1.4 — present after login; anchors the profileId (D11/R5). */
+    serverId?: string;
+    /** 0.1.4 — rotating refresh token. */
+    refreshToken?: string;
+    /** 0.1.4 — access-token expiry (Unix ms). */
+    expiresAt?: number;
   }>;
+  /**
+   * 0.1.4 — exchange a refresh token for a fresh access (+ rotated refresh).
+   * Unauthenticated (the old access may be expired). Used by the cloud daemon's
+   * refresh timer (Phase A A3); on REFRESH_INVALID the caller forces re-login.
+   */
+  refresh(
+    serverUrl: string,
+    refreshToken: string,
+  ): Promise<{ token: string; refreshToken?: string; expiresAt?: number }>;
+  /**
+   * 0.1.4 — read a server's identity (the profileId anchor). Unauthenticated.
+   * Used by `owl-server compute-owner` (Phase A A3) to derive the owner
+   * profileId without standing up the daemon.
+   */
+  getServerInfo(serverUrl: string): Promise<{ serverId: string }>;
   createSkybridgeClient(opts: {
     authContext: SkybridgeAuthContext;
     deviceId?: string;

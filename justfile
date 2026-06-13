@@ -66,8 +66,14 @@ renderer-owlapi-confined:
 shared-no-node-electron:
     bash scripts/check-shared-no-node-electron.sh
 
+# Phase A (A3) — the cloud CredentialStore must stay RAM-only (no fs / disk
+# write), preserving the "daemon never persists credentials" invariant (§7.7).
 [group('lint')]
-check: lint typecheck core-convergence token-not-templated daemon-no-electron-storage no-prod-env-token session-body-not-logged daemon-no-toml-write renderer-owlapi-confined shared-no-node-electron
+cloud-creds-no-disk:
+    bash scripts/check-cloud-creds-no-disk.sh
+
+[group('lint')]
+check: lint typecheck core-convergence token-not-templated daemon-no-electron-storage no-prod-env-token session-body-not-logged daemon-no-toml-write renderer-owlapi-confined shared-no-node-electron cloud-creds-no-disk
     @echo "All checks passed."
 
 # ─── Test ───────────────────────────────────────────────

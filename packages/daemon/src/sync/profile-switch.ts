@@ -19,7 +19,17 @@
  * writing toml/session (split-brain).
  */
 
-import { type Logger, createDatabase, ensureDeviceId, ensureSpecialNotes } from '@owl/core';
+import { mkdirSync } from 'node:fs';
+import { dirname } from 'node:path';
+import {
+  LOCAL_PROFILE,
+  type Logger,
+  createDatabase,
+  ensureDeviceId,
+  ensureSpecialNotes,
+  isHexProfileId,
+  paths,
+} from '@owl/core';
 import { ConversationStore } from '../ai/conversations.js';
 import { PreviewStore } from '../ai/preview-store.js';
 import type { AppContext } from '../context.js';
@@ -92,4 +102,38 @@ export async function switchProfile(
   }
 
   return { warnings };
+}
+
+/** Thrown when a profile_id is neither `local` nor a 32-hex id. */
+export class InvalidProfileIdError extends Error {
+  readonly code = 'USAGE_ERROR';
+  constructor(profileId: unknown) {
+    super(`invalid profile_id: ${JSON.stringify(profileId)}`);
+    this.name = 'InvalidProfileIdError';
+  }
+}
+
+/**
+ * Map a profileId to its owl.db path: `local` → the local db; a 32-hex id →
+ * `profiles/<id>/owl.db` (its dir is created here — a first login has none yet
+ * and `createDatabase` won't mkdir). Throws `InvalidProfileIdError` otherwise.
+ * Shared by the `/sync/switch` route and the cloud self-login chain (A3/A4).
+ */
+export function profileDbPathFor(profileId: string): string {
+  if (profileId === LOCAL_PROFILE) return paths.localProfileDbPath();
+  if (isHexProfileId(profileId)) {
+    const dbPath = paths.profileDbPath(profileId);
+    mkdirSync(dirname(dbPath), { recursive: true });
+    return dbPath;
+  }
+  throw new InvalidProfileIdError(profileId);
+}
+
+/** Switch the daemon onto a profile by id (maps to its db path, then switches). */
+export function switchToProfileId(
+  ctx: AppContext,
+  profileId: string,
+  logger: Logger,
+): Promise<SwitchProfileResult> {
+  return switchProfile(ctx, profileDbPathFor(profileId), logger);
 }

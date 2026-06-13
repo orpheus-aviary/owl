@@ -23,14 +23,11 @@
  * `codeForError`) so the §5.4 error_code matrix lives in one place.
  */
 
-import { mkdirSync } from 'node:fs';
-import { dirname } from 'node:path';
 import {
   LOCAL_PROFILE,
   SkybridgeAuthRequiredError,
   clearSyncIdentity,
   isHexProfileId,
-  paths,
   readSkybridgeDeviceId,
 } from '@owl/core';
 import type { FastifyInstance } from 'fastify';
@@ -45,7 +42,7 @@ import {
   statusForError,
   translateSkybridgeError,
 } from '../sync/manual.js';
-import { switchProfile } from '../sync/profile-switch.js';
+import { switchToProfileId } from '../sync/profile-switch.js';
 import {
   type InstallSessionInput,
   installSkybridgeSession,
@@ -161,21 +158,15 @@ export function registerSyncRoutes(app: FastifyInstance, ctx: AppContext): void 
       fail(reply, 400, 'missing required field: profile_id', 'USAGE_ERROR');
       return;
     }
-    let targetDbPath: string;
-    if (profileId === LOCAL_PROFILE) {
-      targetDbPath = paths.localProfileDbPath();
-    } else if (isHexProfileId(profileId)) {
-      targetDbPath = paths.profileDbPath(profileId);
-      // createDatabase opens the file directly and won't mkdir — a first login
-      // to a new account has no profiles/<id>/ dir yet, so create it here or
-      // the open fails with SQLITE_CANTOPEN.
-      mkdirSync(dirname(targetDbPath), { recursive: true });
-    } else {
+    if (profileId !== LOCAL_PROFILE && !isHexProfileId(profileId)) {
       fail(reply, 400, `invalid profile_id: ${JSON.stringify(profileId)}`, 'USAGE_ERROR');
       return;
     }
     try {
-      const { warnings } = await switchProfile(ctx, targetDbPath, ctx.logger);
+      // profileDbPathFor (inside switchToProfileId) maps local → owl/owl.db, a
+      // hex id → profiles/<id>/owl.db (mkdir'ing its dir — a first login has
+      // none yet and createDatabase won't mkdir).
+      const { warnings } = await switchToProfileId(ctx, profileId, ctx.logger);
       const deviceId = readSkybridgeDeviceId(ctx.sqlite);
       ctx.logger.info(
         {
