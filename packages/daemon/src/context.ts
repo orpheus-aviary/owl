@@ -10,6 +10,7 @@ import type { EventsBus } from './events/bus.js';
 import type { ReminderScheduler } from './scheduler.js';
 import type { BridgeHandle } from './sync/bridge-lifecycle.js';
 import type { SyncSchedulerHandle } from './sync/scheduler.js';
+import type { SkybridgeClientModule } from './sync/session.js';
 import type { SkybridgeSession } from './sync/session.js';
 import type { SwitchGate } from './sync/switch-gate.js';
 
@@ -87,4 +88,11 @@ export interface AppContext {
    * long delays (>2^31ms) to avoid the 32-bit setTimeout overflow.
    */
   refreshTimer?: ReturnType<typeof setTimeout> | null;
+  /**
+   * Phase A (A4) — test override for the skybridge SDK loader used by the cloud
+   * login chain (`POST /auth/login`). Production leaves this undefined so
+   * `cloudLogin` falls back to the real dynamic import; tests inject a mock
+   * module (mirrors `llmClientFactory`).
+   */
+  skybridgeLoader?: () => Promise<SkybridgeClientModule>;
 }

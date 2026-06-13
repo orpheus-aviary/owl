@@ -78,12 +78,15 @@ describe('auth preHandler — cloud mode', () => {
     sqlite.close();
   });
 
-  it('treats POST /auth/login as public (404 not-yet-registered, not 401)', async () => {
+  it('treats POST /auth/login as public (reaches the handler, not 401)', async () => {
     const { ctx, sqlite, scheduler } = buildCtx(cloudConfig());
     const app = buildServer(ctx);
     await app.ready();
     const res = await app.inject({ method: 'POST', url: '/auth/login', payload: {} });
-    assert.equal(res.statusCode, 404); // route lands in A4; preHandler must not 401 it
+    // The A4 route now exists; an empty body fails validation (400), proving
+    // the preHandler let it through without a bearer rather than 401-ing it.
+    assert.equal(res.statusCode, 400);
+    assert.equal(res.json().error_code, 'USAGE_ERROR');
     scheduler.stop();
     await app.close();
     sqlite.close();

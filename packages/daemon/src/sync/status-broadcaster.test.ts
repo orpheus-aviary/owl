@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { after, before, beforeEach, describe, it } from 'node:test';
-import { createDatabase, ensureDeviceId } from '@owl/core';
+import { DEFAULT_CONFIG, createDatabase, ensureDeviceId } from '@owl/core';
 import type Database from 'better-sqlite3';
 import type { AppContext } from '../context.js';
 import { EventsBus } from '../events/bus.js';
@@ -11,8 +11,12 @@ function makeStubCtx(): { ctx: AppContext; sqlite: Database.Database; bus: Event
   const { db, sqlite } = createDatabase({ dbPath: ':memory:' });
   ensureDeviceId(db);
   const bus = new EventsBus();
-  // biome-ignore lint/suspicious/noExplicitAny: minimal stub
-  const ctx: AppContext = { db, sqlite, eventsBus: bus } as any;
+  const ctx = {
+    db,
+    sqlite,
+    eventsBus: bus,
+    config: structuredClone(DEFAULT_CONFIG),
+  } as unknown as AppContext;
   return { ctx, sqlite, bus };
 }
 

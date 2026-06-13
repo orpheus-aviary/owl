@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { afterEach, beforeEach, describe, it } from 'node:test';
-import { type Logger, createDatabase, ensureDeviceId } from '@owl/core';
+import { DEFAULT_CONFIG, type Logger, createDatabase, ensureDeviceId } from '@owl/core';
 import type { AppContext } from '../context.js';
 import { EventsBus } from '../events/bus.js';
 import { backoffFor, createSseBridge } from './sse-bridge.js';
@@ -110,8 +110,13 @@ function makeCtx(): AppContext {
     error: () => {},
     debug: () => {},
   };
-  // biome-ignore lint/suspicious/noExplicitAny: minimal stub
-  return { db, sqlite, eventsBus: new EventsBus(), logger: noopLogger } as any;
+  return {
+    db,
+    sqlite,
+    eventsBus: new EventsBus(),
+    logger: noopLogger,
+    config: structuredClone(DEFAULT_CONFIG),
+  } as unknown as AppContext;
 }
 
 // ─── tests ───────────────────────────────────────────────────────────

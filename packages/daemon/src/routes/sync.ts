@@ -30,7 +30,7 @@ import {
   isHexProfileId,
   readSkybridgeDeviceId,
 } from '@owl/core';
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyReply } from 'fastify';
 import type { AppContext } from '../context.js';
 import { fail, ok } from '../response.js';
 import { ensureBackgroundHandles, stopBackgroundHandles } from '../sync/bridge-lifecycle.js';
@@ -153,6 +153,7 @@ export function registerSyncRoutes(app: FastifyInstance, ctx: AppContext): void 
   // /sync/switch arriving mid-switch still gets a 503 (the gate's isSwitching
   // check runs first).
   app.post('/sync/switch', async (req, reply) => {
+    if (cloudForbidden(ctx, reply)) return;
     const profileId = (req.body as { profile_id?: unknown } | undefined)?.profile_id;
     if (typeof profileId !== 'string' || profileId.length === 0) {
       fail(reply, 400, 'missing required field: profile_id', 'USAGE_ERROR');
@@ -187,6 +188,7 @@ export function registerSyncRoutes(app: FastifyInstance, ctx: AppContext): void 
   // P5-d Phase 6 — install session via HTTP. Do NOT log req.body or any
   // token-bearing field here; only a redacted summary at the end.
   app.post('/sync/session', async (req, reply) => {
+    if (cloudForbidden(ctx, reply)) return;
     const raw = (req.body ?? {}) as Partial<InstallSessionInput>;
     const validation = validateSessionBody(raw);
     if (!validation.ok) {
@@ -227,6 +229,7 @@ export function registerSyncRoutes(app: FastifyInstance, ctx: AppContext): void 
   // syncEndpointKey(serverUrl, workspaceId) so a same-workspace re-login
   // resumes from the same `pulled_seq`.
   app.post('/sync/logout-local', async (_req, reply) => {
+    if (cloudForbidden(ctx, reply)) return;
     try {
       stopBackgroundHandles(ctx);
       ctx.skybridgeSession = null;
@@ -237,6 +240,23 @@ export function registerSyncRoutes(app: FastifyInstance, ctx: AppContext): void 
       fail(reply, statusForError(err), messageForError(err), codeForError(err));
     }
   });
+}
+
+/**
+ * Phase A (A4, §4.3 ③) — the GUI-main plumbing endpoints (`/sync/session`,
+ * `/sync/switch`, `/sync/logout-local`) install/switch/release the Layer-1
+ * binding directly, bypassing account_lock + the cloud lifecycle. A cloud
+ * daemon owns its own binding via `/auth/login` + `/auth/logout`, so these are
+ * disabled there — 404 even for an authenticated client (the A2 bearer gate
+ * only stops unauthenticated callers). local mode keeps them (GUI main owns the
+ * binding). Returns true when it has already replied.
+ */
+function cloudForbidden(ctx: AppContext, reply: FastifyReply): boolean {
+  if (ctx.config.daemon.mode === 'cloud') {
+    fail(reply, 404, 'not available in cloud mode', 'NOT_FOUND');
+    return true;
+  }
+  return false;
 }
 
 type SessionValidationOk = { ok: true; input: InstallSessionInput };

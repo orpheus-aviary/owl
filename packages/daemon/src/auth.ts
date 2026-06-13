@@ -96,9 +96,23 @@ export class SessionStore {
     for (const token of [...this.sessions.keys()]) this.revoke(token);
   }
 
-  /** Live session count (status / tests). */
+  /** Session count including any expired-but-not-yet-swept entries. */
   get size(): number {
     return this.sessions.size;
+  }
+
+  /**
+   * Count of currently non-expired sessions (without sliding their TTL). The
+   * `account_lock='off'` release rule (§5.3) keys off this: a different account
+   * may only preempt the current binding once it has zero live clients.
+   */
+  liveCount(): number {
+    const t = this.now();
+    let n = 0;
+    for (const session of this.sessions.values()) {
+      if (session.expiresAt > t) n++;
+    }
+    return n;
   }
 
   /** Start the periodic expiry sweep (idempotent). Unref'd so it never blocks exit. */

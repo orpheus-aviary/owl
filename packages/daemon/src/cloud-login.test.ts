@@ -24,7 +24,9 @@ import {
 } from '@owl/core';
 import { ConversationStore } from './ai/conversations.js';
 import { PreviewStore } from './ai/preview-store.js';
+import { SessionStore } from './auth.js';
 import {
+  AccountBusyError,
   AccountLockedError,
   SkybridgeServerTooOldError,
   cloudLogin,
@@ -269,6 +271,46 @@ describe('cloudLogin', () => {
     assert.equal(res.deviceId, 'dev-new', 'kept the bound device');
     assert.equal(spies.register, 1, 'multi-device login must not register again');
     assert.ok(ctx.skybridgeSession, 'session still bound');
+  });
+
+  it('off mode: a different account cannot preempt one with live sessions (§5.3)', async () => {
+    ctx = makeCtx(cloudConfig());
+    ctx.sessionStore = new SessionStore(60_000);
+    await cloudLogin(
+      ctx,
+      { email: 'a@test', password: 'pw' },
+      loader(mockSdk({ register: 0, logout: 0 })),
+    );
+    ctx.sessionStore.mint('any-profile'); // a live client of account A
+
+    await assert.rejects(
+      () =>
+        cloudLogin(
+          ctx,
+          { email: 'b@test', password: 'pw' },
+          loader(mockSdk({ register: 0, logout: 0 })),
+        ),
+      AccountBusyError,
+    );
+    assert.equal(ctx.credentialStore?.get()?.email, 'a@test', 'A is still bound');
+  });
+
+  it('off mode: a different account binds once the incumbent has no live sessions', async () => {
+    ctx = makeCtx(cloudConfig());
+    ctx.sessionStore = new SessionStore(60_000);
+    await cloudLogin(
+      ctx,
+      { email: 'a@test', password: 'pw' },
+      loader(mockSdk({ register: 0, logout: 0 })),
+    );
+    // No Layer-2 sessions live → A is free → B may take over.
+    const res = await cloudLogin(
+      ctx,
+      { email: 'b@test', password: 'pw' },
+      loader(mockSdk({ register: 0, logout: 0 })),
+    );
+    assert.equal(res.email, 'b@test');
+    assert.equal(ctx.credentialStore?.get()?.email, 'b@test', 'B is now bound');
   });
 
   it('compensation: a mid-chain failure tears down + best-effort remote logout', async () => {

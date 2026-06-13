@@ -5,6 +5,7 @@ import { type Session, bearerToken, ensureSessionStore, isPublicPath } from './a
 import type { AppContext } from './context.js';
 import { fail } from './response.js';
 import { registerAiRoutes } from './routes/ai.js';
+import { registerAuthRoutes } from './routes/auth.js';
 import { registerConfigRoutes } from './routes/config.js';
 import { registerConflictsRoutes } from './routes/conflicts.js';
 import { registerEventsRoutes } from './routes/events.js';
@@ -25,12 +26,22 @@ const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
  * switch-initiating request would deadlock it against itself (P5-d Phase 15).
  * They still get a 503 if a switch is already running (the isSwitching check
  * below runs first).
+ *
+ * Phase A A4 — `POST /auth/login` joins this set: the cloud self-login chain
+ * runs `switchToProfileId` → `switchProfile` in-handler (first login / return
+ * visit / off-mode account swap), so tracking the login request would deadlock
+ * the drain against the very request driving it.
  */
-const SWITCH_INITIATING_PATHS = new Set(['/sync/switch']);
+const SWITCH_INITIATING_PATHS = new Set(['/sync/switch', '/auth/login']);
 
 export function buildServer(ctx: AppContext) {
   const app = Fastify({
     logger: false, // We use our own pino logger
+    // Phase A A4 — only read X-Forwarded-For (and thus base req.ip on it) when
+    // the operator has put a trusted reverse proxy in front (cloud deploys).
+    // The /auth/login per-IP throttle keys off req.ip; without a proxy it would
+    // be the loopback address and meaningless. Defaults off (desktop unchanged).
+    trustProxy: ctx.config.daemon.trust_proxy === true,
   });
 
   // CORS (Phase A A1) — replace `origin: true` with a mode-aware allowlist:
@@ -127,6 +138,7 @@ export function buildServer(ctx: AppContext) {
   registerTodoRoutes(app, ctx);
   registerConfigRoutes(app, ctx);
   registerAiRoutes(app, ctx);
+  registerAuthRoutes(app, ctx);
   registerSystemRoutes(app);
   registerEventsRoutes(app, ctx);
   registerSyncRoutes(app, ctx);

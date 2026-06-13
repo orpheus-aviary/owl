@@ -68,6 +68,20 @@ export class AccountLockedError extends Error {
   }
 }
 
+/**
+ * `account_lock='off'`: a different account tried to bind while the currently
+ * bound account still has live client sessions (§5.3 — "Y never preempts a
+ * live X"). The incumbent must fully log out (or its sessions must lapse)
+ * first.
+ */
+export class AccountBusyError extends Error {
+  readonly code = 'ACCOUNT_BUSY';
+  constructor() {
+    super('another account is in use on this instance; ask them to log out first');
+    this.name = 'AccountBusyError';
+  }
+}
+
 // ─── Login mutex (per-ctx; isolates the dual-profile e2e) ─────────────
 
 class Mutex {
@@ -207,25 +221,24 @@ async function cloudLoginImpl(
     return resultFrom(store.get() as CloudCredentials);
   }
 
+  // Reaching here means a DIFFERENT account is binding (only possible under
+  // account_lock='off' — the locked-owner case is already rejected above).
+  // §5.3 release rule: never preempt an incumbent that still has live clients.
+  if (current && (ctx.sessionStore?.liveCount() ?? 0) > 0) {
+    throw new AccountBusyError();
+  }
+
   let switched = false;
   try {
-    let device: DeviceSection;
-    let workspace: { id: string; slug?: string };
-
-    if (existsSync(paths.profileDbPath(profileId))) {
-      // Return visit — switch first, reuse the persisted device (else register).
-      await switchToProfileId(ctx, profileId, ctx.logger);
-      switched = true;
-      const remembered = readSkybridgeDeviceId(ctx.sqlite);
-      device = remembered ? synthDevice(sb, remembered) : await registerNewDevice(sb, authContext);
-      workspace = await ensureOwlWorkspace(sb, authContext, device.id);
-    } else {
-      // First login — register + ensure remotely, then switch (creates empty db).
-      device = await registerNewDevice(sb, authContext);
-      workspace = await ensureOwlWorkspace(sb, authContext, device.id);
-      await switchToProfileId(ctx, profileId, ctx.logger);
-      switched = true;
-    }
+    const { device, workspace } = await resolveBindingAndSwitch(
+      ctx,
+      sb,
+      authContext,
+      profileId,
+      () => {
+        switched = true;
+      },
+    );
 
     await rebindSession(
       ctx,
@@ -239,6 +252,11 @@ async function cloudLoginImpl(
       },
       sb,
     );
+
+    // Binding a new account: drop any lingering Layer-2 sessions from the prior
+    // binding so a stale token can't reach the new account's data. No-op on a
+    // first login (nothing minted yet); the gate above guarantees none are live.
+    ctx.sessionStore?.revokeAll();
 
     store.set({
       serverUrl: auth.serverUrl,
@@ -266,19 +284,63 @@ async function cloudLoginImpl(
       workspaceId: workspace.id,
     };
   } catch (err) {
-    // Compensation: revoke the freshly-minted token + return the daemon to a
-    // safe baseline (local db) + drop partial state. Never throws from here.
-    await bestEffortRemoteLogout(sb, authContext);
-    if (switched) {
-      try {
-        await switchToProfileId(ctx, 'local', ctx.logger);
-      } catch {
-        // best-effort rollback
-      }
-    }
-    teardownCloudSession(ctx);
+    await compensateFailedLogin(ctx, sb, authContext, switched);
     throw err;
   }
+}
+
+/**
+ * Two-branch device/workspace resolution + switch onto the profile db (design
+ * §2.2). Return-visit (db exists) switches first and reuses the persisted
+ * device; first-login registers/ensures remotely then switches (creating an
+ * empty db). Always ends switched onto `profileId` on success; may throw after
+ * switching, so it signals the switch via `markSwitched` for the caller's
+ * rollback.
+ */
+async function resolveBindingAndSwitch(
+  ctx: AppContext,
+  sb: SkybridgeClientModule,
+  authContext: SkybridgeAuthContext,
+  profileId: string,
+  markSwitched: () => void,
+): Promise<{ device: DeviceSection; workspace: { id: string; slug?: string } }> {
+  if (existsSync(paths.profileDbPath(profileId))) {
+    await switchToProfileId(ctx, profileId, ctx.logger);
+    markSwitched();
+    const remembered = readSkybridgeDeviceId(ctx.sqlite);
+    const device = remembered
+      ? synthDevice(sb, remembered)
+      : await registerNewDevice(sb, authContext);
+    const workspace = await ensureOwlWorkspace(sb, authContext, device.id);
+    return { device, workspace };
+  }
+  const device = await registerNewDevice(sb, authContext);
+  const workspace = await ensureOwlWorkspace(sb, authContext, device.id);
+  await switchToProfileId(ctx, profileId, ctx.logger);
+  markSwitched();
+  return { device, workspace };
+}
+
+/**
+ * Failure compensation (ported from sync-auth.ts:324): revoke the freshly-minted
+ * token + return the daemon to a safe baseline (local db) + drop partial state.
+ * Never throws.
+ */
+async function compensateFailedLogin(
+  ctx: AppContext,
+  sb: SkybridgeClientModule,
+  authContext: SkybridgeAuthContext,
+  switched: boolean,
+): Promise<void> {
+  await bestEffortRemoteLogout(sb, authContext);
+  if (switched) {
+    try {
+      await switchToProfileId(ctx, 'local', ctx.logger);
+    } catch {
+      // best-effort rollback
+    }
+  }
+  teardownCloudSession(ctx);
 }
 
 /** §5.1 — a locked instance rejects any account other than its owner. */
@@ -306,6 +368,24 @@ export function teardownCloudSession(ctx: AppContext): void {
   ctx.skybridgeSession = null;
   ctx.credentialStore?.clear();
   ctx.sessionStore?.revokeAll();
+}
+
+/**
+ * "Log out all" (owner action, §5.3): revoke the skybridge token server-side
+ * (best-effort) so it can't be replayed, then run the full Layer-1 teardown.
+ * Distinct from a single-session logout, which only drops that client's Layer-2
+ * token and leaves the account bound.
+ */
+export async function logoutAllCloudSessions(ctx: AppContext): Promise<void> {
+  const client = ctx.skybridgeSession?.realClient;
+  if (client) {
+    try {
+      await client.logout();
+    } catch {
+      // best-effort remote revoke — the token expires on its own if this fails
+    }
+  }
+  teardownCloudSession(ctx);
 }
 
 async function registerNewDevice(

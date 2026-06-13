@@ -303,6 +303,12 @@ interface CursorRow {
 }
 
 export function readSyncStatus(ctx: AppContext): SyncStatusResult {
+  // Phase A (A4, §6 / §9 #7) — a cloud daemon never writes skybridge_config.toml
+  // (credentials are RAM-only), so the toml path below would always report
+  // `configured:false`. Read the binding from the in-RAM CredentialStore /
+  // installed session instead; cursor + pending still come from sqlite.
+  if (ctx.config.daemon.mode === 'cloud') return readCloudSyncStatus(ctx);
+
   const cfgPath = skybridgeConfigPath();
   let config: SkybridgeConfig | null = null;
   try {
@@ -311,14 +317,7 @@ export function readSyncStatus(ctx: AppContext): SyncStatusResult {
     config = null;
   }
   const serverUrl = config?.server.url ?? null;
-  const cursorRow = serverUrl
-    ? (ctx.sqlite
-        .prepare('SELECT pulled_seq, pushed_seq, updated_at FROM sync_cursor WHERE endpoint = ?')
-        .get(serverUrl) as CursorRow | undefined)
-    : undefined;
-  const pendingRow = ctx.sqlite
-    .prepare('SELECT count(*) AS n FROM sync_changes WHERE synced_at IS NULL')
-    .get() as { n: number };
+  const cursor = readCursor(ctx, serverUrl);
   return {
     configured: config !== null,
     // Per-profile configs store credentials as `encrypted_token` (the daemon
@@ -329,11 +328,45 @@ export function readSyncStatus(ctx: AppContext): SyncStatusResult {
     server_url: serverUrl,
     device_id: config?.device?.id ?? null,
     workspace_id: config?.workspace?.id ?? null,
-    pending_count: pendingRow.n,
-    pulled_seq: cursorRow?.pulled_seq ?? 0,
-    pushed_seq: cursorRow?.pushed_seq ?? 0,
-    last_sync_at: cursorRow?.updated_at ?? null,
+    pending_count: readPendingCount(ctx),
+    pulled_seq: cursor?.pulled_seq ?? 0,
+    pushed_seq: cursor?.pushed_seq ?? 0,
+    last_sync_at: cursor?.updated_at ?? null,
   };
+}
+
+/** Cloud status source: the RAM Layer-1 binding, not toml. */
+function readCloudSyncStatus(ctx: AppContext): SyncStatusResult {
+  const creds = ctx.credentialStore?.get() ?? null;
+  const session = ctx.skybridgeSession;
+  const serverUrl = creds?.serverUrl ?? session?.serverUrl ?? null;
+  const bound = creds !== null || session !== null;
+  const cursor = readCursor(ctx, serverUrl);
+  return {
+    configured: bound,
+    authenticated: bound,
+    server_url: serverUrl,
+    device_id: creds?.deviceId ?? session?.deviceId ?? null,
+    workspace_id: creds?.workspaceId ?? session?.workspaceId ?? null,
+    pending_count: readPendingCount(ctx),
+    pulled_seq: cursor?.pulled_seq ?? 0,
+    pushed_seq: cursor?.pushed_seq ?? 0,
+    last_sync_at: cursor?.updated_at ?? null,
+  };
+}
+
+function readCursor(ctx: AppContext, serverUrl: string | null): CursorRow | undefined {
+  if (!serverUrl) return undefined;
+  return ctx.sqlite
+    .prepare('SELECT pulled_seq, pushed_seq, updated_at FROM sync_cursor WHERE endpoint = ?')
+    .get(serverUrl) as CursorRow | undefined;
+}
+
+function readPendingCount(ctx: AppContext): number {
+  const row = ctx.sqlite
+    .prepare('SELECT count(*) AS n FROM sync_changes WHERE synced_at IS NULL')
+    .get() as { n: number };
+  return row.n;
 }
 
 // ─── Status helpers for routing layer ─────────────────────────────────
