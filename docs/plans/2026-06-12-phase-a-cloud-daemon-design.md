@@ -334,3 +334,37 @@ cloud 模式（`config.ts`）：
 ---
 
 *（v2.1，不含代码。评审收口后按 §7 slice 拆 commit 实现，A0 起手——本稿落地后即开工 A0。）*
+
+---
+
+## 实施记录（2026-06-13）
+
+**A0–A3 已实现 + 全绿，6 commit 落本地 `main`（未 push）**。基线：core **529** / cli **137** /
+daemon **364** / gui **406** + gated e2e **25**；`just check` **9 守卫**（+`cloud-creds-no-disk`）。
+**桌面端零行为变更**，唯一触及 local 的是 A1 的 CORS/Host 收紧（已 `just dev` 真机验证无回归）。
+
+| slice | commit | 内容 | 测试 Δ |
+|-------|--------|------|--------|
+| A0 | `d92b958` | `[daemon].mode/bind` + 7 cloud 字段 + `DEFAULT_CONFIG` + shared mirror；`startup-guard.ts` 6 守卫（mode×bind 红线 / cloud 缺 server_url / ①account_lock fail-closed / ⑤off+AI-key / ②public_url 无条件 / ⑥字段校验）；`cli.ts` guard 在 writePid 前 + bind 用 config | core +1, daemon +19 |
+| A1 | `ced4e00` | `access-guard.ts`（mode-aware `isOriginAllowed`/`isHostAllowed`/`corsOriginDelegate`）；`server.ts` CORS allowlist 替 `origin:true` + Host 校验 preHandler（403 `HOST_NOT_ALLOWED`） | daemon +18 |
+| A2 | `8fe81ec` | `auth.ts`（`SessionStore` RAM/滑动TTL/sweep/`onTeardown`；`bearerToken`/`isPublicPath`/`ensureSessionStore`）；auth preHandler（local no-op / cloud bearer，401 `SESSION_REQUIRED`/`SESSION_INVALID`）；`events.ts` 撤销关 SSE；ctx `sessionStore` | daemon +21 |
+| A3a | `64dbfc0` | SDK duck-type ext（login→serverId/refreshToken/expiresAt + `refresh`/`getServerInfo`）；`profileDbPathFor`/`switchToProfileId`（DRY `/sync/switch`）；`CredentialStore`（RAM）+ `cloud-creds-no-disk` 守卫 | daemon +5 |
+| A3b | `3ab2b07` | `cloud-login.ts`：`cloudLogin`（两分支 + multi-device 捷径 + account_lock owner 检查 + 失败补偿 + per-ctx login mutex）；`rebindSession`；refresh（`scheduleRefresh` 自重排防溢出 + `refreshCloudSession` rotate+rebind / 失败 teardown）；`installSkybridgeSession` 加可选 sb 参数（mock 穿透）；ctx `credentialStore`/`refreshTimer`；`RealSkybridgeClient.logout` | daemon +9 |
+| A3c | `2d495e3` | `computeOwnerProfileId` + `owl-server compute-owner` CLI（hidden prompt / `--password-stdin`，只打印 profileId） | daemon +2 |
+
+### A4（下一步，capstone）
+- `POST /auth/login`（wire `cloudLogin` → 铸 Layer-2 session + 限速/退避；key=email+global，per-IP 仅 `trust_proxy`）/`POST /auth/logout`(单/all→`teardownCloudSession`)/`GET /auth/session`（whoami，public allowlist 已含 `/auth/login`）。
+- **cloud 禁用 GUI-main plumbing**：`/sync/session`+`/sync/switch`+`/sync/logout-local`（§4.3 ③；现仅 A2 bearer 挡得住，但同账号 bearer 仍能调 → 需 mode==='cloud' 显式 404/403）。
+- **account_lock `off` 释放规则**（§5.3）：Y 顶活着的 X → 拒（查 `SessionStore` 有无活跃 session）；`cloudLogin` 现允许 off 切换（A3 留的 gap，A4 补）。
+- **`readSyncStatus` cloud 状态源**（§6 末 / §9 #7）：cloud 从 `CredentialStore`/`ctx.skybridgeSession` 取 configured/server_url/device/workspace，非 toml（`manual.ts:305`）。
+- **真·本地 skybridge 端到端冒烟**（A4 才跑得通）：起本地 skybridge → cloud daemon → `POST /auth/login` 真密码 → token → 鉴权 CRUD → 401 → account_lock 拒 → 重启重登 → device reuse。
+
+### carry-forward（复用必看，下一会话坑）
+- **测试 = `node:test`（非 vitest）跑 `dist/**/*.test.js`** → 改 daemon 后必 `just build-daemon` 再 `just test-daemon`。
+- **`paths.nestDir()` 实时读 `OWL_NEST_DIR`** → cloud-login 集成测试 beforeEach 设 `process.env.OWL_NEST_DIR=tmp`（afterEach 用 `Reflect.deleteProperty` 还原，**不用 `delete` 运算符**——biome `noDelete`）。
+- **mock SDK 穿透**：`installSkybridgeSession(ctx,input,sb?)` 第 3 参注入 mock module → bridge 用 mock realClient（subscribeEvents 返 noop → 无网络/无 idle-watchdog 定时器）；测试 config 设 `sync.interval_min=0` 免 scheduler 定时器。
+- **cloud 测试 build server 绕过 A0 守卫**（buildServer 不跑 `assertDaemonStartupSafe`）→ 可直接造 cloud ctx；ctx.sessionStore/credentialStore 由 ensure* 在 buildServer/cloudLogin 内填。
+- **ABI**：standalone node daemon 冒烟前 `just ensure-node-abi`（GUI 关）；GUI spawn 的 daemon 是 Electron ABI，二者不能同跑。
+- **fish**：`env VAR=val cmd`（无 `VAR=val` 前缀）；无 heredoc（用 `printf`/Write）；`set X (cmd)` 命令替换对含 `[]` 的 pattern 会 parse error；`cmd; and cmd` 的 `and` 易踩 → 用普通顺序命令；后台进程 `$last_pid` 不一定有值，从 boot.log 抓 PID。
+- **本地/LAN 模拟 rig**：隔离 nest `/tmp/owl-aX/owl/owl_config.toml`（mode=cloud, server_url, account_lock=off, public_url, port），`env OWL_NEST_DIR=… node packages/daemon/dist/cli.js daemon`，curl 验证后 kill + `rm -rf`（**别用宽 pattern 误杀**）。
+- **每 slice 后** `biome check --write <files>`（formatter diff 当 error）；commit 前问用户。
