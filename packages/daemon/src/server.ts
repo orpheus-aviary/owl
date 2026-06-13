@@ -1,6 +1,7 @@
 import cors from '@fastify/cors';
 import Fastify, { type FastifyError } from 'fastify';
 import { corsOriginDelegate, isHostAllowed } from './access-guard.js';
+import { type Session, bearerToken, ensureSessionStore, isPublicPath } from './auth.js';
 import type { AppContext } from './context.js';
 import { fail } from './response.js';
 import { registerAiRoutes } from './routes/ai.js';
@@ -51,6 +52,30 @@ export function buildServer(ctx: AppContext) {
       fail(reply, 403, 'host not allowed', 'HOST_NOT_ALLOWED');
       return reply;
     }
+  });
+
+  // Phase A A2 — Layer-2 endpoint auth. In cloud mode every request outside the
+  // public allowlist must carry a valid bearer session token (minted by
+  // POST /auth/login in A4); in local mode this is a no-op (A6-前桌面零变更).
+  // Runs after the Host check, before the switch-gate so unauthenticated
+  // requests are never tracked as in-flight mutations. Sets req.session for
+  // downstream owner-gating (A4/A5).
+  const sessionStore = ensureSessionStore(ctx);
+  app.addHook('preHandler', async (req, reply) => {
+    if (ctx.config.daemon.mode === 'local') return;
+    if (isPublicPath(req.method, req.url)) return;
+    const token = bearerToken(req.headers.authorization);
+    const session = token ? sessionStore.verify(token) : null;
+    if (!session) {
+      fail(
+        reply,
+        401,
+        token ? 'invalid or expired session' : 'session required',
+        token ? 'SESSION_INVALID' : 'SESSION_REQUIRED',
+      );
+      return reply;
+    }
+    (req as { session?: Session }).session = session;
   });
 
   // P5-d Phase 14 — profile-switch gate. While `switchProfile` swaps the db

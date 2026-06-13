@@ -8,11 +8,12 @@ import {
   ensureDeviceId,
   ensureSpecialNotes,
 } from '@owl/core';
-import { DEFAULT_CONFIG, type OwlDatabase } from '@owl/core';
+import { DEFAULT_CONFIG, type OwlConfig, type OwlDatabase } from '@owl/core';
 import type Database from 'better-sqlite3';
 import { ConversationStore } from '../ai/conversations.js';
 import { PreviewStore } from '../ai/preview-store.js';
 import { createBuiltinRegistry } from '../ai/tools/index.js';
+import type { AppContext } from '../context.js';
 import { EventsBus } from '../events/bus.js';
 import { ReminderScheduler } from '../scheduler.js';
 import { buildServer } from '../server.js';
@@ -316,6 +317,97 @@ describe('events routes', () => {
     assert.equal(emitRes.statusCode, 200);
     assert.equal(emitRes.json().data.subscribers, 0);
 
+    await localApp.close();
+  });
+
+  // Phase A A2 — in cloud mode an /events stream is bound to a Layer-2 session;
+  // revoking it (logout / idle TTL) must actively end the stream.
+  it('cloud: revoking a session closes its open /events stream', async () => {
+    const localBus = new EventsBus();
+    const config: OwlConfig = {
+      ...structuredClone(DEFAULT_CONFIG),
+      daemon: {
+        ...DEFAULT_CONFIG.daemon,
+        mode: 'cloud',
+        server_url: 'http://127.0.0.1:18443',
+        account_lock: 'off',
+        public_url: 'http://127.0.0.1:47010',
+      },
+    };
+    const cloudCtx: AppContext = {
+      db,
+      sqlite,
+      config,
+      logger: createConsoleLogger('events-cloud-revoke', 'silent'),
+      deviceId: ensureDeviceId(db),
+      scheduler,
+      toolRegistry: createBuiltinRegistry(),
+      conversationStore: new ConversationStore(sqlite),
+      previewStore: new PreviewStore(),
+      eventsBus: localBus,
+      skybridgeSession: null,
+    };
+    const localApp = buildServer(cloudCtx);
+    await localApp.listen({ host: '127.0.0.1', port: 0 });
+    const port = (localApp.server.address() as { port: number }).port;
+
+    assert.ok(cloudCtx.sessionStore, 'cloud buildServer should populate ctx.sessionStore');
+    const stream = cloudCtx.sessionStore.mint('owner');
+
+    const ac = new AbortController();
+    const resp = await fetch(`http://127.0.0.1:${port}/events`, {
+      signal: ac.signal,
+      headers: { Accept: 'text/event-stream', Authorization: `Bearer ${stream.token}` },
+    });
+    assert.equal(resp.status, 200);
+    if (!resp.body) throw new Error('expected streaming body');
+    const reader = resp.body.getReader();
+    await reader.read(); // hello — subscription is now live
+    assert.equal(localBus.size(), 1);
+
+    // Revoke → the registered teardown unsubscribes + ends the stream synchronously.
+    cloudCtx.sessionStore.revoke(stream.token);
+    assert.equal(localBus.size(), 0, 'revoke should tear down the session-bound SSE stream');
+
+    ac.abort();
+    try {
+      await reader.cancel();
+    } catch {
+      // expected — the server already ended the stream
+    }
+    await localApp.close();
+  });
+
+  // Sanity: an unauthenticated /events connect is rejected in cloud mode (401),
+  // so streams only ever bind to a real session.
+  it('cloud: GET /events without a bearer is 401', async () => {
+    const config: OwlConfig = {
+      ...structuredClone(DEFAULT_CONFIG),
+      daemon: {
+        ...DEFAULT_CONFIG.daemon,
+        mode: 'cloud',
+        server_url: 'http://127.0.0.1:18443',
+        account_lock: 'off',
+        public_url: 'http://127.0.0.1:47010',
+      },
+    };
+    const cloudCtx: AppContext = {
+      db,
+      sqlite,
+      config,
+      logger: createConsoleLogger('events-cloud-noauth', 'silent'),
+      deviceId: ensureDeviceId(db),
+      scheduler,
+      toolRegistry: createBuiltinRegistry(),
+      conversationStore: new ConversationStore(sqlite),
+      previewStore: new PreviewStore(),
+      eventsBus: new EventsBus(),
+      skybridgeSession: null,
+    };
+    const localApp = buildServer(cloudCtx);
+    const res = await localApp.inject({ method: 'GET', url: '/events' });
+    assert.equal(res.statusCode, 401);
+    assert.equal(res.json().error_code, 'SESSION_REQUIRED');
     await localApp.close();
   });
 });

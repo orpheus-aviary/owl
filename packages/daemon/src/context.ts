@@ -4,6 +4,7 @@ import type { ConversationStore } from './ai/conversations.js';
 import type { LlmClient } from './ai/llm-client.js';
 import type { PreviewStore } from './ai/preview-store.js';
 import type { ToolRegistry } from './ai/tool-registry.js';
+import type { SessionStore } from './auth.js';
 import type { EventsBus } from './events/bus.js';
 import type { ReminderScheduler } from './scheduler.js';
 import type { BridgeHandle } from './sync/bridge-lifecycle.js';
@@ -65,4 +66,11 @@ export interface AppContext {
    * profiles compile unchanged.
    */
   switchGate?: SwitchGate;
+  /**
+   * Phase A (A2) — Layer-2 browser-session registry (in-RAM, cloud only).
+   * Lazily created by `ensureSessionStore` in buildServer. Optional so inline
+   * test contexts compile unchanged. Never consulted in local mode (the auth
+   * preHandler no-ops there).
+   */
+  sessionStore?: SessionStore;
 }

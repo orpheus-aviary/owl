@@ -151,6 +151,8 @@ program
       // P5-c §2.2-bis: bridge + sync scheduler live on ctx so mid-session
       // restart can swap them; stopBackgroundHandles reads + clears both.
       stopBackgroundHandles(ctx);
+      // Phase A A2 — stop the Layer-2 session sweep timer (cloud only).
+      ctx.sessionStore?.stopSweep();
       removePid();
       // server.close() triggers fastify's preClose → onClose chain. The
       // /events route registers a preClose hook that ends live SSE streams

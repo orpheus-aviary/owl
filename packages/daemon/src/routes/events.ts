@@ -1,6 +1,7 @@
 import { getNote } from '@owl/core';
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import { endSse, initSse, sendSseEvent } from '../ai/sse.js';
+import type { Session } from '../auth.js';
 import type { AppContext } from '../context.js';
 import { fail, ok } from '../response.js';
 
@@ -42,14 +43,29 @@ export function registerEventsRoutes(app: FastifyInstance, ctx: AppContext) {
       reply.raw.write(':\n\n');
     }, KEEPALIVE_MS);
 
+    // Phase A A2 — in cloud mode the stream is bound to a Layer-2 session;
+    // revoking/expiring it (logout, idle TTL) must actively end the stream
+    // (the auth preHandler only runs at connect time). `offTeardown` unregisters
+    // on natural socket close so a later revoke doesn't double-fire. The `done`
+    // guard makes cleanup idempotent across socket-close + teardown.
+    let done = false;
+    let offTeardown: (() => void) | undefined;
     const cleanup = () => {
+      if (done) return;
+      done = true;
       clearInterval(keepalive);
       unsubscribe();
       liveReplies.delete(reply);
+      offTeardown?.();
       endSse(reply);
     };
 
     req.raw.socket.on('close', cleanup);
+
+    const session = (req as { session?: Session }).session;
+    if (session && ctx.sessionStore) {
+      offTeardown = ctx.sessionStore.onTeardown(session.token, cleanup);
+    }
     // Do not return / await — hijack means fastify won't wait for this
     // handler. Stream lives until socket close OR preClose below.
   });
