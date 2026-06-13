@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { existsSync, mkdirSync } from 'node:fs';
+import readline from 'node:readline';
 import {
   IncompatibleDbError,
   LATEST_KNOWN_VERSION,
@@ -19,7 +20,7 @@ import { Command } from 'commander';
 import { ConversationStore } from './ai/conversations.js';
 import { PreviewStore } from './ai/preview-store.js';
 import { createBuiltinRegistry } from './ai/tools/index.js';
-import { clearRefreshTimer } from './cloud-login.js';
+import { clearRefreshTimer, computeOwnerProfileId } from './cloud-login.js';
 import type { AppContext } from './context.js';
 import { EventsBus } from './events/bus.js';
 import { isDaemonRunning, readPid, removePid, writePid } from './pid.js';
@@ -253,11 +254,74 @@ program
     }
   });
 
+// Phase A (A3c) — bootstrap helper for cloud `account_lock`. One-shot login →
+// print the owner profileId → discard the token. Never starts the daemon, so
+// it works even on an instance configured with a server-side AI key (the
+// §3.3 ① off-login fallback is blocked there by guard #4). Password comes from
+// an interactive hidden prompt, or `--password-stdin` for scripting.
+program
+  .command('compute-owner')
+  .description('Compute the owner profileId for [daemon].account_lock (does not start the daemon)')
+  .requiredOption('--server-url <url>', 'skybridge server URL')
+  .requiredOption('--email <email>', 'account email')
+  .option('--password-stdin', 'read the password from stdin instead of an interactive prompt')
+  .action(async (opts: { serverUrl: string; email: string; passwordStdin?: boolean }) => {
+    try {
+      const password = opts.passwordStdin
+        ? await readPasswordStdin()
+        : await promptHiddenPassword('Password: ');
+      const profileId = await computeOwnerProfileId({
+        serverUrl: opts.serverUrl,
+        email: opts.email,
+        password,
+      });
+      // profileId is the ONLY thing on stdout → pipe-friendly.
+      console.log(profileId);
+    } catch (err) {
+      console.error(`compute-owner failed: ${err instanceof Error ? err.message : String(err)}`);
+      process.exit(1);
+    }
+  });
+
 // `from: 'node'` is explicit so the CLI works both from plain node and from
 // Electron-as-Node (ELECTRON_RUN_AS_NODE=1). Without this, commander detects
 // `process.versions.electron` and only strips argv[0], misreading the script
 // path as the first subcommand.
 program.parse(process.argv, { from: 'node' });
+
+/** Read a password from stdin (everything up to the trailing newline). */
+async function readPasswordStdin(): Promise<string> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of process.stdin) chunks.push(chunk as Buffer);
+  return Buffer.concat(chunks)
+    .toString('utf-8')
+    .replace(/\r?\n$/, '');
+}
+
+/** Prompt for a password on a TTY without echoing it. */
+function promptHiddenPassword(prompt: string): Promise<string> {
+  return new Promise((resolve) => {
+    const rl = readline.createInterface({
+      input: process.stdin,
+      output: process.stdout,
+      terminal: true,
+    });
+    let prompted = false;
+    // Override readline's internal writer to print the prompt once and swallow
+    // the echo of typed characters.
+    (rl as unknown as { _writeToOutput: (s: string) => void })._writeToOutput = (): void => {
+      if (!prompted) {
+        process.stdout.write(prompt);
+        prompted = true;
+      }
+    };
+    rl.question(prompt, (answer) => {
+      rl.close();
+      process.stdout.write('\n');
+      resolve(answer);
+    });
+  });
+}
 
 // ─── Phase 6 helpers ─────────────────────────────────────────────────
 

@@ -28,6 +28,7 @@ import {
   AccountLockedError,
   SkybridgeServerTooOldError,
   cloudLogin,
+  computeOwnerProfileId,
   refreshCloudSession,
 } from './cloud-login.js';
 import type { AppContext } from './context.js';
@@ -327,5 +328,29 @@ describe('refreshCloudSession', () => {
     );
     assert.equal(ctx.credentialStore?.bound, false);
     assert.equal(ctx.skybridgeSession, null);
+  });
+});
+
+describe('computeOwnerProfileId (bootstrap helper)', () => {
+  it('returns computeProfileId(serverId, userId) + best-effort revokes the token', async () => {
+    const spies: Spies = { register: 0, logout: 0 };
+    const profileId = await computeOwnerProfileId(
+      { serverUrl: 'http://127.0.0.1:18443', email: 'a@test', password: 'pw' },
+      loader(mockSdk(spies)),
+    );
+    assert.equal(profileId, computeProfileId('srv-1', 'u-a@test'));
+    assert.equal(spies.logout, 1, 'one-shot login token revoked');
+  });
+
+  it('rejects a pre-0.1.4 server (no serverId)', async () => {
+    const spies: Spies = { register: 0, logout: 0 };
+    await assert.rejects(
+      () =>
+        computeOwnerProfileId(
+          { serverUrl: 'http://127.0.0.1:18443', email: 'a@test', password: 'pw' },
+          loader(mockSdk(spies, { noServerId: true })),
+        ),
+      SkybridgeServerTooOldError,
+    );
   });
 });

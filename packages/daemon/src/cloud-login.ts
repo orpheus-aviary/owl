@@ -121,6 +121,29 @@ function resolveDeps(deps: CloudLoginDeps): ResolvedDeps {
   return { loadClient: deps.loadClient ?? loadSkybridgeClient, now: deps.now ?? Date.now };
 }
 
+/**
+ * Bootstrap helper (A3c) — compute the owner profileId for `account_lock`
+ * without standing up the daemon. One-shot login (for the user_id) + serverId,
+ * then best-effort revoke the freshly-minted token. Powers `owl-server
+ * compute-owner` (the §3.3 ① primary bootstrap path; works even with a
+ * server-side AI key configured, since it never starts the service).
+ */
+export async function computeOwnerProfileId(
+  input: { serverUrl: string; email: string; password: string },
+  deps: Pick<CloudLoginDeps, 'loadClient'> = {},
+): Promise<string> {
+  const sb = await (deps.loadClient ?? loadSkybridgeClient)();
+  const auth = await sb.login(input.serverUrl, input.email, input.password);
+  if (!auth.serverId) throw new SkybridgeServerTooOldError();
+  const profileId = computeProfileId(auth.serverId, auth.user.id);
+  await bestEffortRemoteLogout(sb, {
+    serverUrl: auth.serverUrl,
+    token: auth.token,
+    user: auth.user,
+  });
+  return profileId;
+}
+
 /** Lazily create + cache the RAM credential store on ctx. */
 export function ensureCredentialStore(ctx: AppContext): CredentialStore {
   if (!ctx.credentialStore) ctx.credentialStore = new CredentialStore();
