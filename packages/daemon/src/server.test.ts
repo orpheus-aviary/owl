@@ -86,6 +86,27 @@ describe('daemon API', () => {
     assert.ok(body.data.endpoints.length > 0);
   });
 
+  // ── Phase A A1 — Host header check (local mode: loopback only) ──
+
+  it('rejects a non-loopback Host with 403 (anti DNS-rebinding)', async () => {
+    const res = await app.inject({
+      method: 'GET',
+      url: '/status',
+      headers: { host: 'evil.example.com' },
+    });
+    assert.equal(res.statusCode, 403);
+    assert.equal(res.json().error_code, 'HOST_NOT_ALLOWED');
+  });
+
+  it('allows an explicit loopback Host', async () => {
+    const res = await app.inject({
+      method: 'GET',
+      url: '/status',
+      headers: { host: '127.0.0.1:47010' },
+    });
+    assert.equal(res.statusCode, 200);
+  });
+
   // ── Notes CRUD ──
 
   let noteId: string;

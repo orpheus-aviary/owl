@@ -1,5 +1,6 @@
 import cors from '@fastify/cors';
 import Fastify, { type FastifyError } from 'fastify';
+import { corsOriginDelegate, isHostAllowed } from './access-guard.js';
 import type { AppContext } from './context.js';
 import { fail } from './response.js';
 import { registerAiRoutes } from './routes/ai.js';
@@ -31,10 +32,25 @@ export function buildServer(ctx: AppContext) {
     logger: false, // We use our own pino logger
   });
 
-  // CORS — allow GUI dev server and Electron renderer
+  // CORS (Phase A A1) — replace `origin: true` with a mode-aware allowlist:
+  // local = Electron renderer (loopback / file://-null) + localhost browser +
+  // CLI (no Origin); cloud = configured public_url + allowed_origins. See
+  // access-guard.ts.
   app.register(cors, {
-    origin: true,
+    origin: corsOriginDelegate(ctx.config),
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  });
+
+  // Phase A A1 — Host header check (anti DNS-rebinding; CORS can't stop a
+  // simple-request rebinding attack). Registered before the switch-gate so a
+  // spoofed Host is rejected before any route work. Loopback is always allowed;
+  // cloud additionally allows public_url / allowed_hosts. Preflight OPTIONS is
+  // handled by @fastify/cors (onRequest) and never reaches this preHandler.
+  app.addHook('preHandler', async (req, reply) => {
+    if (!isHostAllowed(ctx.config, req.headers.host)) {
+      fail(reply, 403, 'host not allowed', 'HOST_NOT_ALLOWED');
+      return reply;
+    }
   });
 
   // P5-d Phase 14 — profile-switch gate. While `switchProfile` swaps the db
