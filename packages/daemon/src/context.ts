@@ -5,6 +5,7 @@ import type { LlmClient } from './ai/llm-client.js';
 import type { PreviewStore } from './ai/preview-store.js';
 import type { ToolRegistry } from './ai/tool-registry.js';
 import type { SessionStore } from './auth.js';
+import type { CredentialStore } from './credential-store.js';
 import type { EventsBus } from './events/bus.js';
 import type { ReminderScheduler } from './scheduler.js';
 import type { BridgeHandle } from './sync/bridge-lifecycle.js';
@@ -73,4 +74,17 @@ export interface AppContext {
    * preHandler no-ops there).
    */
   sessionStore?: SessionStore;
+  /**
+   * Phase A (A3) — Layer-1 cloud credentials (in-RAM, never disk). Holds the
+   * skybridge token/refresh + resolved identity after the cloud self-login
+   * chain binds an account. Null/absent on local daemons and a fresh cloud
+   * daemon (owner re-logs-in after restart, §7.7).
+   */
+  credentialStore?: CredentialStore;
+  /**
+   * Phase A (A3) — proactive token-refresh timer handle (cloud only). Set by
+   * the cloud login chain, cleared on logout / shutdown. Re-arms itself for
+   * long delays (>2^31ms) to avoid the 32-bit setTimeout overflow.
+   */
+  refreshTimer?: ReturnType<typeof setTimeout> | null;
 }

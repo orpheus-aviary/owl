@@ -19,6 +19,7 @@ import { Command } from 'commander';
 import { ConversationStore } from './ai/conversations.js';
 import { PreviewStore } from './ai/preview-store.js';
 import { createBuiltinRegistry } from './ai/tools/index.js';
+import { clearRefreshTimer } from './cloud-login.js';
 import type { AppContext } from './context.js';
 import { EventsBus } from './events/bus.js';
 import { isDaemonRunning, readPid, removePid, writePid } from './pid.js';
@@ -153,6 +154,8 @@ program
       stopBackgroundHandles(ctx);
       // Phase A A2 — stop the Layer-2 session sweep timer (cloud only).
       ctx.sessionStore?.stopSweep();
+      // Phase A A3 — stop the Layer-1 refresh timer (cloud only).
+      clearRefreshTimer(ctx);
       removePid();
       // server.close() triggers fastify's preClose → onClose chain. The
       // /events route registers a preClose hook that ends live SSE streams

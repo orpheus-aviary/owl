@@ -131,6 +131,13 @@ export interface RealSkybridgeClient {
    * it through `ctx.skybridgeSession.realClient`.
    */
   revokeDevice(deviceId: string): Promise<void>;
+  /**
+   * Revoke the current auth token server-side (POST /auth/logout). Used by the
+   * cloud self-login chain (A3) for best-effort cleanup on a failed login and
+   * by "log out all" (A4). Idempotent against an already-revoked token is not
+   * guaranteed (the server may 401).
+   */
+  logout(): Promise<void>;
 }
 
 export interface SkybridgeClientModule {
@@ -305,6 +312,14 @@ export interface InstallSessionInput {
 export async function installSkybridgeSession(
   ctx: AppContext,
   input: InstallSessionInput,
+  /**
+   * Optional pre-loaded SDK module. The cloud self-login chain (A3) already
+   * loaded the module (and in tests injects a mock); passing it here avoids a
+   * second `loadSkybridgeClient()` and keeps the whole flow on one client
+   * implementation. Omitted by the GUI-main `/sync/session` path → loads the
+   * real module as before.
+   */
+  sbModule?: SkybridgeClientModule,
 ): Promise<SkybridgeSession> {
   const config: SkybridgeConfig = {
     server: { url: input.server_url },
@@ -318,7 +333,7 @@ export async function installSkybridgeSession(
     workspace: { id: input.workspace.id, slug: input.workspace.slug ?? 'owl/default' },
   };
 
-  const sb = await loadSkybridgeClient();
+  const sb = sbModule ?? (await loadSkybridgeClient());
   const realClient = buildClient(
     sb,
     config as SkybridgeConfig & { auth: { user_id: string; token: string; email: string } },
