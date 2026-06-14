@@ -339,10 +339,11 @@ cloud 模式（`config.ts`）：
 
 ## 实施记录（2026-06-13）
 
-**A0–A4 已实现 + 全绿，落本地 `main`（未 push）**。A0–A3 = 6 commit（`d92b958`…`2d495e3`）+ docs
-`6ace4a4`；**A4 = 2 commit**（`208e767` core + e2e/docs 本提交）。基线：core **529** / cli **137** /
-daemon **385**（+21）/ gui **406** + gated e2e **29**（+4）；`just check` **9 守卫**。
+**A0–A5 已实现 + 全绿，落本地 `main`（未 push）**。A0–A3 = 6 commit（`d92b958`…`2d495e3`）+ docs
+`6ace4a4`；**A4 = 2 commit**（`208e767` core + `6a9ed5d` e2e/docs）；**A5 = `39e1f45`**（config redaction + owner-gate）。
+基线：core **529** / cli **137** / daemon **394**（+9）/ gui **406** + gated e2e **29**；`just check` **9 守卫**（A5 无新守卫）。
 **桌面端零行为变更**，唯一触及 local 的是 A1 的 CORS/Host 收紧（已 `just dev` 真机验证无回归）。
+**Phase A 核心 slice（A0–A5）至此全部完成**；剩 A6（后置，触桌面全客户端）· Aω（发 owl-server + 上云，另立 gated）。
 
 | slice | commit | 内容 | 测试 Δ |
 |-------|--------|------|--------|
@@ -353,7 +354,16 @@ daemon **385**（+21）/ gui **406** + gated e2e **29**（+4）；`just check` *
 | A3b | `3ab2b07` | `cloud-login.ts`：`cloudLogin`（两分支 + multi-device 捷径 + account_lock owner 检查 + 失败补偿 + per-ctx login mutex）；`rebindSession`；refresh（`scheduleRefresh` 自重排防溢出 + `refreshCloudSession` rotate+rebind / 失败 teardown）；`installSkybridgeSession` 加可选 sb 参数（mock 穿透）；ctx `credentialStore`/`refreshTimer`；`RealSkybridgeClient.logout` | daemon +9 |
 | A3c | `2d495e3` | `computeOwnerProfileId` + `owl-server compute-owner` CLI（hidden prompt / `--password-stdin`，只打印 profileId） | daemon +2 |
 | A4 | `208e767` | `routes/auth.ts`：`/auth/login`(`cloudLogin`+铸 Layer-2+`login-throttle.ts` email/global/per-IP 限速)·`/auth/logout`(单 revoke / `{all}`→`logoutAllCloudSessions` remote-revoke+teardown)·`/auth/session` whoami；cloud 禁 `/sync/{session,switch,logout-local}`→404；`readSyncStatus` cloud 读 `CredentialStore`/session（非 toml）；off 抢占闸 `AccountBusyError`+`SessionStore.liveCount`+rebind `revokeAll`；`server.ts` `trustProxy` wiring + **`/auth/login`∈`SWITCH_INITIATING_PATHS`**（自死锁修复）；ctx `skybridgeLoader`（mock 注入）；3 broadcaster/bridge fixture 补 `config` | daemon +21 |
-| A4(e2e) | 本提交 | `cloud-auth.skybridge.e2e.ts`（真 in-process skybridge：`/auth/login` 真密码→token→鉴权 CRUD→401→account_lock 403→重启 device reuse→plumbing 404） | e2e +4 |
+| A4(e2e) | `6a9ed5d` | `cloud-auth.skybridge.e2e.ts`（真 in-process skybridge：`/auth/login` 真密码→token→鉴权 CRUD→401→account_lock 403→重启 device reuse→plumbing 404） | e2e +4 |
+| A5 | `39e1f45` | core `redactConfig`+`PublicOwlConfig`/`PublicLlmConfig`（剥 `api_key`/加 `has_api_key`，无 `'***'` 哨兵）；`auth.ts` `isConfigOwner`（local 恒真 / cloud locked `profileId===account_lock` / off 恒假）；`routes/config.ts` GET redact + PATCH `llm.*` owner-gate（非 owner→403 `FORBIDDEN`）+ 响应 redact + 抽 `filterAllowedSections` 压复杂度；shared mirror + 契约注释；client 保 `OwlConfig` 返回（桌面 happy path） | daemon +9 |
+
+### A5（已完成 2026-06-14）
+3 项 scope 全落地 + 全绿（daemon **394** unit）：`PublicOwlConfig` 投影 + `GET /config` redaction + `[llm].*` PATCH owner-gate。
+**owner 语义关键洞察**：cloud locked 模式只有 owner 能登录绑定，故有效 session 天然即 owner → redaction 是 config 表面的 defense-in-depth；
+cloud `off` 模式无固定 owner 且启动守卫已禁服务端 AI key（投影只剥空 key）+ 拒 `llm.*` patch（防租户写入会卡下次启动守卫的 key）。
+**无 `'***'` 哨兵**（字段直接缺席）→ 天然避开 round-trip 写回占位符的洞，不靠 PATCH 忽略 sentinel。
+**桌面端零变更**：shared `client.ts` 的 `getConfig`/`patchConfig` 保持 `OwlConfig` 返回（避免 union 破 renderer `tsc`）；
+`PublicOwlConfig` 导出供 Phase B web 自行 narrow。非 owner 投影路径由直接 mint 任意 profileId session 的单测覆盖（gated e2e 的 owner-only session 无法演练）。
 
 ### A4（已完成 2026-06-13，capstone）
 全部 5 项 scope 落地 + 全绿（daemon **385** unit / gated e2e **29**）：`/auth/*` 三端点（cloud-only，local→404）·
