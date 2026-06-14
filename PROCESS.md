@@ -1,30 +1,28 @@
 # 开发进度
 
-## 当前阶段：🚧 Phase B 网页版进行中（B0 完成 2026-06-14；Phase A 核心 A0–A5 已完）
+## 当前阶段：🚧 Phase B 网页版进行中（B0+B1 完成 2026-06-14；Phase A 核心 A0–A5 已完）
 
 **0.5.0**（per-profile 隔离 + 免密快切）已公开发版（2026-06-06）。**扩生态 Step 0** 已全部完成（2026-06-12，renderer/Electron 解耦 + `@orpheus-aviary/owl-shared`）。
 **Phase A = 云端 daemon** 核心 slice **A0–A5 已完**（cloud/local 模式 + 端点鉴权 + 两层会话 + `/auth/*` + config redaction）；
 剩 A6（后置，触桌面全客户端，闭 local CSRF）· Aω（发 owl-server + 上云）。
-**Phase B = 网页版**（`apps/web` 瘦客户端复用 renderer 树）。子设计 → `docs/plans/2026-06-14-phase-b-web-design.md`（v1，⭐1/2/4 已拍板）。
+**Phase B = 网页版**（`apps/web` 瘦客户端复用 renderer 树）。子设计 → `docs/plans/2026-06-14-phase-b-web-design.md`（v1，⭐1/2/4/7 已拍板）。
 
-- **Phase B B0 已实现 + 全绿，main 未 push**：`d499d33` docs 设计稿 · `697afd8` **B0**（`apps/web` Vite 脚手架：
-  `@` alias 到 `packages/gui/src/renderer/src` + 挂 `<App/>`；runtime `getPlatform()` 在浏览器返 webAdapter；Tailwind v4 content
-  指向 renderer 源 + React dedupe；dev proxy 转发 daemon API 保同源；`just dev-web`）。
-- **B0 验证**：`pnpm --filter @owl/web build` 出静态包（Tailwind 1143 规则生成）· `just check` 全绿 · dev smoke
-  （`:5274` 服务 index.html + proxy `/status`·`/notes` 转发到隔离 daemon + entry `/@fs/` transform）。**桌面端零变更**。
-- **B0 限制（B1 跟进）**：`apps/web` 暂未进 `tsc -b`（renderer 真身已由 `gui/tsconfig.web.json` typecheck）；standalone typecheck
-  撞 dual-`@types/react` 类型身份冲突（esbuild build 无视、运行时 dedupe 已处理）→ B1 长出 web 组件时一并 dedup 接入 CI。
-- **Phase A 基线**：core **529** / daemon **394** / cli **137** / gui **406** + gated e2e **29**；`just check` **9 守卫**。
+- **Phase B B0+B1 已实现 + 全绿，main 未 push**：`d499d33` docs 设计稿 · `697afd8` **B0**（`apps/web` Vite 脚手架：
+  `@` alias renderer 源 + 挂 `<App/>`；浏览器 `getPlatform()` 返 webAdapter；Tailwind v4 content + React dedupe；dev proxy；`just dev-web`）·
+  `a4badee` **B1**（web auth/session：`web-session.ts` 内存态 token + `web.ts` 6 sync→真 HTTP + `requiresAuth` + `WebAuthGate` 登录闸
+  复用 `LoginForm`(`hideServerUrl`) + transport `onUnauthorized` 401 钩子 + apps/web `main.tsx` 注 bearer）。
+- **B1 验证**：`tsc -b` 绿 · gui **418**（+12 web auth 单测：session 生命周期/login 成败/logout/status/401/设备映射）· `just check` 9 守卫 · shared+web build。**桌面端零变更**（Electron `requiresAuth=false`，renderer 自身 main.tsx 未动）。
+- **B1 deferred（诚实标注）**：①**apps/web 接 `tsc -b` + dedup `@types/react`** 撞 monorepo project-ref 墙（apps/web 重复 typecheck renderer 图 → 双 @types 身份冲突）→ 降级独立小任务（功能已由 gui typecheck 全覆盖）。②**云端 rig 真机视觉验**（需 skybridge+cloud daemon+账号）。
+- **Phase A 基线**：core **529** / daemon **394** / cli **137** / gui **418** + gated e2e **29**；`just check` **9 守卫**。
 
 ### 下一步
 
 1. **Phase B 续作**（设计稿 §4 slice）：
-   - **B1**：webAdapter 6 sync 方法换真 HTTP（`/auth/login`·logout·session·`/sync/status`·run·devices）+ token 内存态 +
-     `configureTransport` 注 bearer + 401→登录屏 + 登录态机（复用 `LoginForm`）。**此片同时把 apps/web 接入 `tsc -b` + dedup `@types/react`。**
+   - **B1 收尾**：云端 rig 视觉验（登录→bearer→CRUD→401→登出）+ apps/web 接 `tsc -b`/dedup `@types/react`（独立小任务）。
    - **B2**：乐观并发（`patchNote` 加 `expected_updated_at` + `Note.updatedAt` ms 对齐，倾向新增 `updated_at_ms` 不动现 string）
      + 409 拉远端提示 + 自动保存。**唯一回流 shared/daemon，桌面 PATCH 须零回归。**
    - **B3**：XSS/CSP（`MarkdownPreview` web 分支 `rehype-sanitize` + 外链 noopener）。
-   - **B4**：daemon 静态托管（`@fastify/static` + SPA fallback + CSP + API 路由优先级）。
+   - **B4**：daemon 静态托管（`@fastify/static` + SPA fallback + CSP + API 路由优先级）。**⭐7 正式版 owl-server 默认端口 47020**（=47010+10；桌面本地 daemon 保持 47010；落地在 B4/Aω）。
 2. **Phase A 收尾**：A6（local mutating-token，闭 CSRF）· Aω（发 owl-server + 上云，需重部署 skybridge）· A4 deferred（off grace-quiesce）。
 3. **延后的重构一轮**（Step 0 显式延后）：复杂度 warning（含 `useEditorShortcuts` 复杂度 36）+ `>500` 行大文件 + 类型 mirror dedup。
 4. **0.6 feature backlog**（arch §11）：W7 冲突双向 · 跨 profile 视图 · `resetAllStores` 免闪烁 · TLS/反代 · 真·24h soak · P6 多设备 GA → 1.0.0。

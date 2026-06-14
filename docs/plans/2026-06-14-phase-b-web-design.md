@@ -144,10 +144,11 @@ cloud web 多用户共享源 + bearer 在 JS 可达 → 笔记里的恶意 HTML 
 | ⭐1 | renderer 复用机制（§3.1） | **✅ 已定 = 路 A**：apps/web alias 消费 `packages/gui/src/renderer/src`（不抽包）。理由：Step 0 已铺 `platform/web.ts`+`getPlatform()`+`tsconfig.web.json` = 「就地消费」意图；抽 `@owl/renderer` 会把 B0 从「验证第二宿主」变成「搬家 + 回归 Electron」，收益不抵风险。抽包留后续整理。 |
 | ⭐2 | token 存储（§3.2/§14#5） | **✅ 已定 = 内存态**（B1 默认）。理由：web 最大风险非刷新重登，而是 XSS 后 token 被长期拿走；内存态砍掉持久化攻击面。sessionStorage 仅作后续「记住我」**显式**选项，不做默认。 |
 | ⭐4 | daemon 静态托管放 B 还是 Aω（§3.5） | **✅ 已定 = 托管能力进 B4**（验同源 / SPA fallback / CSP / API 路由优先级等真实路径，否则 B1–B3 都在 dev server 半真环境跑）。「打进 `owl-server` + 上云 + 发布包」留 **Aω**，B4 不提前拖入发布复杂度。 |
+| ⭐7 | 正式版端口约定（B4/Aω） | **✅ 已定 = 云端 `owl-server` 默认 `47020`（= 47010 + 10）**；**桌面本地 daemon 保持 `47010`**（0.5.0 已发版，GUI 自启动 / CLI 默认 / 存量安装钉死，不改）。理由：同机并跑桌面 owl + 本地 web-serving daemon 免撞口、「+10」好记。真上公网仍塞反代（443/80）+ 显式配端口，47020 只是服务版缺省。**B4/Aω 时落地（owl-server 打包/部署默认 + 部署文档），不阻塞 B1–B3。** |
 | 3 | XSS 收口选型（§3.4） | 倾向 **`rehype-sanitize`** web 分支；桌面端是否一并收口（倾向否，免动桌面行为）。B3 定。 |
 | 5 | 响应式重构范围 | 桌面浏览器优先，破版随手修；系统性响应式若需 → B5 单列（可能不入 v1）。 |
 | 6 | `Note.updatedAt` 对齐方式（§3.3 风险） | 倾向**新增 `updated_at_ms`** 只供并发基线，不动现 string（最小侵入）；B2 实测定。 |
 
 ---
 
-*（v1，§7 ⭐1/2/4 已拍板 2026-06-14。按 §4 slice 拆 commit，B0 起手。）*
+*（v1，§7 ⭐1/2/4/7 已拍板 2026-06-14。按 §4 slice 拆 commit，B0 ✅，B1 起手。）*
