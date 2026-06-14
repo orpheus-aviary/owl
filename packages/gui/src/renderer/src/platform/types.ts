@@ -44,6 +44,13 @@ export type SyncCapability = RequiredSync & OptionalSync;
 export interface PlatformAdapter {
   /** Startup branch. Web is always `{ mode: 'normal' }` — no local DB migration. */
   readonly startupMode: StartupMode;
+  /**
+   * Phase B (B1) — whether this host gates the app behind a login screen. The
+   * web host talks to a cloud daemon that 401s without a bearer, so it must log
+   * in first (`true`). Electron's local daemon has no Layer-2 auth (`false`),
+   * so the desktop renders straight into the app — unchanged.
+   */
+  readonly requiresAuth: boolean;
   /** Daemon HTTP base. Electron: per-profile injected port; web: `''` (same-origin). */
   daemonBaseUrl(): string;
   /** Sync surface — required session ops + optional Electron-local profile mgmt. */

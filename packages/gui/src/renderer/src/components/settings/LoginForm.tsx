@@ -31,12 +31,19 @@ export function LoginForm({
   error,
   onSubmit,
   onCancel,
+  hideServerUrl,
 }: {
   initialServerUrl: string;
   submitting: boolean;
   error: string | null;
   onSubmit: (values: LoginFormValues) => void;
   onCancel?: () => void;
+  /**
+   * Phase B (B1) — hide the 服务器地址 row. The web host's daemon is fixed by
+   * its own config (the field is meaningless there); `initialServerUrl` is
+   * still passed through to onSubmit for shape parity, just not user-editable.
+   */
+  hideServerUrl?: boolean;
 }) {
   const [serverUrl, setServerUrl] = useState(initialServerUrl);
   const [email, setEmail] = useState('');
@@ -53,17 +60,19 @@ export function LoginForm({
       onSubmit={handleSubmit}
       className="border border-border rounded-md divide-y divide-border"
     >
-      <SettingRow label="服务器地址">
-        <Input
-          type="text"
-          className="w-72 h-8"
-          value={serverUrl}
-          onChange={(e) => setServerUrl(e.target.value)}
-          placeholder={DEFAULT_SERVER_URL}
-          autoComplete="off"
-          spellCheck={false}
-        />
-      </SettingRow>
+      {!hideServerUrl && (
+        <SettingRow label="服务器地址">
+          <Input
+            type="text"
+            className="w-72 h-8"
+            value={serverUrl}
+            onChange={(e) => setServerUrl(e.target.value)}
+            placeholder={DEFAULT_SERVER_URL}
+            autoComplete="off"
+            spellCheck={false}
+          />
+        </SettingRow>
+      )}
       <SettingRow label="邮箱">
         <Input
           type="email"

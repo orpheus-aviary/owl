@@ -26,6 +26,13 @@ interface TransportConfig {
    * here, covering all callers through one seam.
    */
   getAuthHeaders: () => Record<string, string>;
+  /**
+   * Phase B (B1) — invoked when a request comes back 401. The web host wires
+   * this to clear its in-memory session so the auth gate falls back to the
+   * login screen. Host-agnostic: the Electron host leaves it unset (a local
+   * daemon never 401s pre-A6), so the hook stays a no-op there.
+   */
+  onUnauthorized?: () => void;
 }
 
 const config: TransportConfig = {
@@ -41,9 +48,11 @@ const config: TransportConfig = {
 export function configureTransport(opts: {
   baseUrl: () => string;
   getAuthHeaders?: () => Record<string, string>;
+  onUnauthorized?: () => void;
 }): void {
   config.baseUrl = opts.baseUrl;
   if (opts.getAuthHeaders) config.getAuthHeaders = opts.getAuthHeaders;
+  if (opts.onUnauthorized) config.onUnauthorized = opts.onUnauthorized;
 }
 
 /**
@@ -85,6 +94,7 @@ export async function request<T>(
       const json = (await res.json()) as ApiResponse<T>;
 
       if (!json.success) {
+        if (res.status === 401) config.onUnauthorized?.();
         throw new ApiError(res.status, json.error_code, json.message ?? 'Unknown error');
       }
       return json;

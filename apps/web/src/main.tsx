@@ -1,5 +1,6 @@
 import { App } from '@/App';
 import { getPlatform } from '@/platform';
+import { clearWebSession, getWebToken } from '@/platform/web-session';
 import { configureTransport } from '@orpheus-aviary/owl-shared';
 import React from 'react';
 import ReactDOM from 'react-dom/client';
@@ -7,11 +8,17 @@ import './style.css';
 
 // Browser entry — mirrors the renderer's own main.tsx, but this is the web
 // host. The base URL comes from the web platform adapter (same-origin relative
-// path). B0 attaches no auth headers; B1 swaps getAuthHeaders for the bearer
-// once /auth/login lands, through this same seam.
+// path). B1: every request carries the in-memory bearer (empty until login);
+// a 401 clears the session so the auth gate falls back to the login screen.
 configureTransport({
   baseUrl: () => getPlatform().daemonBaseUrl(),
-  getAuthHeaders: () => ({}),
+  getAuthHeaders: () => {
+    const headers: Record<string, string> = {};
+    const token = getWebToken();
+    if (token) headers.Authorization = `Bearer ${token}`;
+    return headers;
+  },
+  onUnauthorized: clearWebSession,
 });
 
 const rootElement = document.getElementById('root');

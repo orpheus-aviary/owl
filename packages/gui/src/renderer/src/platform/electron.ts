@@ -13,6 +13,9 @@ export function createElectronAdapter(): PlatformAdapter {
     get startupMode() {
       return window.owlAPI.startupMode;
     },
+    // Local daemon has no Layer-2 login (A6 adds a local mutating-token, not a
+    // login gate), so the desktop never shows the web login screen.
+    requiresAuth: false,
     daemonBaseUrl: () => window.owlAPI.daemonUrl,
     get sync() {
       return window.owlAPI.sync;

@@ -1,4 +1,5 @@
 import { MainApp } from './MainApp';
+import { WebAuthGate } from './components/WebAuthGate';
 import { MigrationDialog } from './pages/MigrationDialog';
 import { getPlatform } from './platform';
 
@@ -11,11 +12,19 @@ import { getPlatform } from './platform';
  * blocking UI, not a page. Once the dialog finishes and the daemon is up,
  * main-process destroys this window and creates a fresh one with no
  * `--startup-mode` arg; the new renderer picks MainApp.
+ *
+ * Phase B (B1): the web host (`requiresAuth`) gates on a login screen until a
+ * cloud session exists. Electron's `requiresAuth` is false, so the desktop
+ * renders straight into MainApp — unchanged.
  */
 export function App() {
-  const startupMode = getPlatform().startupMode;
+  const platform = getPlatform();
+  const startupMode = platform.startupMode;
   if (startupMode.mode !== 'normal') {
     return <MigrationDialog startupMode={startupMode} />;
+  }
+  if (platform.requiresAuth) {
+    return <WebAuthGate />;
   }
   return <MainApp />;
 }
