@@ -1,6 +1,6 @@
 # Phase B 子设计：网页版（`apps/web` 瘦客户端）
 
-> 状态：**草案 v1，待评审**（不含代码）。父架构 `docs/plans/2026-06-06-mobile-web-ecosystem-arch.md`（v6，§4 网页版 / §7 安全 / §12 排期 / §14 开放项）。
+> 状态：**v1 — ⭐1/2/4/7 已拍板；B0 ✅ B1 ✅（2026-06-14），B2 起手**（不含代码）。父架构 `docs/plans/2026-06-06-mobile-web-ecosystem-arch.md`（v6，§4 网页版 / §7 安全 / §12 排期 / §14 开放项）。
 > 前置：Step 0 ✅（platform adapter + shared api/SSE）· Phase A 云端 daemon 核心 A0–A5 ✅（cloud 模式 + 端点鉴权 + 两层会话 + `/auth/*` + config redaction）。
 > 开发流：Step 0 ✅ → **A 云端 daemon ✅核心** → **B 网页版（本设计）** → C 发 owl-shared → D 移动 v1 → E 移动 v2。
 
@@ -151,4 +151,4 @@ cloud web 多用户共享源 + bearer 在 JS 可达 → 笔记里的恶意 HTML 
 
 ---
 
-*（v1，§7 ⭐1/2/4/7 已拍板 2026-06-14。按 §4 slice 拆 commit，B0 ✅，B1 起手。）*
+*（v1，§7 ⭐1/2/4/7 已拍板 2026-06-14。按 §4 slice 拆 commit，B0 ✅ B1 ✅，B2 起手。）*

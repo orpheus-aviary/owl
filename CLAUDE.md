@@ -63,6 +63,8 @@ Scope: `db` / `config` / `notes` / `tags` / `daemon` / `gui` / `editor` / `brows
 - 测试完成后用户反馈结果，再决定是否继续
 
 ## 当前进度
-**🎉 owl 0.5.0 已公开发版（2026-06-06，per-profile 隔离 + 免密快切）**。当前状态 + 下一步见 `PROCESS.md`；
-P5-d 完整归档 `docs/history/P5-d-shipped.md`；跨仓路线 `aviary/docs/ROADMAP.md`；0.6 计划
-`docs/plans/2026-06-06-0.6.0-plan.md`。
+**🎉 owl 0.5.0 已公开发版（2026-06-06）**。之后转「扩生态」开发流（云端 daemon → 网页 → 移动）：
+**Phase A 云端 daemon 核心 A0–A5 已完**（`docs/plans/2026-06-12-phase-a-cloud-daemon-design.md`），
+**🚧 Phase B 网页版进行中**（B0+B1 已完，`docs/plans/2026-06-14-phase-b-web-design.md`）。
+当前状态 + 下一步**以 `PROCESS.md` 为准**；扩生态总架构 `docs/plans/2026-06-06-mobile-web-ecosystem-arch.md`；
+跨仓路线 `aviary/docs/ROADMAP.md`；P5-d 归档 `docs/history/P5-d-shipped.md`；0.6 feature backlog 留后（计划 `docs/plans/2026-06-06-0.6.0-plan.md`）。
