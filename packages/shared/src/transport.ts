@@ -73,6 +73,13 @@ export function authHeaders(): Record<string, string> {
   return config.getAuthHeaders();
 }
 
+/** Return the body on success, or throw ApiError (firing the 401 hook first). */
+function unwrap<T>(res: Response, json: ApiResponse<T>): ApiResponse<T> {
+  if (json.success) return json;
+  if (res.status === 401) config.onUnauthorized?.();
+  throw new ApiError(res.status, json.error_code, json.message ?? 'Unknown error');
+}
+
 export async function request<T>(
   method: string,
   path: string,
@@ -91,13 +98,7 @@ export async function request<T>(
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
       const res = await fetch(url, init);
-      const json = (await res.json()) as ApiResponse<T>;
-
-      if (!json.success) {
-        if (res.status === 401) config.onUnauthorized?.();
-        throw new ApiError(res.status, json.error_code, json.message ?? 'Unknown error');
-      }
-      return json;
+      return unwrap(res, (await res.json()) as ApiResponse<T>);
     } catch (err) {
       if (err instanceof ApiError) throw err;
       if (attempt === retries) throw err;
