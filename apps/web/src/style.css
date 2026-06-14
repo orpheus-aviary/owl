@@ -1,0 +1,7 @@
+/* Reuse the renderer's global styles + Tailwind v4 entry verbatim, then point
+ * Tailwind's content detection at the renderer source tree (this app reuses it
+ * wholesale, so every utility class lives over there). The @tailwindcss/vite
+ * plugin also picks up the module graph, but the explicit @source keeps class
+ * generation robust regardless of how the graph is walked. */
+@import "../../../packages/gui/src/renderer/src/style.css";
+@source '../../../packages/gui/src/renderer/src';

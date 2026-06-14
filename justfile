@@ -228,6 +228,14 @@ dev-fast: ensure-electron-abi
 dev-daemon: ensure-node-abi
     pnpm --filter @owl/daemon run dev
 
+# Phase B — launch the web app (apps/web) on :5274, reusing the renderer tree.
+# Proxies the daemon API (OWL_DAEMON_PORT, default 47010) so the web adapter's
+# same-origin base URL stays honest in dev; run a local daemon alongside
+# (`just dev-daemon`). Browser-rendered — visual verification is manual.
+[group('dev')]
+dev-web: build-shared
+    pnpm --filter @owl/web run dev
+
 # Stop the running daemon process.
 [group('dev')]
 stop-daemon:

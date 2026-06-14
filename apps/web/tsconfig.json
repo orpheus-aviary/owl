@@ -1,0 +1,21 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "noEmit": true,
+    // The renderer source is shared with @owl/gui (typechecked there via
+    // tsconfig.web.json); mirror its relaxed unused-locals so importing the
+    // tree here doesn't double-flag. This config is for editor support — the
+    // browser bundle is produced by Vite (esbuild), not tsc.
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["../../packages/gui/src/renderer/src/*"]
+    }
+  },
+  "include": ["src", "vite.config.ts"]
+}
