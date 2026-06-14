@@ -150,7 +150,10 @@ export const listUpcomingReminders = (withinMinutes?: number) => {
 
 export const listAlarmNotes = () => request<Note[]>('GET', '/reminders/alarms');
 
-// Config
+// Config. These typed helpers model the local/owner happy path (full
+// `OwlConfig`). A cloud daemon may return a `PublicOwlConfig` projection (no
+// api_key) to a non-owner session — a Phase B web client narrows on that type
+// explicitly (exported from ./types). See the OwlConfig contract note there.
 export const getConfig = () => request<OwlConfig>('GET', '/config');
 
 export const patchConfig = (delta: Partial<OwlConfig>) =>

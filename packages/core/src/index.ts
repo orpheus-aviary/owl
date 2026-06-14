@@ -27,12 +27,15 @@ export {
   loadConfig,
   saveConfig,
   resolveLlmConfig,
+  redactConfig,
   effectiveSyncIntervalMin,
   DEFAULT_CONFIG,
 } from './config/index.js';
 export type {
   OwlConfig,
+  PublicOwlConfig,
   LlmConfig,
+  PublicLlmConfig,
   LlmApiFormat,
   AiConfig,
   DaemonConfig,

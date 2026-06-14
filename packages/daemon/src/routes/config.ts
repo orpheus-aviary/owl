@@ -1,5 +1,12 @@
-import { type LlmConfig, type OwlConfig, resolveLlmConfig, saveConfig } from '@owl/core';
-import type { FastifyInstance } from 'fastify';
+import {
+  type LlmConfig,
+  type OwlConfig,
+  redactConfig,
+  resolveLlmConfig,
+  saveConfig,
+} from '@owl/core';
+import type { FastifyInstance, FastifyRequest } from 'fastify';
+import { type Session, isConfigOwner } from '../auth.js';
 import type { AppContext } from '../context.js';
 import { fail, ok } from '../response.js';
 
@@ -60,6 +67,17 @@ const ALLOWED_SECTIONS = new Set<keyof OwlConfig>([
   'shortcuts',
 ]);
 
+/** Drop any body keys outside the whitelist (so a stray `daemon` can't slip in). */
+function filterAllowedSections(body: Record<string, unknown>): Record<string, unknown> {
+  const filtered: Record<string, unknown> = {};
+  for (const key of Object.keys(body)) {
+    if (ALLOWED_SECTIONS.has(key as keyof OwlConfig)) {
+      filtered[key] = body[key];
+    }
+  }
+  return filtered;
+}
+
 /** Send a minimal "ping" message to the given LLM endpoint and report success. */
 async function pingLlm(llm: LlmConfig): Promise<{ success: boolean; message: string }> {
   if (!llm.url || !llm.model || !llm.api_key) {
@@ -113,25 +131,33 @@ async function pingLlm(llm: LlmConfig): Promise<{ success: boolean; message: str
   }
 }
 
+/** Read the Layer-2 session attached by the cloud auth preHandler, if any. */
+function sessionOf(req: FastifyRequest): Session | undefined {
+  return (req as { session?: Session }).session;
+}
+
 export function registerConfigRoutes(app: FastifyInstance, ctx: AppContext): void {
-  // GET /config — return current config
-  app.get('/config', async (_req, reply) => {
-    ok(reply, ctx.config);
+  // GET /config — return current config, redacted for a non-owner cloud session
+  // (api_key stripped, has_api_key flagged; A5 secret redaction).
+  app.get('/config', async (req, reply) => {
+    const owner = isConfigOwner(ctx, sessionOf(req));
+    ok(reply, redactConfig(ctx.config, { owner }));
   });
 
-  // PATCH /config — deep-merge partial config and persist
+  // PATCH /config — deep-merge partial config and persist. `llm.*` is
+  // owner-gated (A5); the response is redacted the same as GET.
   app.patch('/config', async (req, reply) => {
     const body = req.body as Record<string, unknown> | undefined;
     if (!body || typeof body !== 'object') {
       return fail(reply, 400, 'body must be an object', 'INVALID_BODY');
     }
 
-    const filtered: Record<string, unknown> = {};
-    for (const key of Object.keys(body)) {
-      if (ALLOWED_SECTIONS.has(key as keyof OwlConfig)) {
-        filtered[key] = body[key];
-      }
+    const owner = isConfigOwner(ctx, sessionOf(req));
+    if (!owner && 'llm' in body) {
+      return fail(reply, 403, 'llm config is owner-only', 'FORBIDDEN');
     }
+
+    const filtered = filterAllowedSections(body);
 
     // Value-level validation (e.g. auto_delete_days=0 would defeat the
     // level-2 review buffer). The GUI already clamps these, but external
@@ -150,7 +176,7 @@ export function registerConfigRoutes(app: FastifyInstance, ctx: AppContext): voi
       if ('trash' in filtered) {
         ctx.scheduler.onTrashThresholdChanged();
       }
-      ok(reply, ctx.config, 'config updated');
+      ok(reply, redactConfig(ctx.config, { owner }), 'config updated');
     } catch (err) {
       ctx.logger.error({ err }, 'failed to save config');
       fail(reply, 500, 'failed to save config', 'SAVE_FAILED');

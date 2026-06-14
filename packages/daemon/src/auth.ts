@@ -168,6 +168,26 @@ export function isPublicPath(method: string, url: string): boolean {
   return false;
 }
 
+/**
+ * Whether the request's session may see secrets (`llm.api_key`) and patch
+ * `llm.*` (A5 owner-gate). Three cases:
+ *   - local mode → always (no Layer-2 concept; desktop is single-user).
+ *   - cloud locked (`account_lock=<profileId>`) → the session's profileId must
+ *     equal the lock. In practice only the owner can ever bind (login rejects
+ *     others), so a valid session is normally already the owner — this is
+ *     defence-in-depth at the config surface.
+ *   - cloud `off` → never. There's no fixed owner, and off-mode forbids a
+ *     server-side AI key at startup, so the projection only elides an (empty)
+ *     key. Refusing `llm.*` patches also stops a tenant persisting a key that
+ *     would fail the next startup guard.
+ */
+export function isConfigOwner(ctx: AppContext, session: Session | undefined): boolean {
+  if (ctx.config.daemon.mode === 'local') return true;
+  const lock = ctx.config.daemon.account_lock;
+  if (!lock || lock === 'off') return false;
+  return session?.profileId === lock;
+}
+
 /** Lazily create + cache the session store on ctx. Sweeps only in cloud mode. */
 export function ensureSessionStore(ctx: AppContext): SessionStore {
   if (ctx.sessionStore) return ctx.sessionStore;

@@ -265,6 +265,45 @@ export function resolveLlmConfig(config: OwlConfig): LlmConfig {
   return config.llm;
 }
 
+// ─── Secret redaction (Phase A — cloud GET /config projection) ──────────
+
+/** `LlmConfig` with the secret stripped: cloud non-owner projection. */
+export interface PublicLlmConfig {
+  url: string;
+  model: string;
+  api_format: LlmApiFormat;
+  thinking_round_trip: boolean;
+  /** Whether a non-empty api_key is configured (the key itself is never sent). */
+  has_api_key: boolean;
+}
+
+/**
+ * Non-owner projection of `OwlConfig`: identical except `llm` carries no
+ * `api_key` (just a `has_api_key` flag). The only secret in the config today is
+ * `llm.api_key`; everything else (incl. the `daemon` cloud fields) is operator
+ * metadata, not a credential.
+ */
+export type PublicOwlConfig = Omit<OwlConfig, 'llm'> & { llm: PublicLlmConfig };
+
+/**
+ * Project `config` for a viewer. The owner (and any local-mode caller) sees the
+ * full config including `llm.api_key`; a non-owner cloud session gets the
+ * `PublicOwlConfig` projection with the secret stripped and `has_api_key`
+ * flagged. No `'***'` sentinel — the field is simply absent, so there's no
+ * round-trip risk of a PATCH writing the placeholder back over a real key.
+ *
+ * Nested sections are shared by reference (the result is read-only / serialized
+ * immediately); only the top level and `llm` are fresh objects.
+ */
+export function redactConfig(
+  config: OwlConfig,
+  opts: { owner: boolean },
+): OwlConfig | PublicOwlConfig {
+  if (opts.owner) return config;
+  const { api_key, ...llmRest } = config.llm;
+  return { ...config, llm: { ...llmRest, has_api_key: api_key.length > 0 } };
+}
+
 // ─── Helpers ───────────────────────────────────────────
 
 /**

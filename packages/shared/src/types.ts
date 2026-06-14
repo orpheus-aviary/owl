@@ -119,10 +119,13 @@ export interface BrowserConfig {
   default_sort_direction: 'asc' | 'desc';
 }
 
-// Local/current contract: `GET/PATCH /config` returns the full config including
-// `llm.api_key`. Phase A (cloud daemon) adds secret redaction + owner-gate +
-// public/secret split, which MAY change this shape — consumers should not
-// assume it is permanently stable. See the ecosystem arch §9.
+// Contract (Phase A): on a local daemon `GET/PATCH /config` returns the full
+// `OwlConfig` including `llm.api_key`. On a cloud daemon, GET returns the full
+// config to the owner session but a `PublicOwlConfig` projection (secret
+// stripped, `has_api_key` flagged) to a non-owner; PATCH of `llm.*` is
+// owner-only. Web consumers should type the GET response as
+// `OwlConfig | PublicOwlConfig` and never assume `llm.api_key` is present.
+// See the ecosystem arch §9 + Phase A design §6.
 export interface OwlConfig {
   llm: LlmConfig;
   window: { width: number; height: number };
@@ -159,6 +162,19 @@ export interface OwlConfig {
   browser: BrowserConfig;
   shortcuts: ShortcutsConfig;
 }
+
+// Cloud non-owner projection of OwlConfig. Mirrors `@owl/core`'s redactConfig
+// output: `llm` drops `api_key` and gains `has_api_key`; everything else is
+// identical. The key itself is never sent over the wire to a non-owner.
+export interface PublicLlmConfig {
+  url: string;
+  model: string;
+  api_format: LlmApiFormat;
+  thinking_round_trip: boolean;
+  has_api_key: boolean;
+}
+
+export type PublicOwlConfig = Omit<OwlConfig, 'llm'> & { llm: PublicLlmConfig };
 
 export interface AiToolDescriptor {
   name: string;
