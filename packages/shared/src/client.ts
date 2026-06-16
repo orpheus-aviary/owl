@@ -63,7 +63,18 @@ export const createNote = (data: { content: string; folder_id?: string; tags?: s
 
 export const patchNote = (
   id: string,
-  data: { content?: string; folder_id?: string | null; tags?: string[] },
+  data: {
+    content?: string;
+    folder_id?: string | null;
+    tags?: string[];
+    /**
+     * Optimistic-concurrency baseline (Unix ms). When supplied, the daemon
+     * 409s with `VERSION_MISMATCH` if the stored `updated_at` no longer
+     * equals it. Omitted = last-write-wins (the desktop's current behavior,
+     * unchanged). Web clients pass `new Date(note.updatedAt).getTime()`.
+     */
+    expected_updated_at?: number;
+  },
 ) => request<Note>('PATCH', `/notes/${id}`, data);
 
 export const deleteNote = (id: string) => request<Note>('DELETE', `/notes/${id}`);
