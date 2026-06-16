@@ -1,6 +1,7 @@
 # Phase B 子设计：网页版（`apps/web` 瘦客户端）
 
-> 状态：**v1 — ⭐1/2/4/7 已拍板；B0 ✅ B1 ✅（2026-06-14），B2 起手**（不含代码）。父架构 `docs/plans/2026-06-06-mobile-web-ecosystem-arch.md`（v6，§4 网页版 / §7 安全 / §12 排期 / §14 开放项）。
+> 状态：**v1 — ⭐1/2/4/7 已拍板；B0 ✅ B1 ✅ B2 ✅（2026-06-16 已 ship + 手测）**。下一片 = B3（XSS/CSP）。父架构 `docs/plans/2026-06-06-mobile-web-ecosystem-arch.md`（v6，§4 网页版 / §7 安全 / §12 排期 / §14 开放项）。
+> **B2 实施另立专档**（含逐文件 + 实施记录 + 决策修订）：`docs/plans/2026-06-16-phase-b2-optimistic-concurrency.md`（v3）。下方 §3.3/§4/§6/§7 关于 B2 的「倾向」已被 B2 实测推翻处，见该专档为准（要点：**ms 从 ISO 无损派生、不加 `updated_at_ms`**；**取消自动保存改 `beforeunload` 守卫**；**仅回流 shared `client.ts`**，daemon 早已支持 CAS）。
 > 前置：Step 0 ✅（platform adapter + shared api/SSE）· Phase A 云端 daemon 核心 A0–A5 ✅（cloud 模式 + 端点鉴权 + 两层会话 + `/auth/*` + config redaction）。
 > 开发流：Step 0 ✅ → **A 云端 daemon ✅核心** → **B 网页版（本设计）** → C 发 owl-shared → D 移动 v1 → E 移动 v2。
 
@@ -104,7 +105,7 @@ cloud web 多用户共享源 + bearer 在 JS 可达 → 笔记里的恶意 HTML 
 |-------|------|:---------:|------|
 | **B0** | `apps/web` 工程脚手架（Vite+React，路 A alias renderer 树 + 自带 `index.html`/`main.tsx` 挂 `<App/>`）；web build 跑通；webAdapter 现 stub 下**只读路径**渲染（无 auth） | 否 | `pnpm --filter @owl/web build` 出静态包；`vite` dev 连本地 local daemon 渲染 UI（读路径） |
 | **B1** | webAdapter 6 sync 方法换真 HTTP（`/auth/login`·logout·session·`/sync/status`·run·devices）；token 内存态 + `configureTransport` 注 bearer；401→登录屏；登录态机（未登录/登录中/已登录/过期）；复用 LoginForm | 否 | 连 **cloud daemon**：登录→bearer→CRUD 通；401→登录屏；登出；过期重登 |
-| **B2** | 乐观并发：`client.ts` `patchNote` 加 `expected_updated_at` + `Note.updatedAt` ms 对齐（核 `GET /notes/:id`）；TabState 基线；保存传基线/刷新/409 拉远端+提示；自动保存配置 | **是（shared/daemon，桌面 PATCH 不变）** | 并发改同笔记→409→拉远端+提示；桌面端 PATCH 回归（不传参=现行为） |
+| **B2 ✅** | 乐观并发：`client.ts` `patchNote` 加 `expected_updated_at`（**唯一回流**；daemon 早已支持）；ms 从 `Note.updatedAt` ISO **无损派生**（未加 `updated_at_ms`）；TabState 基线；保存传基线/刷新/409 拉远端 `VersionConflictDialog`（覆盖/加载远端/取消）；folder-drag rebase；**取消自动保存** → web `beforeunload` 脏 tab 守卫 | **仅 shared（桌面 PATCH 字节不变，`remoteClient` 门）** | ✅ 手测全过（gui 434）。详见 B2 专档 |
 | **B3** | XSS/CSP：`MarkdownPreview` web 分支 `rehype-sanitize`（或去 rehypeRaw）+ 外链 noopener；bearer 内存态确认；（若 §3.5 入 B）daemon 下发 CSP 头 | 倾向否（web 分支） | 笔记注入 `<script>/<img onerror>` 在 web 不执行；KaTeX/highlight 不被误杀 |
 | **B4** | daemon 静态托管（`@fastify/static` + SPA fallback + 路由优先级 + CSP）；`mode` 区分 local/cloud 托管 | 否 | daemon 起 → 浏览器开同源根 → SPA 路由通；同源无需 CORS；API 路由未被遮 |
 
@@ -129,7 +130,7 @@ cloud web 多用户共享源 + bearer 在 JS 可达 → 笔记里的恶意 HTML 
 - **renderer 复用耦合**（§3.1）：路 A 让 apps/web import 深入 `@owl/gui` 内部；约束 import 面（只挂 `<App/>` + `configureTransport`），别散引内部组件 → 降路 B 搬迁成本。
 - **token 进 JS / XSS**（§3.4）：rehypeRaw 不收口 = token 失守。B3 必做；bearer 内存态。
 - **桌面端零回归底线**：B2 触 shared/daemon（`patchNote` 签名 + 可能 `GET /notes/:id` 形态）—— `expected_updated_at` 缺省必须 = 现行为；`Note.updatedAt` 若改 ms 形态需扫所有消费方（renderer 显示/排序）。**这是本阶段最大回归面**，单独核。
-- **`Note.updatedAt` string↔number**：若把 wire 类型从 string 改 number，触桌面 renderer 全部 updatedAt 消费点；倾向**新增** `updated_at_ms` 字段（不动现 string）只供并发基线，最小侵入。**待 B2 实测定。**
+- **`Note.updatedAt` string↔number**：~~倾向新增 `updated_at_ms`~~ → **B2 实测推翻**：ISO（3 位毫秒）`new Date(s).getTime()` 与库 INTEGER ms 严格无损往返（daemon `server.test.ts` 已证），故**直接派生、不加字段、不改 wire**，桌面 updatedAt 消费点零触动。
 - **SPA fallback 遮 API**（§3.5）：static 必须最低优先级 + 只兜非 API 前缀；单测钉 `/status`/`/notes` 不被 index.html 吞。
 - **同源 vs CORS**：web 同源免 CORS；但 dev 期 `vite dev`(5173) 连 daemon(47010) 是跨源 → 复用 A1 CORS allowlist 已含 dev origin（核对），或 vite proxy 同源化。
 - **local CSRF 仍开**（A6 前）：web 同源 bearer 不受影响，但 local daemon 的 simple-POST CSRF 洞仍在（arch §15）—— 与 web 无关，A6 闭，本阶段 PROCESS/release notes 续标。
@@ -147,8 +148,8 @@ cloud web 多用户共享源 + bearer 在 JS 可达 → 笔记里的恶意 HTML 
 | ⭐7 | 正式版端口约定（B4/Aω） | **✅ 已定 = 云端 `owl-server` 默认 `47020`（= 47010 + 10）**；**桌面本地 daemon 保持 `47010`**（0.5.0 已发版，GUI 自启动 / CLI 默认 / 存量安装钉死，不改）。理由：同机并跑桌面 owl + 本地 web-serving daemon 免撞口、「+10」好记。真上公网仍塞反代（443/80）+ 显式配端口，47020 只是服务版缺省。**B4/Aω 时落地（owl-server 打包/部署默认 + 部署文档），不阻塞 B1–B3。** |
 | 3 | XSS 收口选型（§3.4） | 倾向 **`rehype-sanitize`** web 分支；桌面端是否一并收口（倾向否，免动桌面行为）。B3 定。 |
 | 5 | 响应式重构范围 | 桌面浏览器优先，破版随手修；系统性响应式若需 → B5 单列（可能不入 v1）。 |
-| 6 | `Note.updatedAt` 对齐方式（§3.3 风险） | 倾向**新增 `updated_at_ms`** 只供并发基线，不动现 string（最小侵入）；B2 实测定。 |
+| 6 | `Note.updatedAt` 对齐方式（§3.3 风险） | **✅ 已定（B2）= 从 ISO 派生**（`new Date(updatedAt).getTime()`），**不新增 `updated_at_ms`**、不改 wire。理由：ISO 3 位毫秒与库 INTEGER ms 无损往返；新增字段反而触 core/daemon 全序列化路径。 |
 
 ---
 
-*（v1，§7 ⭐1/2/4/7 已拍板 2026-06-14。按 §4 slice 拆 commit，B0 ✅ B1 ✅，B2 起手。）*
+*（v1，§7 ⭐1/2/4/7 已拍板 2026-06-14。按 §4 slice 拆 commit，B0 ✅ B1 ✅ B2 ✅（2026-06-16）。下一片 = B3 XSS/CSP。B2 细节见 `2026-06-16-phase-b2-optimistic-concurrency.md`。）*

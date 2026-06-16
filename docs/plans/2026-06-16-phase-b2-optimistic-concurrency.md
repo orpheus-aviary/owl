@@ -1,6 +1,6 @@
 # Phase B2 实施计划：Web 编辑器乐观并发（CAS）
 
-> 状态：**v3 — 已实现 + 全绿（2026-06-16），待手测 + commit**。父设计 `docs/plans/2026-06-14-phase-b-web-design.md`（§3.3 + §7 #6）。见文末 §实施记录。
+> 状态：**v3 — ✅ 已 ship（2026-06-16）**：6 commit 落 `main` 未 push（`64d8b2f`→`e0cdc6d`），全绿 + 云端 rig 手测全过。父设计 `docs/plans/2026-06-14-phase-b-web-design.md`（§3.3 + §7 #6）。见文末 §实施记录。
 > 前置：B0 ✅ B1 ✅。本片是 Phase B 唯一回流 shared 的 slice。
 > v2 变更：**取消自动保存**（改手动保存，和桌面一致）；明确保护模型为「仅 web editor save」；补 folder-drag 基线 rebase；收紧 409 判定；列清越过 CAS 的写入口。
 > v3 变更：**确认保留 web 脏 tab `beforeunload` 刷新保护**（替代自动保存的防丢；已锁定为计划项，非可选）。
@@ -150,4 +150,4 @@ B2 **只**给主编辑器 `saveNote` 上 CAS。下列写入口仍不带 `expecte
 
 **测试踩坑**：本文件原有测试用 `vi.spyOn(api,'patchNote')` 且**无 `restoreMocks`** → spy 泄漏到后续测试（隔离跑过、全量跑挂的元凶）。修法：照同文件 `requestSaveOrConflict` describe 的成例，每个 B2 describe `beforeEach` 加 `vi.restoreAllMocks()` + 用 `vi.spyOn(api,…)`（**不要**自建 fetch stub 去对抗 transport 全局 fetch）。`new api.ApiError(409,'VERSION_MISMATCH',…)` 触发 409 路径。
 
-**待办**：①用户浏览器手测（清单见下/会话）②commit（未提交，含本 doc + PROCESS.md）。B3（XSS/CSP）、B4（静态托管）后续。
+**已 ship（2026-06-16）**：6 commit 落 `main` 未 push — `64d8b2f` feat(shared) · `e24aa2d` feat(gui) platform · `3bb31f4` feat(editor) CAS/409 · `3de0dc3` feat(editor) dialog+folder-drag · `0405c0e` feat(gui) beforeunload 守卫 · `e0cdc6d` docs。**云端 rig 手测全过**（冲突弹窗/查看差异/用我覆盖/放弃加载远端/取消/folder-drag 无自我 409/未保存刷新提示），rig 已拆。**下一片 = B3（XSS/CSP）** → B4（静态托管）。push 与其它 main 未推 commit 批量进行。
