@@ -31,6 +31,7 @@ function makeTab(noteId: string, title: string, preview: boolean): TabState {
     originalTags: [],
     folderId: null,
     originalFolderId: null,
+    originalUpdatedAt: '',
     dirty: false,
     isDraft: false,
     pendingAiUpdate: null,

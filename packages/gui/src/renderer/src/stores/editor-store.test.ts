@@ -4,6 +4,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useEditorStore } from './editor-store';
 import type { PendingAiUpdate } from './editor-store';
 
+// Optimistic-concurrency (CAS) is gated on `getPlatform().remoteClient`. Mock
+// the platform module so each test can flip web (true) vs desktop (false).
+const platformMock = vi.hoisted(() => ({ remoteClient: false }));
+vi.mock('@/platform', () => ({
+  getPlatform: () => ({ remoteClient: platformMock.remoteClient, daemonBaseUrl: () => '' }),
+}));
+
 // saveNote bumps the data-bus, which fans out to note-store / folder-store /
 // browser-store subscribers — each one issues a fire-and-forget fetchNotes /
 // fetchPanelNotes against `window.owlAPI?.daemonUrl`. In Node there's no
@@ -528,5 +535,221 @@ describe('openNote preview/pinned semantics (P3.4-e)', () => {
     useEditorStore.getState().openNote(makeNote('n2', 'other'), { preview: true });
     const tabs = useEditorStore.getState().tabs;
     expect(tabs.map((t) => t.noteId).sort()).toEqual(['n1', 'n2']);
+  });
+});
+
+/**
+ * Phase B2 — web optimistic concurrency (CAS). saveNote sends
+ * `expected_updated_at` only on `remoteClient`, surfaces a 409
+ * `VERSION_MISMATCH` as a `versionConflict`, and the desktop path stays
+ * byte-for-byte unchanged. These drive `saveNote` end-to-end, so they stub the
+ * `api` layer with `vi.spyOn` (same pattern as the AI-conflict suite above) and
+ * `vi.restoreAllMocks()` per test — sibling spies leak otherwise.
+ */
+function makeNoteAt(id: string, content: string, updatedAt: string): Note {
+  return { ...makeNote(id, content), updatedAt };
+}
+
+/** The `data` argument of the most recent `api.patchNote` call. */
+function lastPatchData(spy: {
+  mock: { calls: unknown[][] };
+}): Record<string, unknown> | undefined {
+  const { calls } = spy.mock;
+  return calls.length ? (calls[calls.length - 1][1] as Record<string, unknown>) : undefined;
+}
+
+describe('saveNote — web optimistic concurrency (B2)', () => {
+  const BASE = '2026-06-16T00:00:00.000Z';
+
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    useEditorStore.setState({ tabs: [], activeTabId: null, versionConflict: null });
+    platformMock.remoteClient = false;
+  });
+
+  it('web save sends expected_updated_at and refreshes the baseline on success', async () => {
+    platformMock.remoteClient = true;
+    const newUpdatedAt = '2026-06-16T01:00:00.000Z';
+    const patchSpy = vi
+      .spyOn(api, 'patchNote')
+      .mockResolvedValue({ success: true, data: makeNoteAt('n1', 'hello world', newUpdatedAt) });
+    useEditorStore.getState().openNote(makeNoteAt('n1', 'hello', BASE));
+    useEditorStore.getState().updateContent('n1', 'hello world');
+
+    const ok = await useEditorStore.getState().saveNote('n1');
+    expect(ok).toBe(true);
+    expect(patchSpy).toHaveBeenCalledTimes(1);
+    expect(lastPatchData(patchSpy)?.expected_updated_at).toBe(new Date(BASE).getTime());
+    // Baseline advances to the version the server just wrote.
+    expect(getTab('n1')?.originalUpdatedAt).toBe(newUpdatedAt);
+    expect(getTab('n1')?.dirty).toBe(false);
+  });
+
+  it('desktop save omits expected_updated_at (zero regression)', async () => {
+    platformMock.remoteClient = false;
+    const patchSpy = vi
+      .spyOn(api, 'patchNote')
+      .mockResolvedValue({ success: true, data: makeNoteAt('n1', 'hello world', BASE) });
+    useEditorStore.getState().openNote(makeNoteAt('n1', 'hello', BASE));
+    useEditorStore.getState().updateContent('n1', 'hello world');
+
+    await useEditorStore.getState().saveNote('n1');
+    expect(patchSpy).toHaveBeenCalledTimes(1);
+    expect(lastPatchData(patchSpy)).toBeDefined();
+    expect(lastPatchData(patchSpy)?.expected_updated_at).toBeUndefined();
+  });
+
+  it('409 VERSION_MISMATCH re-fetches remote, sets versionConflict, keeps local edits unsaved', async () => {
+    platformMock.remoteClient = true;
+    const remote = makeNoteAt('n1', 'remote content', '2026-06-16T02:00:00.000Z');
+    vi.spyOn(api, 'patchNote').mockRejectedValue(
+      new api.ApiError(409, 'VERSION_MISMATCH', 'conflict'),
+    );
+    const getSpy = vi.spyOn(api, 'getNote').mockResolvedValue({ success: true, data: remote });
+    useEditorStore.getState().openNote(makeNoteAt('n1', 'base', BASE));
+    useEditorStore.getState().updateContent('n1', 'local edit');
+
+    const ok = await useEditorStore.getState().saveNote('n1');
+    expect(ok).toBe(false);
+    expect(getSpy).toHaveBeenCalledWith('n1');
+    const vc = useEditorStore.getState().versionConflict;
+    expect(vc?.tabId).toBe('n1');
+    expect(vc?.remote.content).toBe('remote content');
+    // Local edits preserved + still dirty (not marked saved).
+    expect(getTab('n1')?.content).toBe('local edit');
+    expect(getTab('n1')?.dirty).toBe(true);
+  });
+
+  it('409 with a failed remote re-fetch returns false and sets no versionConflict', async () => {
+    platformMock.remoteClient = true;
+    vi.spyOn(api, 'patchNote').mockRejectedValue(
+      new api.ApiError(409, 'VERSION_MISMATCH', 'conflict'),
+    );
+    vi.spyOn(api, 'getNote').mockRejectedValue(new api.ApiError(404, 'NOT_FOUND', 'gone'));
+    useEditorStore.getState().openNote(makeNoteAt('n1', 'base', BASE));
+    useEditorStore.getState().updateContent('n1', 'local edit');
+
+    const ok = await useEditorStore.getState().saveNote('n1');
+    expect(ok).toBe(false);
+    expect(useEditorStore.getState().versionConflict).toBeNull();
+  });
+
+  it('a non-VERSION_MISMATCH 409 is not treated as a version conflict', async () => {
+    platformMock.remoteClient = true;
+    vi.spyOn(api, 'patchNote').mockRejectedValue(
+      new api.ApiError(409, 'ALREADY_TRASHED', 'already in trash'),
+    );
+    const getSpy = vi.spyOn(api, 'getNote');
+    useEditorStore.getState().openNote(makeNoteAt('n1', 'base', BASE));
+    useEditorStore.getState().updateContent('n1', 'local edit');
+
+    const ok = await useEditorStore.getState().saveNote('n1');
+    expect(ok).toBe(false);
+    expect(useEditorStore.getState().versionConflict).toBeNull();
+    // No remote re-fetch — only the PATCH was attempted.
+    expect(getSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe('resolveVersionConflict (B2)', () => {
+  const BASE = '2026-06-16T00:00:00.000Z';
+  const REMOTE_ISO = '2026-06-16T02:00:00.000Z';
+
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    useEditorStore.setState({ tabs: [], activeTabId: null, versionConflict: null });
+    platformMock.remoteClient = true;
+  });
+
+  it('load-remote overwrites the tab with the server copy and clears the conflict', async () => {
+    useEditorStore.getState().openNote(makeNoteAt('n1', 'base', BASE));
+    useEditorStore.getState().updateContent('n1', 'my local');
+    const remote = makeNoteAt('n1', 'remote!', REMOTE_ISO);
+    useEditorStore.setState({ versionConflict: { tabId: 'n1', remote } });
+
+    await useEditorStore.getState().resolveVersionConflict('load-remote');
+    expect(useEditorStore.getState().versionConflict).toBeNull();
+    const tab = getTab('n1');
+    expect(tab?.content).toBe('remote!');
+    expect(tab?.originalContent).toBe('remote!');
+    expect(tab?.originalUpdatedAt).toBe(REMOTE_ISO);
+    expect(tab?.dirty).toBe(false);
+  });
+
+  it('overwrite re-saves against the remote baseline and clears the conflict', async () => {
+    const savedIso = '2026-06-16T03:00:00.000Z';
+    const patchSpy = vi
+      .spyOn(api, 'patchNote')
+      .mockResolvedValue({ success: true, data: makeNoteAt('n1', 'my edit', savedIso) });
+    useEditorStore.getState().openNote(makeNoteAt('n1', 'base', BASE));
+    useEditorStore.getState().updateContent('n1', 'my edit');
+    const remote = makeNoteAt('n1', 'remote', REMOTE_ISO);
+    useEditorStore.setState({ versionConflict: { tabId: 'n1', remote } });
+
+    const ok = await useEditorStore.getState().resolveVersionConflict('overwrite');
+    expect(ok).toBe(true);
+    expect(useEditorStore.getState().versionConflict).toBeNull();
+    // Re-save used the freshly-fetched remote version as the baseline.
+    expect(lastPatchData(patchSpy)?.expected_updated_at).toBe(new Date(REMOTE_ISO).getTime());
+    expect(getTab('n1')?.originalUpdatedAt).toBe(savedIso);
+    expect(getTab('n1')?.dirty).toBe(false);
+  });
+
+  it('dismiss keeps local edits and clears only the conflict', async () => {
+    useEditorStore.getState().openNote(makeNoteAt('n1', 'base', BASE));
+    useEditorStore.getState().updateContent('n1', 'my edit');
+    useEditorStore.setState({
+      versionConflict: { tabId: 'n1', remote: makeNoteAt('n1', 'remote', REMOTE_ISO) },
+    });
+
+    await useEditorStore.getState().resolveVersionConflict('dismiss');
+    expect(useEditorStore.getState().versionConflict).toBeNull();
+    expect(getTab('n1')?.content).toBe('my edit');
+    expect(getTab('n1')?.dirty).toBe(true);
+  });
+});
+
+describe('versionConflict lifecycle (B2)', () => {
+  const BASE = '2026-06-16T00:00:00.000Z';
+
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    useEditorStore.setState({ tabs: [], activeTabId: null, versionConflict: null });
+    platformMock.remoteClient = false;
+  });
+
+  it('openNote records originalUpdatedAt from the loaded note', () => {
+    useEditorStore.getState().openNote(makeNoteAt('n1', 'x', BASE));
+    expect(getTab('n1')?.originalUpdatedAt).toBe(BASE);
+  });
+
+  it('syncTabFolderId rebases the updatedAt baseline when given one, else keeps it', () => {
+    useEditorStore.getState().openNote(makeNoteAt('n1', 'x', BASE));
+    const moved = '2026-06-16T04:00:00.000Z';
+    useEditorStore.getState().syncTabFolderId('n1', 'folderX', moved);
+    expect(getTab('n1')?.originalFolderId).toBe('folderX');
+    expect(getTab('n1')?.originalUpdatedAt).toBe(moved);
+
+    useEditorStore.getState().syncTabFolderId('n1', 'folderY');
+    expect(getTab('n1')?.originalUpdatedAt).toBe(moved);
+  });
+
+  it('closeTab clears a dangling versionConflict that pointed at it', () => {
+    useEditorStore.getState().openNote(makeNoteAt('n1', 'x', BASE));
+    useEditorStore.setState({
+      versionConflict: { tabId: 'n1', remote: makeNoteAt('n1', 'r', BASE) },
+    });
+    useEditorStore.getState().closeTab('n1');
+    expect(useEditorStore.getState().versionConflict).toBeNull();
+  });
+
+  it('closeTab leaves a versionConflict pointing at a different tab intact', () => {
+    useEditorStore.getState().openNote(makeNoteAt('n1', 'x', BASE));
+    useEditorStore.getState().openNote(makeNoteAt('n2', 'y', BASE));
+    useEditorStore.setState({
+      versionConflict: { tabId: 'n2', remote: makeNoteAt('n2', 'r', BASE) },
+    });
+    useEditorStore.getState().closeTab('n1');
+    expect(useEditorStore.getState().versionConflict?.tabId).toBe('n2');
   });
 });

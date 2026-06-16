@@ -1,5 +1,6 @@
-import type { Note, NoteTag } from '@/lib/api';
+import { ApiError, type Note, type NoteTag } from '@/lib/api';
 import * as api from '@/lib/api';
+import { getPlatform } from '@/platform';
 import { create } from 'zustand';
 import { useDataBus } from './data-bus';
 
@@ -41,6 +42,14 @@ export interface TabState {
   folderId: string | null;
   /** Save-time baseline for `folderId`. Mirrors `originalContent` semantics. */
   originalFolderId: string | null;
+  /**
+   * Optimistic-concurrency baseline: the `updatedAt` (ISO string) of the note
+   * as last loaded / saved. Web saves send `new Date(originalUpdatedAt)
+   * .getTime()` as `expected_updated_at` so a stale write 409s instead of
+   * clobbering a concurrent edit. `''` for never-saved drafts (no baseline →
+   * POST, not CAS). Tracked on every host but only read on `remoteClient`.
+   */
+  originalUpdatedAt: string;
   dirty: boolean;
   /** True for `draft_xxx` ids that have never been POSTed yet. */
   isDraft: boolean;
@@ -94,6 +103,19 @@ export interface ConflictPrompt {
 
 export type ConflictDecision = 'accept-ai' | 'keep-mine';
 
+/**
+ * Active server-side version conflict (web optimistic concurrency). Non-null
+ * after a `saveNote` PATCH 409'd with `VERSION_MISMATCH`: the local edits live
+ * on the tab, `remote` is the freshly re-fetched server copy. Consumed by
+ * `<VersionConflictDialog>`; resolved via `resolveVersionConflict`.
+ */
+export interface VersionConflict {
+  tabId: string;
+  remote: Note;
+}
+
+export type VersionConflictDecision = 'overwrite' | 'load-remote' | 'dismiss';
+
 interface EditorState {
   tabs: TabState[];
   activeTabId: string | null;
@@ -101,15 +123,25 @@ interface EditorState {
   lineWrap: boolean;
   /** Populated by `requestSaveOrConflict`; consumed by `<ConflictDialog>`. */
   conflictPrompt: ConflictPrompt | null;
+  /** Populated when a web save 409s; consumed by `<VersionConflictDialog>`. */
+  versionConflict: VersionConflict | null;
 
   openNote: (note: Note, opts?: { preview?: boolean }) => void;
   closeTab: (noteId: string) => void;
   setActiveTab: (noteId: string) => void;
   updateContent: (noteId: string, content: string) => void;
   updateTags: (noteId: string, tags: NoteTag[]) => void;
-  syncTabFolderId: (noteId: string, folderId: string | null) => void;
-  markSaved: (noteId: string, content: string, tags: NoteTag[]) => void;
+  /**
+   * Sync a tab's `folderId` baseline after an out-of-editor move (drag-drop).
+   * `updatedAt` rebases the optimistic-concurrency baseline — the move bumps
+   * the note's `updated_at` server-side, so without it a web tab would 409
+   * against its own drag on the next save.
+   */
+  syncTabFolderId: (noteId: string, folderId: string | null, updatedAt?: string) => void;
+  markSaved: (noteId: string, content: string, tags: NoteTag[], updatedAt?: string) => void;
   saveNote: (noteId: string) => Promise<boolean>;
+  /** Apply a version-conflict decision (web 409 dialog), clearing the prompt. */
+  resolveVersionConflict: (decision: VersionConflictDecision) => Promise<boolean>;
   saveActiveNote: () => Promise<boolean>;
   /** Open a brand-new AI draft (`create` / `create_reminder`) as an unsaved tab. */
   openAiDraft: (draft: AiDraftInput) => void;
@@ -226,12 +258,50 @@ function isUnsaved(tab: TabState): boolean {
   return tab.dirty || tab.isDraft || tab.pendingAiUpdate !== null;
 }
 
+/**
+ * Web optimistic-concurrency baseline for a PATCH. Returns the
+ * `expected_updated_at` field when the host is a remote client and the tab has
+ * a server version to check against; empty on desktop (= last-write-wins, the
+ * existing behavior) and for never-saved drafts.
+ */
+function casBaseline(tab: TabState, remoteClient: boolean): { expected_updated_at?: number } {
+  return remoteClient && tab.originalUpdatedAt
+    ? { expected_updated_at: new Date(tab.originalUpdatedAt).getTime() }
+    : {};
+}
+
+/**
+ * Map a `saveNote` failure to a version conflict, or null. Only a web 409
+ * `VERSION_MISMATCH` qualifies: re-fetch the server copy so the UI can show
+ * local-vs-remote. Any other failure (network, other 409 codes, desktop, or a
+ * failed re-fetch) yields null → plain save-failed.
+ */
+async function versionConflictFromError(
+  err: unknown,
+  noteId: string,
+  remoteClient: boolean,
+): Promise<VersionConflict | null> {
+  const isMismatch =
+    remoteClient &&
+    err instanceof ApiError &&
+    err.status === 409 &&
+    err.errorCode === 'VERSION_MISMATCH';
+  if (!isMismatch) return null;
+  try {
+    const fresh = await api.getNote(noteId);
+    return fresh.data ? { tabId: noteId, remote: fresh.data } : null;
+  } catch {
+    return null;
+  }
+}
+
 export const useEditorStore = create<EditorState>((set, get) => ({
   tabs: [],
   activeTabId: null,
   mode: 'edit',
   lineWrap: true,
   conflictPrompt: null,
+  versionConflict: null,
 
   openNote: (note: Note, opts?: { preview?: boolean }) => {
     const requestPreview = opts?.preview === true;
@@ -258,6 +328,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
               originalContent: note.content,
               originalTags: tags,
               originalFolderId: note.folderId,
+              originalUpdatedAt: note.updatedAt,
               preview: nextPreview,
             };
           }
@@ -270,6 +341,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
             originalTags: tags,
             folderId: note.folderId,
             originalFolderId: note.folderId,
+            originalUpdatedAt: note.updatedAt,
             preview: nextPreview,
           };
         }),
@@ -287,6 +359,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       originalTags: tags,
       folderId: note.folderId,
       originalFolderId: note.folderId,
+      originalUpdatedAt: note.updatedAt,
       dirty: false,
       isDraft: false,
       pendingAiUpdate: null,
@@ -323,7 +396,12 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         newActiveId = newTabs[idx].noteId;
       }
     }
-    set({ tabs: newTabs, activeTabId: newActiveId });
+    set((state) => ({
+      tabs: newTabs,
+      activeTabId: newActiveId,
+      // Drop a dangling 409 prompt that pointed at the tab we just closed.
+      versionConflict: state.versionConflict?.tabId === noteId ? null : state.versionConflict,
+    }));
   },
 
   setActiveTab: (noteId: string) => {
@@ -366,18 +444,27 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     }));
   },
 
-  syncTabFolderId: (noteId, folderId) => {
+  syncTabFolderId: (noteId, folderId, updatedAt) => {
     // Folder moves persist to the DB immediately, so the save baseline must
     // travel with the live value — otherwise dirty-detection and AI-conflict
-    // checks would see a phantom folder change every save.
+    // checks would see a phantom folder change every save. The move also bumps
+    // `updated_at` server-side, so rebase the optimistic-concurrency baseline
+    // too (when the caller passes it back) to avoid a self-409 on web.
     set((state) => ({
       tabs: state.tabs.map((t) =>
-        t.noteId === noteId ? { ...t, folderId, originalFolderId: folderId } : t,
+        t.noteId === noteId
+          ? {
+              ...t,
+              folderId,
+              originalFolderId: folderId,
+              originalUpdatedAt: updatedAt ?? t.originalUpdatedAt,
+            }
+          : t,
       ),
     }));
   },
 
-  markSaved: (noteId: string, content: string, tags: NoteTag[]) => {
+  markSaved: (noteId: string, content: string, tags: NoteTag[], updatedAt?: string) => {
     set((state) => ({
       tabs: state.tabs.map((t) =>
         t.noteId === noteId
@@ -386,6 +473,9 @@ export const useEditorStore = create<EditorState>((set, get) => ({
               originalContent: content,
               originalTags: tags,
               originalFolderId: t.folderId,
+              // Advance the optimistic-concurrency baseline to the version the
+              // server just wrote, so the next web save checks against it.
+              originalUpdatedAt: updatedAt ?? t.originalUpdatedAt,
               dirty: false,
               pendingAiUpdate: null,
               // A saved tab is user-authoritative — don't let the next
@@ -400,52 +490,35 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   saveNote: async (noteId: string) => {
     const tab = get().tabs.find((t) => t.noteId === noteId);
     if (!tab) return true;
-    // A pending AI update may have left the tab in a non-dirty state if the
-    // user immediately saves; treat the pending payload as save-required.
-    if (!tab.dirty && !tab.pendingAiUpdate && !tab.isDraft) return true;
+    // Nothing to persist — dirty / draft / pending-AI are the only save
+    // triggers (a pending AI update can leave a tab non-dirty yet save-worthy).
+    if (!isUnsaved(tab)) return true;
+    const remoteClient = getPlatform().remoteClient;
+    const cas = casBaseline(tab, remoteClient);
     try {
       const rawTags = serializeTags(tab.tags);
 
-      // Branch 1: brand-new draft → POST /notes
-      if (tab.isDraft) {
-        const res = await api.createNote({
-          content: tab.content,
-          tags: rawTags,
-          folder_id: tab.folderId ?? undefined,
-        });
-        if (!res.data) return false;
-        replaceTabAfterCreate(set, tab.noteId, res.data);
-        useDataBus.getState().bumpNotes();
-        return true;
-      }
+      // Brand-new draft → POST /notes (no CAS baseline yet).
+      if (tab.isDraft) return await saveDraft(set, tab, rawTags);
 
-      // Branch 2: AI-staged update → PATCH /notes/:id (folder may change)
-      if (tab.pendingAiUpdate) {
-        const res = await api.patchNote(tab.noteId, {
-          content: tab.content,
-          tags: rawTags,
-          folder_id: tab.folderId,
-        });
-        const savedTags = res.data?.tags ?? tab.tags;
-        get().markSaved(tab.noteId, tab.content, savedTags);
-        useDataBus.getState().bumpNotes();
-        return true;
-      }
-
-      // Branch 3: ordinary user edit → PATCH /notes/:id. PUT is strict
-      // replace as of P3.2-c (requires content + tags + folder_id together);
-      // ordinary save sends the full current state including folderId so
-      // both paths converge on the same endpoint.
+      // Existing note → PATCH /notes/:id with the full current state. Covers
+      // both an ordinary user edit and an AI-staged update (same wire call);
+      // `cas` carries `expected_updated_at` only on the web host.
       const res = await api.patchNote(tab.noteId, {
         content: tab.content,
         tags: rawTags,
         folder_id: tab.folderId,
+        ...cas,
       });
       const savedTags = res.data?.tags ?? tab.tags;
-      get().markSaved(tab.noteId, tab.content, savedTags);
+      get().markSaved(tab.noteId, tab.content, savedTags, res.data?.updatedAt);
       useDataBus.getState().bumpNotes();
       return true;
-    } catch {
+    } catch (err) {
+      // Web optimistic concurrency: a 409 VERSION_MISMATCH surfaces the remote
+      // copy as a conflict dialog instead of silently dropping the save.
+      const conflict = await versionConflictFromError(err, noteId, remoteClient);
+      if (conflict) set({ versionConflict: conflict });
       return false;
     }
   },
@@ -454,6 +527,56 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     const { activeTabId } = get();
     if (!activeTabId) return true;
     return get().saveNote(activeTabId);
+  },
+
+  resolveVersionConflict: async (decision) => {
+    const conflict = get().versionConflict;
+    if (!conflict) return true;
+    const { tabId, remote } = conflict;
+
+    if (decision === 'dismiss') {
+      // Keep local edits + the stale baseline; the user stays in the editor.
+      set({ versionConflict: null });
+      return true;
+    }
+
+    if (decision === 'load-remote') {
+      // Discard local edits, load the server copy as the new clean baseline.
+      const tags = remote.tags ?? [];
+      set((state) => ({
+        versionConflict: null,
+        tabs: state.tabs.map((t) =>
+          t.noteId === tabId
+            ? {
+                ...t,
+                content: remote.content,
+                originalContent: remote.content,
+                tags,
+                originalTags: tags,
+                folderId: remote.folderId,
+                originalFolderId: remote.folderId,
+                originalUpdatedAt: remote.updatedAt,
+                title: extractTitle(remote.content),
+                dirty: false,
+                pendingAiUpdate: null,
+              }
+            : t,
+        ),
+      }));
+      return true;
+    }
+
+    // 'overwrite' — keep the local edits but rebase the baseline onto the
+    // version we just fetched, then re-save. Still a checked write: a fresh
+    // concurrent edit landing in the gap re-raises the dialog rather than
+    // clobbering blindly.
+    set((state) => ({
+      versionConflict: null,
+      tabs: state.tabs.map((t) =>
+        t.noteId === tabId ? { ...t, originalUpdatedAt: remote.updatedAt } : t,
+      ),
+    }));
+    return get().saveNote(tabId);
   },
 
   hasUnsavedTabs: () => get().tabs.some(isUnsaved),
@@ -545,6 +668,9 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       originalTags: [],
       folderId: draft.folder_id,
       originalFolderId: draft.folder_id,
+      // Never POSTed → no server version yet; the create (not a CAS PATCH)
+      // establishes the first baseline via replaceTabAfterCreate.
+      originalUpdatedAt: '',
       // Drafts are dirty-on-arrival so the user can save with Cmd+S.
       dirty: true,
       isDraft: true,
@@ -667,6 +793,7 @@ function replaceTabAfterCreate(
             originalTags: saved.tags ?? t.tags,
             folderId: saved.folderId,
             originalFolderId: saved.folderId,
+            originalUpdatedAt: saved.updatedAt,
             dirty: false,
             isDraft: false,
             pendingAiUpdate: null,
@@ -683,6 +810,27 @@ function replaceTabAfterCreate(
 }
 
 type ConfigUpdater<T> = (state: T) => Partial<T>;
+
+/**
+ * Persist a never-saved draft via POST /notes, then swap its placeholder id
+ * for the real one. Returns false when the create yields no note; throws on
+ * transport failure (the caller's try/catch maps that to save-failed).
+ */
+async function saveDraft(
+  set: (update: ConfigUpdater<EditorState> | Partial<EditorState>) => void,
+  tab: TabState,
+  rawTags: string[],
+): Promise<boolean> {
+  const res = await api.createNote({
+    content: tab.content,
+    tags: rawTags,
+    folder_id: tab.folderId ?? undefined,
+  });
+  if (!res.data) return false;
+  replaceTabAfterCreate(set, tab.noteId, res.data);
+  useDataBus.getState().bumpNotes();
+  return true;
+}
 
 // Selector for active tab
 export function useActiveTab(): TabState | null {
