@@ -1,5 +1,6 @@
 import { MainApp } from './MainApp';
 import { WebAuthGate } from './components/WebAuthGate';
+import { useWebUnloadGuard } from './hooks/useWebUnloadGuard';
 import { MigrationDialog } from './pages/MigrationDialog';
 import { getPlatform } from './platform';
 
@@ -19,6 +20,9 @@ import { getPlatform } from './platform';
  */
 export function App() {
   const platform = getPlatform();
+  // Web-only unsaved-work guard. Mounted here (the session root) so it outlives
+  // the WebAuthGate ↔ MainApp swap on 401 / token expiry; no-op on Electron.
+  useWebUnloadGuard();
   const startupMode = platform.startupMode;
   if (startupMode.mode !== 'normal') {
     return <MigrationDialog startupMode={startupMode} />;
