@@ -155,6 +155,7 @@ interface RunResult {
 export const webAdapter: PlatformAdapter = {
   startupMode: { mode: 'normal' },
   requiresAuth: true,
+  remoteClient: true,
   daemonBaseUrl: () => '',
   sync: webSync,
   // migration / cli / shortcut / quit — Electron-only, intentionally absent.

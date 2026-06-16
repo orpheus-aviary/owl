@@ -51,6 +51,15 @@ export interface PlatformAdapter {
    * so the desktop renders straight into the app — unchanged.
    */
   readonly requiresAuth: boolean;
+  /**
+   * Phase B (B2) — whether this host is a networked thin client over a
+   * possibly-shared daemon, rather than the sole local writer. The web host
+   * (`true`) opts into optimistic-concurrency saves (`expected_updated_at` +
+   * 409 handling) and the `beforeunload` unsaved-tabs guard; Electron talks to
+   * its own local daemon as the only writer (`false`), so it keeps
+   * last-write-wins + manual save — desktop behavior unchanged.
+   */
+  readonly remoteClient: boolean;
   /** Daemon HTTP base. Electron: per-profile injected port; web: `''` (same-origin). */
   daemonBaseUrl(): string;
   /** Sync surface — required session ops + optional Electron-local profile mgmt. */

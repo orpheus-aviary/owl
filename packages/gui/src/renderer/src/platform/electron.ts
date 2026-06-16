@@ -16,6 +16,9 @@ export function createElectronAdapter(): PlatformAdapter {
     // Local daemon has no Layer-2 login (A6 adds a local mutating-token, not a
     // login gate), so the desktop never shows the web login screen.
     requiresAuth: false,
+    // Sole local writer → last-write-wins + manual save (unchanged). Sync's
+    // conflict_record covers cross-device divergence on the desktop.
+    remoteClient: false,
     daemonBaseUrl: () => window.owlAPI.daemonUrl,
     get sync() {
       return window.owlAPI.sync;
