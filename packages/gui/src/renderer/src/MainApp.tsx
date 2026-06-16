@@ -6,6 +6,7 @@ import { extractTitle } from '@/components/NoteListItem';
 import { UnsavedTabsDialog } from '@/components/UnsavedTabsDialog';
 import { ConflictDialog } from '@/components/ai/ConflictDialog';
 import { NoteAppliedToast } from '@/components/ai/NoteAppliedToast';
+import { VersionConflictDialog } from '@/components/editor/VersionConflictDialog';
 import { ConflictsNav } from '@/components/sync/ConflictsNav';
 import { SyncStatusBar } from '@/components/sync/SyncStatusBar';
 import { ResizeHandle } from '@/components/ui/resize-handle';
@@ -201,8 +202,10 @@ async function handleNoteDrop(
       // Move to folder + land at tail of that folder. NULL position would
       // combine with a freshly-bumped updated_at to put the note at the TOP
       // of the NULL group, not the bottom — so we reorder explicitly.
-      await moveNoteToFolder(drag.noteId, drop.folderId);
-      useEditorStore.getState().syncTabFolderId(drag.noteId, drop.folderId);
+      const moved = await moveNoteToFolder(drag.noteId, drop.folderId);
+      // Pass the post-move updatedAt so a web tab rebases its CAS baseline
+      // (the move bumped updated_at; reorder below only touches position).
+      useEditorStore.getState().syncTabFolderId(drag.noteId, drop.folderId, moved.data?.updatedAt);
       await useFolderStore.getState().fetchPanelNotes();
       const ordered = buildReorderList(drop.folderId, drag.noteId);
       await api.reorderNotes(drop.folderId, ordered);
@@ -210,8 +213,8 @@ async function handleNoteDrop(
       return;
     }
     if (drop.kind === 'root-blank') {
-      await moveNoteToFolder(drag.noteId, null);
-      useEditorStore.getState().syncTabFolderId(drag.noteId, null);
+      const moved = await moveNoteToFolder(drag.noteId, null);
+      useEditorStore.getState().syncTabFolderId(drag.noteId, null, moved.data?.updatedAt);
       await useFolderStore.getState().fetchPanelNotes();
       const ordered = buildReorderList(null, drag.noteId);
       await api.reorderNotes(null, ordered);
@@ -223,8 +226,10 @@ async function handleNoteDrop(
       const src = useFolderStore.getState().panelNotes.find((n) => n.id === drag.noteId);
       const srcFolderId = src?.folderId ?? null;
       if (srcFolderId !== drop.folderId) {
-        await moveNoteToFolder(drag.noteId, drop.folderId);
-        useEditorStore.getState().syncTabFolderId(drag.noteId, drop.folderId);
+        const moved = await moveNoteToFolder(drag.noteId, drop.folderId);
+        useEditorStore
+          .getState()
+          .syncTabFolderId(drag.noteId, drop.folderId, moved.data?.updatedAt);
         // Refresh panelNotes so buildReorderList sees the note in its new scope.
         await useFolderStore.getState().fetchPanelNotes();
       }
@@ -417,6 +422,7 @@ export function MainApp() {
       <DeleteConfirmDialog />
       <NoteAppliedToast />
       <ConflictDialog />
+      <VersionConflictDialog />
       <UnsavedTabsDialog />
       <ClaimAccountDialog />
     </HashRouter>
