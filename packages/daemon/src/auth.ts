@@ -16,6 +16,8 @@
  */
 
 import { randomBytes } from 'node:crypto';
+import { isApiPath } from '@orpheus-aviary/owl-shared/api-paths';
+import type { OwlConfig } from '@owl/core';
 import type { AppContext } from './context.js';
 
 export interface Session {
@@ -166,6 +168,19 @@ export function isPublicPath(method: string, url: string): boolean {
   if (method === 'GET' && path === '/status') return true;
   if (method === 'POST' && path === '/auth/login') return true;
   return false;
+}
+
+/**
+ * Whether a request bypasses the Layer-2 bearer requirement. `local` mode is
+ * always exempt (no Layer-2 auth — desktop unchanged). In cloud mode: the public
+ * allowlist (`isPublicPath`) plus — Phase B4 — the static web shell, i.e. any
+ * GET/HEAD to a NON-API path. The API surface (`isApiPath`) stays bearer-gated,
+ * and a non-GET to a non-API path is fail-closed (not public).
+ */
+export function isAuthExempt(config: OwlConfig, method: string, url: string): boolean {
+  if (config.daemon.mode === 'local') return true;
+  if (isPublicPath(method, url)) return true;
+  return (method === 'GET' || method === 'HEAD') && !isApiPath(url);
 }
 
 /**

@@ -32,6 +32,7 @@ import { DevTokenInProductionError, tryConsumeDevSession } from './sync/dev-boot
 import { type ParentProbeHandle, startParentProbe } from './sync/parent-probe.js';
 import { installSkybridgeSession } from './sync/session.js';
 import { createSwitchGate } from './sync/switch-gate.js';
+import { assertWebRootValid, resolveWebRoot } from './web-host.js';
 
 const program = new Command();
 
@@ -64,6 +65,9 @@ program
     // unchanged → today's desktop behaviour is untouched.
     try {
       assertDaemonStartupSafe(config, { resolvedApiKey: resolveLlmConfig(config).api_key });
+      // B4 — refuse to boot if [daemon].web_root is set but unservable (touches
+      // disk, so it lives here, not in the pure startup guard).
+      assertWebRootValid(resolveWebRoot(config));
     } catch (err) {
       if (err instanceof DaemonStartupError) {
         logger.error({ kind: 'startup-guard' }, err.message);

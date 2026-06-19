@@ -55,6 +55,7 @@ function cloudConfig(accountLock: string, apiKey = SECRET): OwlConfig {
       server_url: 'http://127.0.0.1:18443',
       account_lock: accountLock,
       public_url: 'http://127.0.0.1:47010',
+      web_root: '/srv/owl/web',
     },
   };
 }
@@ -104,6 +105,8 @@ describe('GET /config — secret redaction (A5)', () => {
     assert.equal(res.statusCode, 200);
     assert.equal(res.json().data.llm.api_key, SECRET);
     assert.equal(res.json().data.llm.has_api_key, undefined);
+    // Owner sees the server FS path.
+    assert.equal(res.json().data.daemon.web_root, '/srv/owl/web');
     scheduler.stop();
     await app.close();
     sqlite.close();
@@ -121,6 +124,12 @@ describe('GET /config — secret redaction (A5)', () => {
     assert.equal(llm.has_api_key, true, 'has_api_key flags the present (hidden) key');
     // Non-secret fields still flow through.
     assert.equal(res.json().data.daemon.public_url, 'http://127.0.0.1:47010');
+    // ...but web_root (a server FS path) is stripped for a non-owner.
+    assert.equal(
+      res.json().data.daemon.web_root,
+      undefined,
+      'web_root must be hidden from non-owner',
+    );
     scheduler.stop();
     await app.close();
     sqlite.close();

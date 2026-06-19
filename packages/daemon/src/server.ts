@@ -1,7 +1,7 @@
 import cors from '@fastify/cors';
 import Fastify, { type FastifyError } from 'fastify';
 import { corsOriginDelegate, isHostAllowed } from './access-guard.js';
-import { type Session, bearerToken, ensureSessionStore, isPublicPath } from './auth.js';
+import { type Session, bearerToken, ensureSessionStore, isAuthExempt } from './auth.js';
 import type { AppContext } from './context.js';
 import { fail } from './response.js';
 import { registerAiRoutes } from './routes/ai.js';
@@ -16,6 +16,7 @@ import { registerSystemRoutes } from './routes/system.js';
 import { registerTagRoutes } from './routes/tags.js';
 import { registerTodoRoutes } from './routes/todos.js';
 import { ensureSwitchGate } from './sync/switch-gate.js';
+import { registerWebHost, resolveWebRoot } from './web-host.js';
 
 /** HTTP methods the profile-switch gate quiesces during a db swap. */
 const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
@@ -73,8 +74,9 @@ export function buildServer(ctx: AppContext) {
   // downstream owner-gating (A4/A5).
   const sessionStore = ensureSessionStore(ctx);
   app.addHook('preHandler', async (req, reply) => {
-    if (ctx.config.daemon.mode === 'local') return;
-    if (isPublicPath(req.method, req.url)) return;
+    // Exempt: local mode, the public allowlist, and (B4) the static web shell
+    // — any GET/HEAD to a non-API path. The API surface stays bearer-gated.
+    if (isAuthExempt(ctx.config, req.method, req.url)) return;
     const token = bearerToken(req.headers.authorization);
     const session = token ? sessionStore.verify(token) : null;
     if (!session) {
@@ -143,6 +145,13 @@ export function buildServer(ctx: AppContext) {
   registerEventsRoutes(app, ctx);
   registerSyncRoutes(app, ctx);
   registerConflictsRoutes(app, ctx);
+
+  // B4 — same-origin web hosting (only when [daemon].web_root is configured).
+  // Registered AFTER the API routes so specific routes win; the shell is public
+  // (the cloud auth gate above bypasses non-API GET/HEAD). `cli.ts` has already
+  // fail-fast-validated the path at startup.
+  const webRoot = resolveWebRoot(ctx.config);
+  if (webRoot) registerWebHost(app, webRoot);
 
   return app;
 }
