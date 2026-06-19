@@ -1,6 +1,6 @@
 # Phase B3 子设计：web markdown XSS 硬化（去 rehypeRaw + 外链 noopener）
 
-> 状态：**v1 — 待审阅**。收口方式已拍板 = **web 分支去掉 `rehypeRaw`**（开放项 ⭐3 落定）。
+> 状态：**已实施 + 手测通过（2026-06-19，代码未提交）**。收口方式 = **web 分支去掉 `rehypeRaw`**（开放项 ⭐3 落定）。实施结果见文末 §7。
 > 父设计 `docs/plans/2026-06-14-phase-b-web-design.md` §3.4 / §4(B3) / ⭐3；
 > 架构 `docs/plans/2026-06-06-mobile-web-ecosystem-arch.md` §7。
 > 前置：B0 ✅ B1 ✅ B2 ✅。本片之后 → B4（daemon 静态托管 + CSP）。
@@ -131,7 +131,31 @@ bearer token 是**内存态、JS 可达**（⭐2 决策）。当前 `MarkdownPre
   `feat(gui): web-branch markdown XSS hardening (drop rehypeRaw) + external-link noopener`
 - 完成后更新 `PROCESS.md` 与 `docs/plans/2026-06-14-phase-b-web-design.md` 的 B3 行 ✅
   （PROCESS.md 编辑留工作区，按“分步提交”惯例由用户后提）。
-- **同 PR 同步父计划开放项（消除分歧，免后续执行者读岔）**：父计划仍写「倾向 rehype-sanitize」
-  （`2026-06-14-phase-b-web-design.md:89`、`:109`）与「B3 含 CSP」（`:109` / ⭐3）。本片落定 =
-  **去 rehypeRaw + CSP 移 B4**，需把父计划 §3.4 / §4(B3 行) / 开放项 ⭐3 的措辞改成与本子计划一致
-  （或在父计划这几处加一行「⭐3 已定 = 去 rehypeRaw，详见 `2026-06-19-phase-b3-xss-hardening.md`」）。
+- **同 PR 同步父计划开放项（消除分歧，免后续执行者读岔）**：父计划 §3.4 / §4(B3 行) / 开放项 ⭐3
+  原写「倾向 rehype-sanitize」+「B3 含 CSP」。本片落定 = **去 rehypeRaw + CSP 移 B4** → ✅ 已于
+  2026-06-19 把父计划这几处改为与本子计划一致（⭐3 标 ✅ = 去 rehypeRaw）。
+
+---
+
+## 7. 实施记录（2026-06-19，已实施 + 手测通过，代码未提交）
+
+**改动**（与上 §3 完全一致，无偏离）：
+- `MarkdownPreview.tsx`：`type RehypePlugins`；`const remoteClient = getPlatform().remoteClient`；
+  `rehypePlugins` 进 `useMemo` —— web=`[rehypeKatex, rehypeHighlight]`，桌面=`[[rehypeRaw,{passThrough}], …]`。
+  `<a>` override 改 spread-first / 受控-last；外链强制 `target="_blank"`+`rel="noopener noreferrer"`（`#` 锚点不加）；
+  `window.open(href,'_blank','noopener,noreferrer')`。
+- `MarkdownPreview.test.tsx`：`vi.hoisted` platform mock + `afterEach(vi.restoreAllMocks)`；+7 用例。
+
+**自动化验证（全绿）**：
+- targeted `MarkdownPreview.test.tsx` **11 pass**（4 既有 + 7 新）。
+- gui 全量 **441 pass**（434 → +7，零回归）。
+- `just check`（biome + `tsc -b` + 9 守卫）通过；改动两文件 0 warning。
+- `pnpm run build`（含 `apps/web`）通过。
+
+**手测（真浏览器，throwaway harness `apps/web/xss-harness.html`，测后已删）**：
+直接挂真 `MarkdownPreview`（绕过登录闸，`remoteClient=true`），种 `<script>`/`<img onerror>`/内联 HTML/`$x²$`/JS 代码块/外链/`#`锚点 →
+**✅ 无 alert、注入未执行、raw HTML 转义为文本、KaTeX/highlight 正常、外链 `target=_blank`+`rel=noopener noreferrer`+`window.opener===null`**。用户确认「没问题」。
+
+**桌面端**：CAS/渲染均 `remoteClient` 门，桌面 `remoteClient=false` 仍走 rehypeRaw → 零回归（单测 `desktop keeps raw HTML` 钉死）。
+
+**CSP**：未做，按计划归 B4（daemon 同源托管时下发）。

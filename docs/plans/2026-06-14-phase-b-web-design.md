@@ -1,6 +1,6 @@
 # Phase B 子设计：网页版（`apps/web` 瘦客户端）
 
-> 状态：**v1 — ⭐1/2/4/7 已拍板；B0 ✅ B1 ✅ B2 ✅（2026-06-16 已 ship + 手测）**。下一片 = B3（XSS/CSP）。父架构 `docs/plans/2026-06-06-mobile-web-ecosystem-arch.md`（v6，§4 网页版 / §7 安全 / §12 排期 / §14 开放项）。
+> 状态：**v1 — ⭐1/2/3/4/7 已拍板；B0 ✅ B1 ✅ B2 ✅（2026-06-16）B3 ✅（2026-06-19 去 rehypeRaw + 手测通过）**。下一片 = B4（daemon 静态托管 + CSP）。**B3 实施另立专档**：`docs/plans/2026-06-19-phase-b3-xss-hardening.md`。父架构 `docs/plans/2026-06-06-mobile-web-ecosystem-arch.md`（v6，§4 网页版 / §7 安全 / §12 排期 / §14 开放项）。
 > **B2 实施另立专档**（含逐文件 + 实施记录 + 决策修订）：`docs/plans/2026-06-16-phase-b2-optimistic-concurrency.md`（v3）。下方 §3.3/§4/§6/§7 关于 B2 的「倾向」已被 B2 实测推翻处，见该专档为准（要点：**ms 从 ISO 无损派生、不加 `updated_at_ms`**；**取消自动保存改 `beforeunload` 守卫**；**仅回流 shared `client.ts`**，daemon 早已支持 CAS）。
 > 前置：Step 0 ✅（platform adapter + shared api/SSE）· Phase A 云端 daemon 核心 A0–A5 ✅（cloud 模式 + 端点鉴权 + 两层会话 + `/auth/*` + config redaction）。
 > 开发流：Step 0 ✅ → **A 云端 daemon ✅核心** → **B 网页版（本设计）** → C 发 owl-shared → D 移动 v1 → E 移动 v2。
@@ -86,9 +86,9 @@ web v1 含编辑，多 session/多端同账号写同笔记会**后写覆盖** �
 ### 3.4 XSS / CSP 硬化（§7.6）
 
 cloud web 多用户共享源 + bearer 在 JS 可达 → 笔记里的恶意 HTML 一旦执行即偷 token：
-- **markdown 收口**：`MarkdownPreview` 的 `rehypeRaw` 在 web 必须**关掉或 sanitize**。选型：①直接去 `rehypeRaw`（损失原始 HTML 渲染，多数笔记不需要）②`rehype-sanitize` 白名单 ③DOMPurify。**倾向 = `rehype-sanitize`**（保留富文本、白名单可控、与 rehype 链原生兼容）。需保证 KaTeX/highlight passThrough 不被误杀。**注意桌面端是否要一并收口**（桌面是 local sandbox，风险低，但统一收口更省心——待定，倾向 web-only 分支以免动桌面行为）。
-- **CSP**：daemon 托管 web 时下发 CSP 头（禁 inline script eval / 限 connect-src 同源 / 限 img-src 等）。
-- **bearer 只存内存**（§3.2）+ 外链策略（`target=_blank` + `rel=noopener`）。
+- **markdown 收口**：**✅ 已实施（B3，⭐3 落定）= web 分支去 `rehypeRaw`**（`getPlatform().remoteClient` 门）。react-markdown 默认转义原始 HTML → 注入根本不被解析执行；math 节点不再经 rehypeRaw stringify、直通 rehypeKatex，highlight 照常 → KaTeX/highlight 零误伤。否决 `rehype-sanitize`（需为 KaTeX MathML/hljs class 维护脆弱白名单）。**桌面端 `remoteClient=false` 保持 rehypeRaw、零回归**（local sandbox 风险低，刻意不一并收口）。逐文件 + 实测 → `docs/plans/2026-06-19-phase-b3-xss-hardening.md`。
+- **CSP**：归 **B4**（daemon `@fastify/static` 同源托管时下发，dev/vite 期无处落地）。
+- **bearer 只存内存**（§3.2）+ 外链策略 **✅ 已实施**（外链强制 `target=_blank` + `rel=noopener noreferrer`，`window.open` 带 `noopener,noreferrer`）。
 
 ### 3.5 daemon 静态托管（同源）
 
@@ -106,7 +106,7 @@ cloud web 多用户共享源 + bearer 在 JS 可达 → 笔记里的恶意 HTML 
 | **B0** | `apps/web` 工程脚手架（Vite+React，路 A alias renderer 树 + 自带 `index.html`/`main.tsx` 挂 `<App/>`）；web build 跑通；webAdapter 现 stub 下**只读路径**渲染（无 auth） | 否 | `pnpm --filter @owl/web build` 出静态包；`vite` dev 连本地 local daemon 渲染 UI（读路径） |
 | **B1** | webAdapter 6 sync 方法换真 HTTP（`/auth/login`·logout·session·`/sync/status`·run·devices）；token 内存态 + `configureTransport` 注 bearer；401→登录屏；登录态机（未登录/登录中/已登录/过期）；复用 LoginForm | 否 | 连 **cloud daemon**：登录→bearer→CRUD 通；401→登录屏；登出；过期重登 |
 | **B2 ✅** | 乐观并发：`client.ts` `patchNote` 加 `expected_updated_at`（**唯一回流**；daemon 早已支持）；ms 从 `Note.updatedAt` ISO **无损派生**（未加 `updated_at_ms`）；TabState 基线；保存传基线/刷新/409 拉远端 `VersionConflictDialog`（覆盖/加载远端/取消）；folder-drag rebase；**取消自动保存** → web `beforeunload` 脏 tab 守卫 | **仅 shared（桌面 PATCH 字节不变，`remoteClient` 门）** | ✅ 手测全过（gui 434）。详见 B2 专档 |
-| **B3** | XSS/CSP：`MarkdownPreview` web 分支 `rehype-sanitize`（或去 rehypeRaw）+ 外链 noopener；bearer 内存态确认；（若 §3.5 入 B）daemon 下发 CSP 头 | 倾向否（web 分支） | 笔记注入 `<script>/<img onerror>` 在 web 不执行；KaTeX/highlight 不被误杀 |
+| **B3 ✅** | XSS：`MarkdownPreview` web 分支**去 rehypeRaw**（`remoteClient` 门）+ 外链 `target=_blank`/noopener；CSP 移 B4 | 否（web 分支；桌面 `remoteClient=false` 零回归） | ✅ 单测 gui 441（+7）+ 真浏览器手测：注入不执行、KaTeX/highlight 不误杀、外链 opener=null。详见 B3 专档 |
 | **B4** | daemon 静态托管（`@fastify/static` + SPA fallback + 路由优先级 + CSP）；`mode` 区分 local/cloud 托管 | 否 | daemon 起 → 浏览器开同源根 → SPA 路由通；同源无需 CORS；API 路由未被遮 |
 
 > B3/B4 顺序可调（CSP 在 B3 还是 B4 一起下发，看 §3.5 拍板）。**响应式适配**（窄视口）：先以桌面浏览器为主，明显破版的页随手修；系统性响应式重构若需要，单列 B5（待评估，可能不入 v1）。
@@ -140,7 +140,7 @@ cloud web 多用户共享源 + bearer 在 JS 可达 → 笔记里的恶意 HTML 
 
 ---
 
-## 7. 开放项（⭐1/2/4 已拍板 2026-06-14；3/5/6 倾向，实施时定）
+## 7. 开放项（⭐1/2/3/4/7 已拍板；⭐3 = B3 落定 2026-06-19；5/6 见下）
 
 | # | 项 | 结论 |
 |---|----|------|
@@ -148,10 +148,10 @@ cloud web 多用户共享源 + bearer 在 JS 可达 → 笔记里的恶意 HTML 
 | ⭐2 | token 存储（§3.2/§14#5） | **✅ 已定 = 内存态**（B1 默认）。理由：web 最大风险非刷新重登，而是 XSS 后 token 被长期拿走；内存态砍掉持久化攻击面。sessionStorage 仅作后续「记住我」**显式**选项，不做默认。 |
 | ⭐4 | daemon 静态托管放 B 还是 Aω（§3.5） | **✅ 已定 = 托管能力进 B4**（验同源 / SPA fallback / CSP / API 路由优先级等真实路径，否则 B1–B3 都在 dev server 半真环境跑）。「打进 `owl-server` + 上云 + 发布包」留 **Aω**，B4 不提前拖入发布复杂度。 |
 | ⭐7 | 正式版端口约定（B4/Aω） | **✅ 已定 = 云端 `owl-server` 默认 `47020`（= 47010 + 10）**；**桌面本地 daemon 保持 `47010`**（0.5.0 已发版，GUI 自启动 / CLI 默认 / 存量安装钉死，不改）。理由：同机并跑桌面 owl + 本地 web-serving daemon 免撞口、「+10」好记。真上公网仍塞反代（443/80）+ 显式配端口，47020 只是服务版缺省。**B4/Aω 时落地（owl-server 打包/部署默认 + 部署文档），不阻塞 B1–B3。** |
-| 3 | XSS 收口选型（§3.4） | 倾向 **`rehype-sanitize`** web 分支；桌面端是否一并收口（倾向否，免动桌面行为）。B3 定。 |
+| ⭐3 | XSS 收口选型（§3.4） | **✅ 已定（B3，2026-06-19）= web 分支去 `rehypeRaw`**（非 rehype-sanitize）。理由：去 rehypeRaw 最简最安全、KaTeX/highlight 零误伤；sanitize 需为其维护脆弱白名单。桌面端 `remoteClient=false` 不一并收口（local sandbox 风险低）。详见 `2026-06-19-phase-b3-xss-hardening.md`。 |
 | 5 | 响应式重构范围 | 桌面浏览器优先，破版随手修；系统性响应式若需 → B5 单列（可能不入 v1）。 |
 | 6 | `Note.updatedAt` 对齐方式（§3.3 风险） | **✅ 已定（B2）= 从 ISO 派生**（`new Date(updatedAt).getTime()`），**不新增 `updated_at_ms`**、不改 wire。理由：ISO 3 位毫秒与库 INTEGER ms 无损往返；新增字段反而触 core/daemon 全序列化路径。 |
 
 ---
 
-*（v1，§7 ⭐1/2/4/7 已拍板 2026-06-14。按 §4 slice 拆 commit，B0 ✅ B1 ✅ B2 ✅（2026-06-16）。下一片 = B3 XSS/CSP。B2 细节见 `2026-06-16-phase-b2-optimistic-concurrency.md`。）*
+*（v1，§7 ⭐1/2/3/4/7 已拍板。按 §4 slice 拆 commit，B0 ✅ B1 ✅ B2 ✅（2026-06-16）B3 ✅（2026-06-19）。下一片 = B4 daemon 静态托管 + CSP。B2 细节见 `2026-06-16-phase-b2-optimistic-concurrency.md`；B3 见 `2026-06-19-phase-b3-xss-hardening.md`。）*
