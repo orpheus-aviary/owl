@@ -2,6 +2,7 @@ import 'katex/dist/katex.min.css';
 
 import { NoteIdPill } from '@/components/NoteIdPill';
 import { remarkNoteRefs } from '@/lib/note-id-refs';
+import { getPlatform } from '@/platform';
 import { useMemo } from 'react';
 import type { Components, Options, UrlTransform } from 'react-markdown';
 import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
@@ -12,6 +13,7 @@ import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 
 type RemarkPlugins = Options['remarkPlugins'];
+type RehypePlugins = Options['rehypePlugins'];
 
 /**
  * react-markdown's default URL sanitizer rewrites any unknown protocol to
@@ -41,9 +43,24 @@ export function MarkdownPreview({
   className,
   linkifyNoteIds = false,
 }: MarkdownPreviewProps) {
+  // On a networked thin client (web), the bearer token lives in JS, so a note
+  // containing raw `<script>`/`<img onerror>` would steal it the moment it ran.
+  // Drop `rehypeRaw` there: react-markdown then escapes raw HTML to text and it
+  // is never parsed. The desktop is a local single-writer sandbox — it keeps
+  // raw-HTML rendering unchanged.
+  const remoteClient = getPlatform().remoteClient;
+
   const remarkPlugins = useMemo<RemarkPlugins>(
     () => (linkifyNoteIds ? [remarkGfm, remarkMath, remarkNoteRefs] : [remarkGfm, remarkMath]),
     [linkifyNoteIds],
+  );
+
+  const rehypePlugins = useMemo<RehypePlugins>(
+    () =>
+      remoteClient
+        ? [rehypeKatex, rehypeHighlight]
+        : [[rehypeRaw, { passThrough: ['math', 'inlineMath'] }], rehypeKatex, rehypeHighlight],
+    [remoteClient],
   );
 
   const components = useMemo<Components>(
@@ -60,8 +77,15 @@ export function MarkdownPreview({
         if (linkifyNoteIds && href?.startsWith('note:')) {
           return <NoteIdPill id={href.slice('note:'.length)} />;
         }
+        // `#` anchors scroll within the doc; everything else is an external
+        // link opened in a new tab with `noopener`/`noreferrer` so the opened
+        // page can't reach back via `window.opener`. `{...props}` is spread
+        // FIRST so our controlled href/onClick/target/rel always win over any
+        // attribute the desktop raw-HTML pipeline parsed off the source `<a>`.
+        const isAnchor = href?.startsWith('#') ?? false;
         return (
           <a
+            {...props}
             href={href}
             onClick={(e) => {
               if (!href) return;
@@ -73,9 +97,9 @@ export function MarkdownPreview({
                 return;
               }
               e.preventDefault();
-              window.open(href, '_blank');
+              window.open(href, '_blank', 'noopener,noreferrer');
             }}
-            {...props}
+            {...(isAnchor ? {} : { target: '_blank', rel: 'noopener noreferrer' })}
           >
             {children}
           </a>
@@ -91,11 +115,7 @@ export function MarkdownPreview({
     >
       <ReactMarkdown
         remarkPlugins={remarkPlugins}
-        rehypePlugins={[
-          [rehypeRaw, { passThrough: ['math', 'inlineMath'] }],
-          rehypeKatex,
-          rehypeHighlight,
-        ]}
+        rehypePlugins={rehypePlugins}
         components={components}
         urlTransform={linkifyNoteIds ? noteAwareUrlTransform : undefined}
       >
