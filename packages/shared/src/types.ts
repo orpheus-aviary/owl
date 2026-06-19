@@ -145,6 +145,8 @@ export interface OwlConfig {
     allowed_hosts?: string[];
     session_ttl_min?: number;
     trust_proxy?: boolean;
+    /** Phase B4 — server FS path to the web bundle. Owner-only (absent in the non-owner projection). */
+    web_root?: string;
   };
   ai: {
     context_rounds: number;
@@ -174,7 +176,12 @@ export interface PublicLlmConfig {
   has_api_key: boolean;
 }
 
-export type PublicOwlConfig = Omit<OwlConfig, 'llm'> & { llm: PublicLlmConfig };
+// Mirrors `@owl/core` PublicOwlConfig: `daemon` also drops the owner-only
+// `web_root` (a server FS path).
+export type PublicOwlConfig = Omit<OwlConfig, 'llm' | 'daemon'> & {
+  llm: PublicLlmConfig;
+  daemon: Omit<OwlConfig['daemon'], 'web_root'>;
+};
 
 export interface AiToolDescriptor {
   name: string;

@@ -72,6 +72,14 @@ export interface DaemonConfig {
   session_ttl_min?: number;
   /** Trust `X-Forwarded-For` (Fastify trustProxy) so login rate-limit can key per client IP behind a reverse proxy. Default false. */
   trust_proxy?: boolean;
+  /**
+   * Phase B4 — filesystem path to a built web bundle (`apps/web/dist`) to serve
+   * same-origin via `@fastify/static`. Absolute path used as-is; a relative path
+   * resolves against `paths.nestDir()`. Unset → no web hosting (desktop default,
+   * unchanged). Owner-only in the cloud `/config` projection (it's a server FS
+   * path — stripped for non-owner sessions by `redactConfig`).
+   */
+  web_root?: string;
 }
 
 /**
@@ -277,13 +285,19 @@ export interface PublicLlmConfig {
   has_api_key: boolean;
 }
 
+/** `DaemonConfig` minus the owner-only server FS path. */
+export type PublicDaemonConfig = Omit<DaemonConfig, 'web_root'>;
+
 /**
- * Non-owner projection of `OwlConfig`: identical except `llm` carries no
- * `api_key` (just a `has_api_key` flag). The only secret in the config today is
- * `llm.api_key`; everything else (incl. the `daemon` cloud fields) is operator
- * metadata, not a credential.
+ * Non-owner projection of `OwlConfig`: `llm` carries no `api_key` (just a
+ * `has_api_key` flag), and `daemon` drops `web_root` (a server filesystem path,
+ * not metadata a borrowing account should see). Everything else (incl. the
+ * other `daemon` cloud fields) is operator metadata, not a credential.
  */
-export type PublicOwlConfig = Omit<OwlConfig, 'llm'> & { llm: PublicLlmConfig };
+export type PublicOwlConfig = Omit<OwlConfig, 'llm' | 'daemon'> & {
+  llm: PublicLlmConfig;
+  daemon: PublicDaemonConfig;
+};
 
 /**
  * Project `config` for a viewer. The owner (and any local-mode caller) sees the
@@ -301,7 +315,13 @@ export function redactConfig(
 ): OwlConfig | PublicOwlConfig {
   if (opts.owner) return config;
   const { api_key, ...llmRest } = config.llm;
-  return { ...config, llm: { ...llmRest, has_api_key: api_key.length > 0 } };
+  // web_root is owner-only (a server FS path) — drop it via rest-omit.
+  const { web_root: _web_root, ...daemonRest } = config.daemon;
+  return {
+    ...config,
+    llm: { ...llmRest, has_api_key: api_key.length > 0 },
+    daemon: daemonRest,
+  };
 }
 
 // ─── Helpers ───────────────────────────────────────────
