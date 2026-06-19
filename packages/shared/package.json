@@ -7,6 +7,10 @@
     ".": {
       "import": "./dist/index.js",
       "types": "./dist/index.d.ts"
+    },
+    "./api-paths": {
+      "import": "./dist/api-paths.js",
+      "types": "./dist/api-paths.d.ts"
     }
   },
   "scripts": {

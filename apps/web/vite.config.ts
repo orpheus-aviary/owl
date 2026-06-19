@@ -1,4 +1,5 @@
 import { fileURLToPath } from 'node:url';
+import { API_PREFIXES } from '@orpheus-aviary/owl-shared/api-paths';
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vite';
@@ -17,23 +18,9 @@ const repoRoot = fileURLToPath(new URL('../..', import.meta.url));
 // and avoid CORS. Defaults to a local daemon on 47010; override with
 // OWL_DAEMON_PORT. SSE (/events, /ai/chat) streams through the http proxy.
 const daemonTarget = `http://127.0.0.1:${process.env.OWL_DAEMON_PORT ?? '47010'}`;
-const API_PREFIXES = [
-  '/ai',
-  '/api',
-  '/auth',
-  '/config',
-  '/conflicts',
-  '/events',
-  '/folders',
-  '/llm',
-  '/notes',
-  '/parse-tag',
-  '/reminders',
-  '/status',
-  '/sync',
-  '/tags',
-  '/todos',
-];
+// API_PREFIXES is the single source of truth shared with the daemon's auth gate
+// (see @orpheus-aviary/owl-shared/api-paths) — the proxy forwards exactly the
+// prefixes the daemon treats as API, so dev and same-origin prod agree.
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
