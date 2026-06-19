@@ -1,6 +1,7 @@
 # Phase B 子设计：网页版（`apps/web` 瘦客户端）
 
-> 状态：**v1 — ⭐1/2/3/4/7 已拍板；B0 ✅ B1 ✅ B2 ✅（2026-06-16）B3 ✅（2026-06-19 去 rehypeRaw + 手测通过）**。下一片 = B4（daemon 静态托管 + CSP）。**B3 实施另立专档**：`docs/plans/2026-06-19-phase-b3-xss-hardening.md`。父架构 `docs/plans/2026-06-06-mobile-web-ecosystem-arch.md`（v6，§4 网页版 / §7 安全 / §12 排期 / §14 开放项）。
+> 状态：**v1 — ⭐1/2/3/4/7 已拍板；B0 ✅ B1 ✅ B2 ✅ B3 ✅ B4 ✅（2026-06-19 daemon 静态托管 + CSP，手测通过）**。**Phase B 网页版 v1 全部 slice 完成**（下一步 = Phase B 收尾 / Aω）。**B3/B4 实施另立专档**：`2026-06-19-phase-b3-xss-hardening.md`、`2026-06-19-phase-b4-static-hosting.md`。父架构 `docs/plans/2026-06-06-mobile-web-ecosystem-arch.md`（v6，§4 网页版 / §7 安全 / §12 排期 / §14 开放项）。
+> **⚠️ B4 实测修订**：前端是 **HashRouter**（`MainApp.tsx:317`），浏览器只请求 `/`+`/assets/*` → **无需 SPA fallback**（下方 §3.5/§4/§5/§6 凡提 "SPA fallback" 均已作废；`@fastify/static` `wildcard:false` 即足够，未匹配落 Fastify 默认 404）。BrowserRouter 迁移（含命名冲突）留后续。
 > **B2 实施另立专档**（含逐文件 + 实施记录 + 决策修订）：`docs/plans/2026-06-16-phase-b2-optimistic-concurrency.md`（v3）。下方 §3.3/§4/§6/§7 关于 B2 的「倾向」已被 B2 实测推翻处，见该专档为准（要点：**ms 从 ISO 无损派生、不加 `updated_at_ms`**；**取消自动保存改 `beforeunload` 守卫**；**仅回流 shared `client.ts`**，daemon 早已支持 CAS）。
 > 前置：Step 0 ✅（platform adapter + shared api/SSE）· Phase A 云端 daemon 核心 A0–A5 ✅（cloud 模式 + 端点鉴权 + 两层会话 + `/auth/*` + config redaction）。
 > 开发流：Step 0 ✅ → **A 云端 daemon ✅核心** → **B 网页版（本设计）** → C 发 owl-shared → D 移动 v1 → E 移动 v2。
@@ -92,7 +93,7 @@ cloud web 多用户共享源 + bearer 在 JS 可达 → 笔记里的恶意 HTML 
 
 ### 3.5 daemon 静态托管（同源）
 
-- daemon 用 `@fastify/static` 托管 `apps/web` 构建产物（同源根 `/`）+ SPA fallback（非 API 路由回 `index.html`，react-router@7 客户端路由）+ CSP 头。
+- ✅（B4 已实施）daemon 用 `@fastify/static`（`wildcard:false`）托管 `apps/web` 构建产物（同源根 `/`）+ CSP 头。**~~SPA fallback~~ 不需要**：前端是 HashRouter，浏览器只请求 `/`+`/assets/*`（hash 路由客户端解析），未匹配文件落 Fastify 默认 404。
 - **与现路由不撞**：API 是 `/notes`、`/auth/*`、`/sync/*`、`/events`、`/config` 等具名前缀；web 静态走根 + `/assets/*`。需明确**优先级**（API 路由先注册，static 兜底）+ 别把 `/status`(public) 等遮掉。
 - **mode 区分**：local daemon 也可托管（本地 web 端）；cloud daemon 托管 = 服务器 web 端。**本阶段托管在 local/LAN 验**；正式公网部署（owl-server 打包内嵌）= Aω。
 - **是否进 Phase B**：托管能力本身（Fastify static + SPA fallback + CSP）值得在 B 落地以便端到端验证；但「打进发布包」留 Aω。**待用户确认托管放 B 还是 Aω。**
@@ -107,7 +108,7 @@ cloud web 多用户共享源 + bearer 在 JS 可达 → 笔记里的恶意 HTML 
 | **B1** | webAdapter 6 sync 方法换真 HTTP（`/auth/login`·logout·session·`/sync/status`·run·devices）；token 内存态 + `configureTransport` 注 bearer；401→登录屏；登录态机（未登录/登录中/已登录/过期）；复用 LoginForm | 否 | 连 **cloud daemon**：登录→bearer→CRUD 通；401→登录屏；登出；过期重登 |
 | **B2 ✅** | 乐观并发：`client.ts` `patchNote` 加 `expected_updated_at`（**唯一回流**；daemon 早已支持）；ms 从 `Note.updatedAt` ISO **无损派生**（未加 `updated_at_ms`）；TabState 基线；保存传基线/刷新/409 拉远端 `VersionConflictDialog`（覆盖/加载远端/取消）；folder-drag rebase；**取消自动保存** → web `beforeunload` 脏 tab 守卫 | **仅 shared（桌面 PATCH 字节不变，`remoteClient` 门）** | ✅ 手测全过（gui 434）。详见 B2 专档 |
 | **B3 ✅** | XSS：`MarkdownPreview` web 分支**去 rehypeRaw**（`remoteClient` 门）+ 外链 `target=_blank`/noopener；CSP 移 B4 | 否（web 分支；桌面 `remoteClient=false` 零回归） | ✅ 单测 gui 441（+7）+ 真浏览器手测：注入不执行、KaTeX/highlight 不误杀、外链 opener=null。详见 B3 专档 |
-| **B4** | daemon 静态托管（`@fastify/static` + SPA fallback + 路由优先级 + CSP）；`mode` 区分 local/cloud 托管 | 否 | daemon 起 → 浏览器开同源根 → SPA 路由通；同源无需 CORS；API 路由未被遮 |
+| **B4 ✅** | daemon 静态托管（`@fastify/static` `wildcard:false` + 路由优先级 + CSP 头 + API-prefix auth gate）；`mode` 区分 local/cloud 托管；**HashRouter → 无 SPA fallback**；`API_PREFIXES` 抽 owl-shared 单一源 + route-coverage 测试；`web_root` fail-fast 校验 + 非 owner 脱敏 | 否（桌面不设 web_root 零回归） | ✅ daemon 405(+11) + curl 验：同源 `/`+assets+CSP，`/status`/API 未遮，missing→404，cloud shell 公开 API 401。详见 B4 专档 |
 
 > B3/B4 顺序可调（CSP 在 B3 还是 B4 一起下发，看 §3.5 拍板）。**响应式适配**（窄视口）：先以桌面浏览器为主，明显破版的页随手修；系统性响应式重构若需要，单列 B5（待评估，可能不入 v1）。
 
@@ -154,4 +155,4 @@ cloud web 多用户共享源 + bearer 在 JS 可达 → 笔记里的恶意 HTML 
 
 ---
 
-*（v1，§7 ⭐1/2/3/4/7 已拍板。按 §4 slice 拆 commit，B0 ✅ B1 ✅ B2 ✅（2026-06-16）B3 ✅（2026-06-19）。下一片 = B4 daemon 静态托管 + CSP。B2 细节见 `2026-06-16-phase-b2-optimistic-concurrency.md`；B3 见 `2026-06-19-phase-b3-xss-hardening.md`。）*
+*（v1，§7 ⭐1/2/3/4/7 已拍板。按 §4 slice 拆 commit，B0 ✅ B1 ✅ B2 ✅（2026-06-16）B3 ✅ B4 ✅（2026-06-19）= **Phase B v1 全 slice 完成**。下一步 = Phase B 收尾 / Aω。B2 见 `2026-06-16-phase-b2-optimistic-concurrency.md`；B3 见 `2026-06-19-phase-b3-xss-hardening.md`；B4 见 `2026-06-19-phase-b4-static-hosting.md`。）*
