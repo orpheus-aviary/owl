@@ -121,6 +121,8 @@ cloud web 多用户共享源 + bearer 在 JS 可达 → 笔记里的恶意 HTML 
 3. **B2**：两个 web tab（同账号）/ 或 web + 桌面 改同笔记 → 后者 409 → 拉远端 + 提示；桌面端 PATCH 不带参仍现行为。
 4. **B3**：种一条含 `<img src=x onerror=alert(1)>` / `<script>` 的笔记 → web 预览不执行；含 `$x^2$`/代码块仍正常。
 5. **B4**：daemon 托管 → 浏览器同源访问根 + 刷新子路由（SPA fallback）→ 不 404；`GET /status` 等 API 未被静态遮。
+   - **连接/会话探针（验既有 `SyncStatusBar`，非新增）**：web 复用的 `SyncStatusBar`（`components/sync/SyncStatusBar.tsx`，挂 `MainApp.tsx:371`，无 Electron 门）已提供「不刷新即可测服务还连着 + 会话有效」的全部能力——① SSE `/events` 驱动的状态点 idle/syncing/error/**offline**（被动指示，断线 amber、恢复自动回绿）；② 弹层「手动同步」按钮 → `sync.run()` → `POST /sync/run`（主动往返），且带 bearer，过期/被撤 → 401 → `onUnauthorized` → 切回登录（`App.tsx:24`）= 顺带会话探针。**验证项**：B4 同源托管下断网/恢复 → 状态点 offline↔idle 正确切换；点「手动同步」成功刷新「最近同步」；伪造/撤销 token 后点「手动同步」→ 弹回登录屏。**结论：无需新增「测试连接」按钮**。
+   - （延后增量，非 B4）：若嫌 `/sync/run` 当 ping 偏重，可加一行用 `sync.status()`（`GET /auth/session`，便宜 + 续滑动 TTL）显示「连接正常 / 会话有效至 HH:MM」；与「刷新即重登」的真正解法 **「记住我」/sessionStorage opt-in（⭐2 deferred）** 是两件事，均归 0.6 backlog。
 6. （可选）LAN 档 `bind=0.0.0.0` + `allowed_hosts`，另一设备浏览器连桌面 IP（非安全上下文坑：纯 IP http 丢 SW/secure-cookie，§8 arch）。
 
 ---
