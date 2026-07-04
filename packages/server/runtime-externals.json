@@ -1,0 +1,15 @@
+[
+  "better-sqlite3",
+  "drizzle-orm",
+  "pino",
+  "pino-roll",
+  "smol-toml",
+  "uuid",
+  "fastify",
+  "@fastify/cors",
+  "@fastify/static",
+  "openai",
+  "@anthropic-ai/sdk",
+  "node-notifier",
+  "@orpheus-aviary/skybridge-client"
+]

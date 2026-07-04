@@ -1,0 +1,15 @@
+# owl-server config sample.
+#   cp this to  <OWL_NEST_DIR>/owl/owl_config.toml  and fill in the placeholders.
+# owl-server runs ONLY in cloud mode. If [daemon].port is omitted it defaults to 47020.
+# Leave [daemon].web_root unset to serve the web bundle embedded in this package.
+
+[daemon]
+mode = "cloud"
+bind = "0.0.0.0"                                  # LAN/public; 127.0.0.1 for a loopback-only test
+port = 47020
+server_url = "https://YOUR-SKYBRIDGE-HOST:8443"   # the fixed skybridge server URL
+account_lock = "REPLACE_WITH_OWNER_PROFILE_ID"    # from: owl-server compute-owner --server-url <url> --email <email>
+public_url = "http://YOUR-SERVER-IP:47020"        # this server's own public origin (drives Host/CORS)
+
+[sync]
+interval_min = 5

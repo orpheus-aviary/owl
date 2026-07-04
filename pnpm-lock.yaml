@@ -347,6 +347,27 @@ importers:
         specifier: ^4.1.4
         version: 4.1.4(@types/node@25.5.2)(jsdom@25.0.1)(vite@7.3.1(@types/node@25.5.2)(jiti@2.6.1)(lightningcss@1.32.0)(tsx@4.21.0))
 
+  packages/server:
+    devDependencies:
+      '@orpheus-aviary/owl-shared':
+        specifier: workspace:*
+        version: link:../shared
+      '@owl/core':
+        specifier: workspace:*
+        version: link:../core
+      '@owl/daemon':
+        specifier: workspace:*
+        version: link:../daemon
+      '@owl/web':
+        specifier: workspace:*
+        version: link:../../apps/web
+      tsup:
+        specifier: ^8.5.0
+        version: 8.5.1(jiti@2.6.1)(postcss@8.5.8)(tsx@4.21.0)(typescript@5.9.3)
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
   packages/shared:
     devDependencies:
       typescript:

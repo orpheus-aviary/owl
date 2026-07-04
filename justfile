@@ -125,6 +125,20 @@ cli-smoke: build-cli ensure-node-abi
     @echo "--- doctor ---"
     node apps/cli/dist/index.js doctor || true
 
+# Stage 1.1 — build the publishable @orpheus-aviary/owl-server bundle: tsup
+# bundles daemon+core+shared, then gen-manifest embeds the web bundle +
+# migrations. Every prerequisite (incl. @owl/web) is built first; gen-manifest
+# fail-closes if apps/web/dist/index.html is missing.
+[group('build')]
+build-server: build-shared build-core build-daemon
+    pnpm --filter @owl/web run build
+    pnpm --filter @owl/server run build
+
+# npm pack the owl-server dist into a tarball (clean-install smoke / publish).
+[group('build')]
+pack-server: build-server
+    cd packages/server/dist && npm pack
+
 # Produce the macOS arm64 dmg via electron-builder.
 # `pnpm package` internally runs build:deps + build:icons + electron-vite build
 # + install-app-deps (Electron-ABI rebuild). After packaging, better-sqlite3

@@ -1,0 +1,24 @@
+{
+  "name": "@owl/server",
+  "version": "0.5.0",
+  "private": true,
+  "type": "module",
+  "description": "Owl cloud server — bundled Fastify daemon + embedded web bundle (publishes as @orpheus-aviary/owl-server)",
+  "bin": {
+    "owl-server": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsup",
+    "build:tsc": "tsc",
+    "clean": "rm -rf dist *.tsbuildinfo"
+  },
+  "comment:dependencies": "Runtime deps live in runtime-externals.json (single source for tsup external + published manifest), NOT here — see tsup.config.ts. Declaring the fastify family here materialises a 2nd physical fastify copy in the workspace and breaks @owl/daemon's tsc.",
+  "devDependencies": {
+    "@orpheus-aviary/owl-shared": "workspace:*",
+    "@owl/core": "workspace:*",
+    "@owl/daemon": "workspace:*",
+    "@owl/web": "workspace:*",
+    "tsup": "^8.5.0",
+    "typescript": "^5.7.0"
+  }
+}
