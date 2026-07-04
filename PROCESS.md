@@ -35,8 +35,8 @@
 
 **Stage 1（全本地、不碰真服务器，发版前先做完；建议顺序，#4/#5 可互换）：**
 
-1. **⭐ owl-server 本地打包 + 本地 rig 跑通（下个会话起点）**：打包 `@orpheus-aviary/owl-server`（内嵌 web dist + **⭐7 默认端口 47020**，抽 daemon `boot()`）→ 照 1a 本地 rig 验「打包后同源托管 + 登录 + 渲染」，早暴露打包/ABI/端口风险（**只差公网**）。补 favicon。**独立设计稿。**
-2. **A6**：local mutating-token，闭 local 跨站 simple-POST CSRF 洞（触桌面全客户端：daemon+GUI main+preload+renderer+CLI+全端回归）+ A4 deferred（off grace-quiesce）。**一页实施 plan（已有设计）。**
+1. **✅ owl-server 本地打包 + 本地 rig 跑通（2026-07-05 完成，代码未提交）**：`@orpheus-aviary/owl-server`（tsup bundle daemon+core+shared，内嵌 web dist+migrations+sample，**默认端口 47020**，抽 daemon `boot(options?)`，`argv[2]` 派发 compute-owner/boot，`resolveServerConfig` 强制 cloud+fail-closed，内嵌 web 走 `ctx.embeddedWebRoot` 不入 toml）+ favicon。**本地 rig（配置省略 port/web_root）+ clean-install smoke（`npm pack`→temp `npm install`→better-sqlite3 native 编译）全绿**：47020 缺省/同源托管包内 web+严格 CSP/登录/建笔记/fresh-nest migration/SSE 全过。`just test-daemon` 405 零回归、`just check` 9 守卫全绿。**只差公网。** 专档 `docs/plans/2026-07-04-owl-server-packaging.md`（§6 实施记录 + fastify dual-identity 等踩坑）。
+2. **⭐ A6（下个会话起点）**：local mutating-token，闭 local 跨站 simple-POST CSRF 洞（触桌面全客户端：daemon+GUI main+preload+renderer+CLI+全端回归）+ A4 deferred（off grace-quiesce）。**一页实施 plan（已有设计）。**
 3. **重构一轮**：20 条复杂度 warning（含 `useEditorShortcuts` 36）· 类型 mirror dedup（core↔shared，B4 又手抄 `web_root`）· 3 个 >800 大文件（`sync-auth`/`sync/engine`/`editor-store`）· B1 deferred（apps/web 接 `tsc -b`）。**多机械，3 大文件各 mini-plan。**
 4. **0.6 本地功能**（**跨 profile 视图已移出 → 1.0.0 后**）：W7 冲突合并（`@codemirror/merge`+counter 列，**独立稿**）· `resetAllStores` 免闪烁（替 `location.reload`）· web session UX（`/auth/session` 探针 +「记住我」opt-in）。
 5. **移动端兼容 web UI**：响应式 + 移动导航 + 触摸 + PWA（**不是 RN**；RN 是 1.0.0 后单独 app）。**独立设计稿。** 发网页版前做。
