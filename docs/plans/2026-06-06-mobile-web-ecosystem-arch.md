@@ -1,5 +1,7 @@
 # owl 生态扩展架构设计：网页版 + 移动端
 
+> **⚠️ 2026-07-04 排期对账（读本doc 的 §12 排期 / §7 移动 / §9 工种表前先看这里）**：本doc 的 dev-flow「B → C 发 owl-shared → D/E 移动」**中间没有 1.0.0 关卡、且把「移动」等同于 RN**——已被 2026-07-04 路线修订。现状：**1.0.0 前先走 Stage 1（owl-server 打包 + A6 + 重构 + 0.6 本地功能 + 移动端兼容 web UI）→ Stage 2（上云 + TLS + soak + P6 GA）→ 🎯1.0.0**；**C→D→E 的 RN track 全在 1.0.0 之后**。**移动端是双轨**：① 网页版做**移动端兼容 web UI**（响应式，Stage 1；本doc §12「apps/web 响应式重构」即此，从 Phase B 挪到 Stage 1）② **完整 RN app**（1.0.0 后，本doc §5/§7 所述）。完整路线以 `docs/plans/2026-07-04-road-to-1.0.0.md` 为准。
+>
 > 状态：**讨论定稿 v6，待你通审**。起草 2026-06-06（0.5.0 公开发版后），经多轮讨论 + 三轮代码核对收敛。
 > v6：锁定 v5 的 4 项决策 + 护栏——`/events` **fetch-SSE + bearer**（+ RN fetch-streaming fallback）、flush **允许切换 + pending 留本地 + `pending_count` 显示**、owner **部署预配置 profileId**、Electron **走本地 token**（`app://` 后续）。
 > v5 修订（第三轮代码核对）：**`/events` 原生 EventSource 不能带 bearer**（改 fetch-based SSE / 事件 token）、

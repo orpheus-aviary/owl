@@ -88,8 +88,8 @@ const token = bearerToken(...); ...
 
 ## 4. 不在范围
 
-- **owl-server 打包 + 内嵌 dist + 上云 + 发布包** → **Aω**；**⭐7 owl-server 默认端口 47020** = Aω 打包默认（B4 仍用 config `port`）。
-- **BrowserRouter 迁移 + SPA fallback**（命名冲突未解）→ 后续。**TLS/反代** → 0.6。**响应式** → 不做。
+- **owl-server 打包 + 内嵌 dist + 上云 + 发布包** → **Aω**（**2026-07-04 已拆**：owl-server 本地打包 = Stage 1；上云 = Stage 2；见 `2026-07-04-road-to-1.0.0.md`）；**⭐7 owl-server 默认端口 47020** = 打包默认（B4 仍用 config `port`）。
+- **BrowserRouter 迁移 + SPA fallback**（命名冲突未解）→ 后续。**TLS/反代** → Stage 2。~~**响应式** → 不做。~~ → **2026-07-04 推翻**：响应式/移动端兼容 web UI = **Stage 1 确定交付项**（见 road-to-1.0.0 #5）。
 
 ---
 

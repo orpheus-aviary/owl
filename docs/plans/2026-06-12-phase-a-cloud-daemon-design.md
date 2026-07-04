@@ -1,5 +1,7 @@
 # Phase A 子设计：云端 daemon（`[daemon].mode` cloud/local + 端点鉴权 + 两层会话）
 
+> **⚠️ 2026-07-04 对账**：本doc 的 **A6 slice（local mutating-token）设计仍有效**（是 A6 实施的权威源），但 doc 内把 **Aω 当成单一 gated 步骤「发布 + 上云 + 真机」**——已拆：**owl-server 本地打包 = Stage 1（1.0.0 前，本地）**，**上云 + 异地真机 = Stage 2（发版关卡）**；Aω 1a 本地 CSP 验证已于 2026-07-04 完成。完整路线见 `docs/plans/2026-07-04-road-to-1.0.0.md`。
+>
 > 状态：**v2.1，经两轮代码核对评审收口**。起草 2026-06-12（扩生态 Step 0 完成后起手）。
 > v2 = 12 处事实修正 + 6 必须决策；v2.1 = 第二轮 6 项（compute-owner 提前 / public_url 无条件必填 / refresh 须 rebind / return-visit fallback register + switchToProfileId helper / 限速 keying / 新字段 runtime validation）。
 > 父设计：`docs/plans/2026-06-06-mobile-web-ecosystem-arch.md`（§0/§3/§7/§9/§12/§14）。
