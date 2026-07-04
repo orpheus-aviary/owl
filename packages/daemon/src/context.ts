@@ -21,6 +21,15 @@ export interface AppContext {
   config: OwlConfig;
   /** Optional override for where to persist config writes (used by tests). */
   configPath?: string;
+  /**
+   * Stage 1.1 — filesystem path to the web bundle embedded in the packaged
+   * `@orpheus-aviary/owl-server`, used as the `web_root` fallback when the
+   * operator did NOT set `[daemon].web_root`. Kept OFF `config` on purpose so
+   * a `/config` PATCH (which re-serialises the whole config) never bakes this
+   * in-package absolute path into `owl_config.toml`. Unset on desktop/CLI
+   * daemons — they fall back to no hosting exactly as before.
+   */
+  embeddedWebRoot?: string;
   logger: Logger;
   deviceId: string;
   scheduler: ReminderScheduler;

@@ -7,7 +7,8 @@
 # (OWL_DAEMON_DEV_TOKEN + OWL_ALLOW_INSECURE_DEV_TOKEN). The actual
 # reads live in:
 #   - packages/daemon/src/sync/dev-bootstrap.ts (the bypass + delete)
-#   - packages/daemon/src/cli.ts (the partial-env startup warning)
+#   - packages/daemon/src/boot.ts (the partial-env startup warning; the
+#     boot sequence was extracted from cli.ts for Stage 1.1 owl-server)
 #
 # Any other daemon-src reference would silently widen the surface and
 # is a bug.
@@ -18,13 +19,13 @@ hits=$(rg --type ts \
   -e 'OWL_DAEMON_DEV_TOKEN|OWL_DAEMON_TOKEN|OWL_ALLOW_INSECURE_DEV_TOKEN' \
   packages/daemon/src \
   --glob '!**/dev-bootstrap.ts' \
-  --glob '!**/cli.ts' \
+  --glob '!**/boot.ts' \
   --glob '!**/*.test.ts' \
   --glob '!**/*.e2e.ts' \
   || true)
 
 if [ -n "$hits" ]; then
-  echo "✗ daemon prod paths must not read OWL_DAEMON_(DEV_)TOKEN (only dev-bootstrap.ts + cli.ts allowed)"
+  echo "✗ daemon prod paths must not read OWL_DAEMON_(DEV_)TOKEN (only dev-bootstrap.ts + boot.ts allowed)"
   echo "$hits"
   exit 1
 fi

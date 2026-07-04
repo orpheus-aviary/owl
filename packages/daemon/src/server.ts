@@ -146,11 +146,12 @@ export function buildServer(ctx: AppContext) {
   registerSyncRoutes(app, ctx);
   registerConflictsRoutes(app, ctx);
 
-  // B4 — same-origin web hosting (only when [daemon].web_root is configured).
-  // Registered AFTER the API routes so specific routes win; the shell is public
-  // (the cloud auth gate above bypasses non-API GET/HEAD). `cli.ts` has already
-  // fail-fast-validated the path at startup.
-  const webRoot = resolveWebRoot(ctx.config);
+  // B4 — same-origin web hosting. Prefer the operator's [daemon].web_root; fall
+  // back to `ctx.embeddedWebRoot` (Stage 1.1 — the bundle shipped inside
+  // `@orpheus-aviary/owl-server`). Registered AFTER the API routes so specific
+  // routes win; the shell is public (the cloud auth gate above bypasses non-API
+  // GET/HEAD). `cli.ts` / `boot()` has already fail-fast-validated the path.
+  const webRoot = resolveWebRoot(ctx.config) ?? ctx.embeddedWebRoot;
   if (webRoot) registerWebHost(app, webRoot);
 
   return app;
