@@ -119,4 +119,29 @@ main `daemon-auth.ts`；接入 `sync-ipc.ts:129/169/234/272`、`sync-auth.ts:884
 
 ---
 
-*（v5，四轮 review 收口，可开工。按 S0→S10，S0 harness+字段先行。）*
+## 7. 实施记录（2026-07-15，S0–S9 已实现，落本地 `main`）
+
+**A6 核心机制（S0–S9）全部实现 + 全绿。** 基线：core **532** / cli **139** / daemon **420** / gui **455** + gated e2e 不变；`just check`（tsc -b + biome + 守卫）全绿；`just test` exit 0。
+
+| slice | commit | 内容 |
+|-------|--------|------|
+| S0 | `5d6107b` | `AppContext.localToken` + `testing/build-test-server.ts` harness（local 自动带 bearer + `injectRaw`；cloud no-op）；迁移 7 pure-local 测试文件 |
+| S1 | `49edbc5` | core `paths.localTokenPath()` + `readLocalToken()`（新 `config/local-token.ts`）|
+| S2/S3 | `66c7d69` | daemon `local-token.ts`（内存生成 / 同步原子 0600 发布 / cloud 清 stale）+ `pid.ts` `acquireDaemonLock`（原子 wx + stale reclaim）+ boot 装配（listen 后发布 / 失败语义 / 弃 shutdown unlink）|
+| S4 | `399c5c4` | CLI `daemonAuthHeaders()` + http/sync/open 全接入 + `skybridge-sync-once.sh` stdin curl（token 不落 argv）|
+| S5 | `825ab66` | GUI main `daemonAuthHeaders()` + sync-ipc/sync-auth 全接入 + `--daemon-token-path` 传窗口 |
+| S6 | `b2dabf7` | preload 读 0600 文件 + proxied `getDaemonToken()`（非缓存值）+ 类型/stub |
+| S7 | `4071a78` | renderer adapter `getDaemonToken?()` + `getAuthHeaders` fresh-read（REST+AI SSE+events SSE 自动轮换）|
+| **S8** | `601eccd` | **翻 enforcement**：local 除 `GET /status` 外全要 token（fail-closed / gate / notFoundHandler）+ web host cloud-only（server+boot）+ `/status` `mode`/local-only `pid`/`local_auth_version`（owl-shared `LOCAL_AUTH_VERSION`）+ dev-web vite mode 预检 |
+| S9 | `0985a4b` | GUI 旧 daemon 检测：`spawnDaemon`→`ChildProcess`、tri-state、`/status.pid===child.pid` 证身份才 own、原生 dialog、`stopDaemonGracefully` 只 signal owned pid |
+
+**决策落地**：D1 daemon 生成+文件 ✓ / D2 `Authorization: Bearer` ✓ / D3 除 `GET /status` 全 API+非-API ✓ / D4 fail-closed ✓ / D6 secret 不落 argv ✓ / D7 browser=cloud ✓。
+
+**未做 / 后补**（不阻断 A6 核心）：
+- **S10 剩余**：PROCESS.md 收尾 + release-note 破坏面（旧 CLI/GUI/curl/第三方本地集成需带 token；升级须重启 daemon）；`just dev-web` 完整 cloud rig（`scripts/dev-web-cloud.sh`）——用户拍板"fail-fast 先行、完整 rig 后补"，待补。
+- **手测**（必做，见 §5）：GUI 正常启动零回归 + 旧 daemon 弹框流 + 重启刷新（SSE 轮换）+ 裸跨站 curl 被拦。
+- 可选新守卫 `check-local-token-not-logged`（pino 已 redact authorization，belt-and-suspenders）。
+
+---
+
+*（v5 + 实施记录。S0–S9 已 ship；S10 docs/rig + 手测待收尾。）*
