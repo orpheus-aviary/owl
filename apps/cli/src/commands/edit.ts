@@ -73,11 +73,11 @@ async function openEditor(initialContent: string): Promise<string> {
   return readFileSync(file, 'utf8');
 }
 
-export async function runEdit(
-  id: string,
-  flags: EditFlags,
-  deps: { backend: OwlBackend; streams: OutputStreams },
-): Promise<void> {
+type EditDeps = { backend: OwlBackend; streams: OutputStreams };
+type ResolvedContent = Awaited<ReturnType<typeof resolveContentInput>>;
+
+/** Validate mutually-exclusive edit flags before dispatching to a mode handler. */
+function assertEditFlags(flags: EditFlags): void {
   if (flags.overwrite && flags.ifUpdatedAt !== undefined) {
     throw new CliError('USAGE_ERROR', '--overwrite and --if-updated-at are mutually exclusive');
   }
@@ -87,91 +87,100 @@ export async function runEdit(
   ) {
     throw new CliError('USAGE_ERROR', '--interactive cannot be combined with content-source flags');
   }
+}
 
-  // --interactive: GET → edit in $EDITOR → PATCH with auto-CAS using step-1 updatedAt
-  if (flags.interactive) {
-    const current = await deps.backend.getNote(id);
-    if (!current) throw new CliError('NOTE_NOT_FOUND', `note ${id} not found`, { id });
-    const newContent = await openEditor(current.content);
-    const casOpts: CasOptions = flags.overwrite
-      ? {}
-      : { expectedUpdatedAt: flags.ifUpdatedAt ?? current.updatedAt };
-    const updated = await deps.backend.updateNote(id, { content: newContent }, casOpts);
-    if (!updated) throw new CliError('NOTE_NOT_FOUND', `note ${id} not found`, { id });
-    writeResult(serializeNote(updated), { pretty: flags.pretty, streams: deps.streams });
-    return;
+/** CAS options from --overwrite / --if-updated-at (shared by --replace + PATCH; --overwrite wins by omitting the guard). */
+function casFromFlags(flags: EditFlags): CasOptions {
+  const casOpts: CasOptions = {};
+  if (!flags.overwrite && flags.ifUpdatedAt !== undefined) {
+    casOpts.expectedUpdatedAt = flags.ifUpdatedAt;
   }
+  return casOpts;
+}
 
-  const hasContentSource = flags.body !== undefined || flags.file || flags.stdin;
-  const hasDataSource = flags.data !== undefined || flags.dataFile !== undefined;
+/** --interactive: GET → edit in $EDITOR → PATCH with auto-CAS using the step-1 updatedAt. */
+async function runInteractiveEdit(id: string, flags: EditFlags, deps: EditDeps): Promise<void> {
+  const current = await deps.backend.getNote(id);
+  if (!current) throw new CliError('NOTE_NOT_FOUND', `note ${id} not found`, { id });
+  const newContent = await openEditor(current.content);
+  const casOpts: CasOptions = flags.overwrite
+    ? {}
+    : { expectedUpdatedAt: flags.ifUpdatedAt ?? current.updatedAt };
+  const updated = await deps.backend.updateNote(id, { content: newContent }, casOpts);
+  if (!updated) throw new CliError('NOTE_NOT_FOUND', `note ${id} not found`, { id });
+  writeResult(serializeNote(updated), { pretty: flags.pretty, streams: deps.streams });
+}
 
-  if (flags.replace) {
-    // Strict PUT: must have content + tags + folder
-    if (!hasContentSource && !hasDataSource) {
+/** Assemble the ReplaceNoteInput: full JSON payload (needs content+tags+folder) or content + explicit flags. */
+function buildReplaceInput(resolved: ResolvedContent, flags: EditFlags): ReplaceNoteInput {
+  if (resolved.mode === 'full') {
+    if (resolved.parsed.folder_id === undefined || !resolved.parsed.tags) {
       throw new CliError(
         'USAGE_ERROR',
-        '--replace requires content (--body/--file/--stdin or --data/--data-file)',
+        '--replace requires content, tags, and folder_id in the JSON payload',
       );
     }
-    const resolved = await resolveContentInput({
-      body: flags.body,
-      file: flags.file,
-      stdin: flags.stdin,
-      data: flags.data,
-      dataFile: flags.dataFile,
-    });
-    let input: ReplaceNoteInput;
-    if (resolved.mode === 'full') {
-      if (resolved.parsed.folder_id === undefined || !resolved.parsed.tags) {
-        throw new CliError(
-          'USAGE_ERROR',
-          '--replace requires content, tags, and folder_id in the JSON payload',
-        );
-      }
-      input = {
-        content: resolved.parsed.content,
-        folderId: resolved.parsed.folder_id,
-        tags: resolved.parsed.tags,
-      };
-    } else {
-      const folder = folderOption(flags);
-      if (!folder.provided) {
-        throw new CliError('USAGE_ERROR', '--replace requires --folder <id> or --unfiled');
-      }
-      const parsed = parseTagsStrict(tagArgs(flags));
-      input = {
-        content: resolved.content,
-        folderId: folder.value ?? null,
-        tags: toStrings(parsed),
-      };
-    }
-    const casOpts: CasOptions = {};
-    if (!flags.overwrite && flags.ifUpdatedAt !== undefined)
-      casOpts.expectedUpdatedAt = flags.ifUpdatedAt;
-    const updated = await deps.backend.replaceNote(id, input, casOpts);
-    if (!updated) throw new CliError('NOTE_NOT_FOUND', `note ${id} not found`, { id });
-    writeResult(serializeNote(updated), { pretty: flags.pretty, streams: deps.streams });
-    return;
+    return {
+      content: resolved.parsed.content,
+      folderId: resolved.parsed.folder_id,
+      tags: resolved.parsed.tags,
+    };
   }
+  const folder = folderOption(flags);
+  if (!folder.provided) {
+    throw new CliError('USAGE_ERROR', '--replace requires --folder <id> or --unfiled');
+  }
+  const parsed = parseTagsStrict(tagArgs(flags));
+  return { content: resolved.content, folderId: folder.value ?? null, tags: toStrings(parsed) };
+}
 
-  // PATCH semantics: only fields provided get updated.
-  const update: UpdateNoteInput = {};
-  if (hasContentSource || hasDataSource) {
-    const resolved = await resolveContentInput({
-      body: flags.body,
-      file: flags.file,
-      stdin: flags.stdin,
-      data: flags.data,
-      dataFile: flags.dataFile,
-    });
-    if (resolved.mode === 'full') {
-      update.content = resolved.parsed.content;
-      if (resolved.parsed.tags !== undefined) update.tags = resolved.parsed.tags;
-      if (resolved.parsed.folder_id !== undefined) update.folderId = resolved.parsed.folder_id;
-    } else {
-      update.content = resolved.content;
-    }
+/** --replace: strict PUT — requires a content source, then a full replacement input. */
+async function runReplace(id: string, flags: EditFlags, deps: EditDeps): Promise<void> {
+  const hasContentSource = flags.body !== undefined || flags.file || flags.stdin;
+  const hasDataSource = flags.data !== undefined || flags.dataFile !== undefined;
+  if (!hasContentSource && !hasDataSource) {
+    throw new CliError(
+      'USAGE_ERROR',
+      '--replace requires content (--body/--file/--stdin or --data/--data-file)',
+    );
   }
+  const resolved = await resolveContentInput({
+    body: flags.body,
+    file: flags.file,
+    stdin: flags.stdin,
+    data: flags.data,
+    dataFile: flags.dataFile,
+  });
+  const input = buildReplaceInput(resolved, flags);
+  const updated = await deps.backend.replaceNote(id, input, casFromFlags(flags));
+  if (!updated) throw new CliError('NOTE_NOT_FOUND', `note ${id} not found`, { id });
+  writeResult(serializeNote(updated), { pretty: flags.pretty, streams: deps.streams });
+}
+
+/** The content-derived PATCH fields: content, plus tags/folder when a full JSON payload carries them. */
+async function resolvePatchContentFields(flags: EditFlags): Promise<UpdateNoteInput> {
+  const hasContentSource = flags.body !== undefined || flags.file || flags.stdin;
+  const hasDataSource = flags.data !== undefined || flags.dataFile !== undefined;
+  if (!hasContentSource && !hasDataSource) return {};
+
+  const resolved = await resolveContentInput({
+    body: flags.body,
+    file: flags.file,
+    stdin: flags.stdin,
+    data: flags.data,
+    dataFile: flags.dataFile,
+  });
+  if (resolved.mode !== 'full') return { content: resolved.content };
+
+  const out: UpdateNoteInput = { content: resolved.parsed.content };
+  if (resolved.parsed.tags !== undefined) out.tags = resolved.parsed.tags;
+  if (resolved.parsed.folder_id !== undefined) out.folderId = resolved.parsed.folder_id;
+  return out;
+}
+
+/** Assemble the sparse UpdateNoteInput (PATCH): content fields, then tag/folder flags fill the gaps. */
+async function buildPatchUpdate(flags: EditFlags): Promise<UpdateNoteInput> {
+  const update = await resolvePatchContentFields(flags);
   if (update.tags === undefined) {
     const args = tagArgs(flags);
     if (args.length > 0) update.tags = toStrings(parseTagsStrict(args));
@@ -180,18 +189,33 @@ export async function runEdit(
     const folder = folderOption(flags);
     if (folder.provided) update.folderId = folder.value ?? null;
   }
+  return update;
+}
 
+/** Default PATCH: apply the sparse update, erroring when nothing was provided. */
+async function runPatch(id: string, flags: EditFlags, deps: EditDeps): Promise<void> {
+  const update = await buildPatchUpdate(flags);
   if (Object.keys(update).length === 0) {
     throw new CliError(
       'USAGE_ERROR',
       'no fields to update — provide content or --tags or --folder/--unfiled',
     );
   }
-
-  const casOpts: CasOptions = {};
-  if (!flags.overwrite && flags.ifUpdatedAt !== undefined)
-    casOpts.expectedUpdatedAt = flags.ifUpdatedAt;
-  const updated = await deps.backend.updateNote(id, update, casOpts);
+  const updated = await deps.backend.updateNote(id, update, casFromFlags(flags));
   if (!updated) throw new CliError('NOTE_NOT_FOUND', `note ${id} not found`, { id });
   writeResult(serializeNote(updated), { pretty: flags.pretty, streams: deps.streams });
+}
+
+export async function runEdit(id: string, flags: EditFlags, deps: EditDeps): Promise<void> {
+  assertEditFlags(flags);
+
+  if (flags.interactive) {
+    await runInteractiveEdit(id, flags, deps);
+    return;
+  }
+  if (flags.replace) {
+    await runReplace(id, flags, deps);
+    return;
+  }
+  await runPatch(id, flags, deps);
 }
