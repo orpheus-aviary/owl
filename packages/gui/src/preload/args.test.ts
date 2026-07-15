@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_DAEMON_PORT, daemonUrlFromArgv, parseDaemonPort, parseStartupMode } from './args';
+import {
+  DEFAULT_DAEMON_PORT,
+  daemonUrlFromArgv,
+  parseDaemonPort,
+  parseDaemonTokenPath,
+  parseStartupMode,
+} from './args';
 
 describe('parseStartupMode', () => {
   it('returns normal when no --startup-mode= flag', () => {
@@ -37,6 +43,25 @@ describe('parseDaemonPort (P5-c G1)', () => {
     expect(parseDaemonPort(['--daemon-port=0'])).toBe(DEFAULT_DAEMON_PORT);
     expect(parseDaemonPort(['--daemon-port=-1'])).toBe(DEFAULT_DAEMON_PORT);
     expect(parseDaemonPort(['--daemon-port=99999'])).toBe(DEFAULT_DAEMON_PORT);
+  });
+});
+
+describe('parseDaemonTokenPath (A6)', () => {
+  it('returns undefined when the flag is absent', () => {
+    expect(parseDaemonTokenPath([])).toBeUndefined();
+    expect(parseDaemonTokenPath(['--daemon-port=47010'])).toBeUndefined();
+  });
+
+  it('parses the path value', () => {
+    expect(parseDaemonTokenPath(['--daemon-token-path=/nest/owl/daemon-token'])).toBe(
+      '/nest/owl/daemon-token',
+    );
+  });
+
+  it('finds the flag among many argv entries', () => {
+    expect(
+      parseDaemonTokenPath(['/electron', '--daemon-port=47010', '--daemon-token-path=/x/tok']),
+    ).toBe('/x/tok');
   });
 });
 

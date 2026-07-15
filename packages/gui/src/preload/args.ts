@@ -47,3 +47,15 @@ export function parseDaemonPort(argv: readonly string[]): number {
 export function daemonUrlFromArgv(argv: readonly string[]): string {
   return `http://127.0.0.1:${parseDaemonPort(argv)}`;
 }
+
+/**
+ * Parse `--daemon-token-path=<path>` (Phase A A6). Main forwards the absolute
+ * path to the daemon's 0600 local-token file (the PATH is not secret — the
+ * token stays in the file). Preload reads the file to serve
+ * `window.owlAPI.getDaemonToken()`. Missing → undefined (no token available).
+ */
+export function parseDaemonTokenPath(argv: readonly string[]): string | undefined {
+  const prefix = '--daemon-token-path=';
+  const arg = argv.find((a) => a.startsWith(prefix));
+  return arg ? arg.slice(prefix.length) : undefined;
+}

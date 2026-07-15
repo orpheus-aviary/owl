@@ -41,6 +41,8 @@ export interface CliDetectResult {
 export interface OwlAPI {
   daemonUrl: string;
   startupMode: StartupMode;
+  /** A6 — current local daemon token, re-read from the 0600 file each call. */
+  getDaemonToken: () => string | null;
   migration: {
     start: () => Promise<MigrationStartResult>;
     onProgress: (cb: (phase: MigratePhase) => void) => () => void;

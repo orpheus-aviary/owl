@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { contextBridge, ipcRenderer } from 'electron';
 import type { LoginAndOpenSessionInput } from '../shared/sync-auth-types.js';
 import type { ClaimChoice, ClaimPromptInput } from '../shared/sync-claim-types.js';
@@ -5,7 +6,7 @@ import type { SyncDevicesReply } from '../shared/sync-devices-types.js';
 import type { SyncProfilesReply } from '../shared/sync-profiles-types.js';
 import type { RunSyncResult } from '../shared/sync-run-types.js';
 import type { SyncIpcReply, SyncStatusReply } from '../shared/sync-status-types.js';
-import { daemonUrlFromArgv, parseStartupMode } from './args.js';
+import { daemonUrlFromArgv, parseDaemonTokenPath, parseStartupMode } from './args.js';
 
 type MigratePhase = 'backup' | 'copy' | 'fts-rebuild' | 'swap';
 
@@ -25,6 +26,13 @@ interface CliDetectResult {
   version?: string;
 }
 
+// A6 — path to the daemon's 0600 local-token file, forwarded by main via
+// `--daemon-token-path`. Preload (sandbox: false → has node fs) reads it fresh
+// per call so a daemon restart (token rotation) is picked up automatically —
+// contextBridge copies/freezes plain values, so this MUST be exposed as a
+// function, not a cached string.
+const daemonTokenPath = parseDaemonTokenPath(process.argv);
+
 contextBridge.exposeInMainWorld('owlAPI', {
   // P5-c G1: main process injects `--daemon-port=<port>` via BrowserWindow
   // additionalArguments so OWL_DAEMON_PORT env / multi-profile setups
@@ -32,6 +40,16 @@ contextBridge.exposeInMainWorld('owlAPI', {
   // if main forgot to inject (defensive — should not happen in practice).
   daemonUrl: daemonUrlFromArgv(process.argv),
   startupMode: parseStartupMode(process.argv),
+
+  /** A6 — current local token, re-read from the 0600 file each call (or null). */
+  getDaemonToken: (): string | null => {
+    if (!daemonTokenPath) return null;
+    try {
+      return readFileSync(daemonTokenPath, 'utf8').trim() || null;
+    } catch {
+      return null;
+    }
+  },
 
   migration: {
     start: (): Promise<MigrationStartResult> => ipcRenderer.invoke('migration:start'),

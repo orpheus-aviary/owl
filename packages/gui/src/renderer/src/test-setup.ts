@@ -24,6 +24,7 @@ function defaultOwlAPI(): OwlAPI {
   return {
     daemonUrl: 'http://127.0.0.1:47010',
     startupMode: { mode: 'normal' },
+    getDaemonToken: () => null,
     migration: {
       start: vi.fn(),
       onProgress: vi.fn(() => () => {}),
