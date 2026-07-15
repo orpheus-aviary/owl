@@ -1,5 +1,5 @@
 import cors from '@fastify/cors';
-import Fastify, { type FastifyError } from 'fastify';
+import Fastify, { type FastifyError, type FastifyReply, type FastifyRequest } from 'fastify';
 import { corsOriginDelegate, isHostAllowed } from './access-guard.js';
 import {
   type Session,
@@ -41,6 +41,49 @@ const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
  * the drain against the very request driving it.
  */
 const SWITCH_INITIATING_PATHS = new Set(['/sync/switch', '/auth/login']);
+
+/**
+ * A6 local-mode gate: every request except the public allowlist (GET /status)
+ * must carry the local token (closes cross-site simple-POST CSRF + the
+ * null-origin GET read leak). Returns `true` (and has sent a 401) when the
+ * request is blocked; `false` when it may proceed. Shared by the auth preHandler
+ * and the not-found handler.
+ */
+function checkLocalToken(ctx: AppContext, req: FastifyRequest, reply: FastifyReply): boolean {
+  if (isLocalPublicPath(req.method, req.url)) return false;
+  const token = bearerToken(req.headers.authorization);
+  if (token && ctx.localToken && timingSafeEqualStr(token, ctx.localToken)) return false;
+  fail(reply, 401, 'local token required', 'LOCAL_TOKEN_REQUIRED');
+  return true;
+}
+
+/**
+ * A2 cloud-mode gate: every request outside the public allowlist / static shell
+ * (B4) must carry a valid Layer-2 bearer session. Returns `true` (sent 401) when
+ * blocked; `false` when it may proceed (and sets `req.session` for downstream
+ * owner-gating on success).
+ */
+function checkCloudSession(
+  ctx: AppContext,
+  sessionStore: ReturnType<typeof ensureSessionStore>,
+  req: FastifyRequest,
+  reply: FastifyReply,
+): boolean {
+  if (isAuthExempt(ctx.config, req.method, req.url)) return false;
+  const token = bearerToken(req.headers.authorization);
+  const session = token ? sessionStore.verify(token) : null;
+  if (!session) {
+    fail(
+      reply,
+      401,
+      token ? 'invalid or expired session' : 'session required',
+      token ? 'SESSION_INVALID' : 'SESSION_REQUIRED',
+    );
+    return true;
+  }
+  (req as { session?: Session }).session = session;
+  return false;
+}
 
 export function buildServer(ctx: AppContext) {
   // A6 fail-closed — a local daemon MUST carry a local token (boot.ts generates
@@ -88,30 +131,11 @@ export function buildServer(ctx: AppContext) {
   // downstream owner-gating (A4/A5).
   const sessionStore = ensureSessionStore(ctx);
   app.addHook('preHandler', async (req, reply) => {
-    // A6 — local mode: every request except GET /status must carry the local
-    // token (closes cross-site simple-POST CSRF + the null-origin GET read leak).
-    if (ctx.config.daemon.mode === 'local') {
-      if (isLocalPublicPath(req.method, req.url)) return;
-      const token = bearerToken(req.headers.authorization);
-      if (token && ctx.localToken && timingSafeEqualStr(token, ctx.localToken)) return;
-      fail(reply, 401, 'local token required', 'LOCAL_TOKEN_REQUIRED');
-      return reply;
-    }
-    // cloud — Layer-2 bearer session. Exempt: the public allowlist and (B4) the
-    // static web shell — any GET/HEAD to a non-API path. The API stays gated.
-    if (isAuthExempt(ctx.config, req.method, req.url)) return;
-    const token = bearerToken(req.headers.authorization);
-    const session = token ? sessionStore.verify(token) : null;
-    if (!session) {
-      fail(
-        reply,
-        401,
-        token ? 'invalid or expired session' : 'session required',
-        token ? 'SESSION_INVALID' : 'SESSION_REQUIRED',
-      );
-      return reply;
-    }
-    (req as { session?: Session }).session = session;
+    const blocked =
+      ctx.config.daemon.mode === 'local'
+        ? checkLocalToken(ctx, req, reply)
+        : checkCloudSession(ctx, sessionStore, req, reply);
+    return blocked ? reply : undefined;
   });
 
   // P5-d Phase 14 — profile-switch gate. While `switchProfile` swaps the db
@@ -161,13 +185,7 @@ export function buildServer(ctx: AppContext) {
   // behaviour holds regardless of whether Fastify runs the global preHandler
   // for the not-found route.
   app.setNotFoundHandler((req, reply) => {
-    if (ctx.config.daemon.mode === 'local' && !isLocalPublicPath(req.method, req.url)) {
-      const token = bearerToken(req.headers.authorization);
-      if (!(token && ctx.localToken && timingSafeEqualStr(token, ctx.localToken))) {
-        fail(reply, 401, 'local token required', 'LOCAL_TOKEN_REQUIRED');
-        return reply;
-      }
-    }
+    if (ctx.config.daemon.mode === 'local' && checkLocalToken(ctx, req, reply)) return reply;
     fail(reply, 404, 'not found', 'NOT_FOUND');
     return reply;
   });

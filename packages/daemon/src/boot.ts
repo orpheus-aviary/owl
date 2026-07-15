@@ -50,6 +50,75 @@ export interface BootOptions {
 }
 
 /**
+ * Phase A (A0) — fail-closed startup guards. Refuse to boot on an unsafe /
+ * incoherent [daemon] config (mode×bind matrix, cloud account_lock / public_url,
+ * off + server AI key, field validation), plus B4/A6 web_root validation. Runs
+ * before any side effect (no pid written, no db opened on refusal). local
+ * defaults pass unchanged → today's desktop behaviour is untouched. Logs + exits
+ * (1) on refusal.
+ */
+function runStartupGuards(
+  config: OwlConfig,
+  logger: ReturnType<typeof createLogger>,
+  embeddedWebRoot: string | undefined,
+): void {
+  try {
+    assertDaemonStartupSafe(config, { resolvedApiKey: resolveLlmConfig(config).api_key });
+    // B4 / A6 — web hosting is cloud-only (browser=cloud). Only validate the
+    // effective web_root in cloud mode; a local daemon never hosts a shell (the
+    // token gate would 401 a browser's API calls anyway), so it ignores web_root
+    // — warned, not silently, so a stale config isn't dropped without a trace.
+    if (config.daemon.mode === 'cloud') {
+      assertWebRootValid(resolveWebRoot(config) ?? embeddedWebRoot);
+    } else if (resolveWebRoot(config)) {
+      logger.warn(
+        { kind: 'web-host' },
+        'ignoring [daemon].web_root — web hosting is cloud-only (browser=cloud)',
+      );
+    }
+  } catch (err) {
+    if (err instanceof DaemonStartupError) {
+      logger.error({ kind: 'startup-guard' }, err.message);
+      console.error(`\n${err.message}\n`);
+      process.exit(1);
+    }
+    throw err;
+  }
+}
+
+/**
+ * Open the active profile's db. P5-d Phase 12 (B6): pre-migration this resolves
+ * to the legacy global db, so daemon boot is unchanged today. Maps a
+ * migration-required / incompatible db to a logged `process.exit(1)` (removing
+ * the pid the caller just acquired first).
+ */
+function openProfileDb(logger: ReturnType<typeof createLogger>): ReturnType<typeof createDatabase> {
+  try {
+    return createDatabase({ dbPath: resolveActiveProfileDbPath() });
+  } catch (err) {
+    removePid();
+    if (err instanceof MigrationRequiredError) {
+      logger.error({ dbPath: err.dbPath }, 'database requires migration');
+      console.error(`\n数据库需要迁移至 v${LATEST_KNOWN_VERSION}。`);
+      console.error('请运行 `just migrate`（GUI 内迁移 UI 将在后续版本提供）。\n');
+      process.exit(1);
+    }
+    if (err instanceof IncompatibleDbError) {
+      logger.error(
+        { dbVersion: err.dbVersion, maxSupported: err.maxSupported },
+        'incompatible database',
+      );
+      console.error(
+        `\n数据库来自更新版本（v${err.dbVersion}），本应用支持到 v${err.maxSupported}。`,
+      );
+      console.error('请升级应用。\n');
+      process.exit(1);
+    }
+    throw err;
+  }
+}
+
+/**
  * Boot the daemon HTTP server: fail-closed startup guards → open the active
  * profile db → build the Fastify app → listen → post-listen bootstrap (dev
  * session / parent probe / background sync handles) + graceful shutdown wiring.
@@ -75,33 +144,7 @@ export async function boot(options: BootOptions = {}): Promise<void> {
     name: 'daemon',
   });
 
-  // Phase A (A0) — fail-closed startup guards. Refuse to boot on an unsafe /
-  // incoherent [daemon] config (mode×bind matrix, cloud account_lock /
-  // public_url, off + server AI key, field validation). Runs before any side
-  // effect (no pid written, no db opened on refusal). local defaults pass
-  // unchanged → today's desktop behaviour is untouched.
-  try {
-    assertDaemonStartupSafe(config, { resolvedApiKey: resolveLlmConfig(config).api_key });
-    // B4 / A6 — web hosting is cloud-only (browser=cloud). Only validate the
-    // effective web_root in cloud mode; a local daemon never hosts a shell (the
-    // token gate would 401 a browser's API calls anyway), so it ignores web_root
-    // — warned, not silently, so a stale config isn't dropped without a trace.
-    if (config.daemon.mode === 'cloud') {
-      assertWebRootValid(resolveWebRoot(config) ?? options.embeddedWebRoot);
-    } else if (resolveWebRoot(config)) {
-      logger.warn(
-        { kind: 'web-host' },
-        'ignoring [daemon].web_root — web hosting is cloud-only (browser=cloud)',
-      );
-    }
-  } catch (err) {
-    if (err instanceof DaemonStartupError) {
-      logger.error({ kind: 'startup-guard' }, err.message);
-      console.error(`\n${err.message}\n`);
-      process.exit(1);
-    }
-    throw err;
-  }
+  runStartupGuards(config, logger, options.embeddedWebRoot);
 
   // Acquire the PID lock atomically (A6) BEFORE opening the database — so the
   // migration runner's Layer-1 probe sees us the instant this process exists,
@@ -118,33 +161,7 @@ export async function boot(options: BootOptions = {}): Promise<void> {
     throw err;
   }
 
-  let db: ReturnType<typeof createDatabase>['db'];
-  let sqlite: ReturnType<typeof createDatabase>['sqlite'];
-  try {
-    // P5-d Phase 12 (B6): open the active profile's db. Pre-migration this
-    // resolves to the legacy global db, so daemon boot is unchanged today.
-    ({ db, sqlite } = createDatabase({ dbPath: resolveActiveProfileDbPath() }));
-  } catch (err) {
-    removePid();
-    if (err instanceof MigrationRequiredError) {
-      logger.error({ dbPath: err.dbPath }, 'database requires migration');
-      console.error(`\n数据库需要迁移至 v${LATEST_KNOWN_VERSION}。`);
-      console.error('请运行 `just migrate`（GUI 内迁移 UI 将在后续版本提供）。\n');
-      process.exit(1);
-    }
-    if (err instanceof IncompatibleDbError) {
-      logger.error(
-        { dbVersion: err.dbVersion, maxSupported: err.maxSupported },
-        'incompatible database',
-      );
-      console.error(
-        `\n数据库来自更新版本（v${err.dbVersion}），本应用支持到 v${err.maxSupported}。`,
-      );
-      console.error('请升级应用。\n');
-      process.exit(1);
-    }
-    throw err;
-  }
+  const { db, sqlite } = openProfileDb(logger);
 
   ensureSpecialNotes(db);
   const deviceId = ensureDeviceId(db);

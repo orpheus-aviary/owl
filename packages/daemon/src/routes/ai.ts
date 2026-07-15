@@ -20,26 +20,9 @@ const ALLOWED_SOURCES: readonly ToolSource[] = ['gui', 'external'];
 export function registerAiRoutes(app: FastifyInstance, ctx: AppContext): void {
   // ── POST /ai/chat — SSE-streamed agent loop ─────────────────────────
   app.post('/ai/chat', async (req, reply) => {
-    const body = (req.body ?? {}) as ChatBody;
-    const validation = validateChatBody(body);
-    if (!validation.ok) {
-      fail(reply, 400, validation.error);
-      return;
-    }
-
-    const llmConfig = resolveLlmConfig(ctx.config);
-    if (!llmConfig.url || !llmConfig.model || !llmConfig.api_key) {
-      fail(reply, 400, 'LLM not configured (url / model / api_key required)');
-      return;
-    }
-
-    let llmClient: ReturnType<typeof createLlmClient>;
-    try {
-      llmClient = (ctx.llmClientFactory ?? createLlmClient)(llmConfig);
-    } catch (err) {
-      fail(reply, 400, err instanceof Error ? err.message : String(err));
-      return;
-    }
+    const prep = prepareChatRequest(req, reply, ctx);
+    if (!prep) return;
+    const { validation, llmClient, llmConfig } = prep;
 
     ctx.logger.info(
       {
@@ -54,53 +37,32 @@ export function registerAiRoutes(app: FastifyInstance, ctx: AppContext): void {
     initSse(reply, req);
     const abort = wireClientDisconnect(reply, ctx.logger);
 
-    try {
-      const generator = runAgentLoop(
-        {
-          message: validation.message,
-          conversationId: validation.conversationId,
-          signal: abort.signal,
-        },
-        {
-          llmClient,
-          registry: ctx.toolRegistry,
-          conversations: ctx.conversationStore,
+    const generator = runAgentLoop(
+      {
+        message: validation.message,
+        conversationId: validation.conversationId,
+        signal: abort.signal,
+      },
+      {
+        llmClient,
+        registry: ctx.toolRegistry,
+        conversations: ctx.conversationStore,
+        db: ctx.db,
+        sqlite: ctx.sqlite,
+        config: ctx.config,
+        toolCtx: {
           db: ctx.db,
           sqlite: ctx.sqlite,
           config: ctx.config,
-          toolCtx: {
-            db: ctx.db,
-            sqlite: ctx.sqlite,
-            config: ctx.config,
-            deviceId: ctx.deviceId,
-            scheduler: ctx.scheduler,
-            source: validation.source,
-            logger: ctx.logger,
-            previewStore: ctx.previewStore,
-          },
+          deviceId: ctx.deviceId,
+          scheduler: ctx.scheduler,
+          source: validation.source,
+          logger: ctx.logger,
+          previewStore: ctx.previewStore,
         },
-      );
-
-      for await (const event of generator) {
-        if (reply.raw.writableEnded) break;
-        // Error events from inside the generator bypass the outer catch —
-        // log them explicitly so production issues (LLM 401, signal aborts)
-        // show up in the daemon log even when SSE has already been opened.
-        if (event.type === 'error') {
-          ctx.logger.warn(
-            { message: event.message, signalAborted: abort.signal.aborted },
-            'agent loop yielded error event',
-          );
-        }
-        sendSseEvent(reply, event.type, eventPayload(event));
-      }
-    } catch (err) {
-      ctx.logger.error({ err }, 'agent loop crashed');
-      sendSseEvent(reply, 'error', { message: err instanceof Error ? err.message : String(err) });
-    } finally {
-      abort.cleanup();
-      endSse(reply);
-    }
+      },
+    );
+    await streamAgentEvents(reply, generator, abort, ctx.logger);
   });
 
   // ── GET /ai/conversations — list persisted conversations ────────────
@@ -210,6 +172,78 @@ export function registerAiRoutes(app: FastifyInstance, ctx: AppContext): void {
 }
 
 // ─── Helpers ───────────────────────────────────────────────────────────
+
+interface PreparedChat {
+  validation: Extract<ChatValidation, { ok: true }>;
+  llmClient: ReturnType<typeof createLlmClient>;
+  llmConfig: ReturnType<typeof resolveLlmConfig>;
+}
+
+/**
+ * Validate the chat body + resolve/construct the LLM client. On any failure it
+ * sends the 400 and returns `null` (caller returns immediately); otherwise it
+ * returns the validated request + client. Kept out of the handler so the SSE
+ * body stays flat.
+ */
+function prepareChatRequest(
+  req: { body?: unknown },
+  reply: FastifyReply,
+  ctx: AppContext,
+): PreparedChat | null {
+  const body = (req.body ?? {}) as ChatBody;
+  const validation = validateChatBody(body);
+  if (!validation.ok) {
+    fail(reply, 400, validation.error);
+    return null;
+  }
+
+  const llmConfig = resolveLlmConfig(ctx.config);
+  if (!llmConfig.url || !llmConfig.model || !llmConfig.api_key) {
+    fail(reply, 400, 'LLM not configured (url / model / api_key required)');
+    return null;
+  }
+
+  let llmClient: ReturnType<typeof createLlmClient>;
+  try {
+    llmClient = (ctx.llmClientFactory ?? createLlmClient)(llmConfig);
+  } catch (err) {
+    fail(reply, 400, err instanceof Error ? err.message : String(err));
+    return null;
+  }
+
+  return { validation, llmClient, llmConfig };
+}
+
+/**
+ * Drain the agent-loop generator to the SSE stream, logging in-generator error
+ * events (they bypass the catch) and any crash, then cleaning up the abort wire
+ * + ending the stream. Stops early if the client socket already closed.
+ */
+async function streamAgentEvents(
+  reply: FastifyReply,
+  generator: ReturnType<typeof runAgentLoop>,
+  abort: AbortHandle,
+  logger: AppContext['logger'],
+): Promise<void> {
+  try {
+    for await (const event of generator) {
+      if (reply.raw.writableEnded) break;
+      if (event.type === 'error') {
+        logger.warn(
+          { message: event.message, signalAborted: abort.signal.aborted },
+          'agent loop yielded error event',
+        );
+      }
+      sendSseEvent(reply, event.type, eventPayload(event));
+    }
+  } catch (err) {
+    logger.error({ err }, 'agent loop crashed');
+    sendSseEvent(reply, 'error', { message: err instanceof Error ? err.message : String(err) });
+  } finally {
+    abort.cleanup();
+    endSse(reply);
+  }
+}
 
 type ChatValidation =
   | { ok: true; message: string; conversationId: string | undefined; source: ToolSource }
