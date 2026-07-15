@@ -56,34 +56,43 @@ function shouldInterceptCloseTab(): boolean {
   return useEditorStore.getState().activeTabId != null;
 }
 
+/** Non-configurable `Mod+<key>` focus helpers (no modifiers beyond Mod): code → target selector. */
+const FOCUS_HELPERS: Record<string, string> = {
+  KeyL: '[data-tag-input]', // Mod+L → tag input
+  KeyE: '.cm-content', // Mod+E → editor content
+};
+
+/** Dispatch the first matching configured editor shortcut; returns true when one fired (preventDefault done). */
+function dispatchConfiguredAction(e: KeyboardEvent, handlers: ShortcutHandlers): boolean {
+  const shortcuts = useConfigStore.getState().shortcuts;
+  for (const action of Object.keys(ACTIONS) as (keyof ShortcutsConfig)[]) {
+    const binding = shortcuts[action];
+    if (!binding || !matchesShortcut(e, binding)) continue;
+    if (action === 'close_tab' && !shouldInterceptCloseTab()) continue;
+    e.preventDefault();
+    ACTIONS[action]?.(handlers);
+    return true;
+  }
+  return false;
+}
+
+/** Dispatch a non-configurable `Mod+<key>` focus helper; returns true when one fired. */
+function dispatchFocusHelper(e: KeyboardEvent): boolean {
+  if (!(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey) return false;
+  const selector = FOCUS_HELPERS[e.code];
+  if (!selector) return false;
+  const target = document.querySelector<HTMLElement>(selector);
+  if (!target) return false;
+  e.preventDefault();
+  target.focus();
+  return true;
+}
+
 export function useEditorShortcuts(handlers: ShortcutHandlers) {
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      const shortcuts = useConfigStore.getState().shortcuts;
-      for (const action of Object.keys(ACTIONS) as (keyof ShortcutsConfig)[]) {
-        const binding = shortcuts[action];
-        if (!binding || !matchesShortcut(e, binding)) continue;
-        if (action === 'close_tab' && !shouldInterceptCloseTab()) continue;
-        e.preventDefault();
-        ACTIONS[action]?.(handlers);
-        return;
-      }
-      // Non-configurable focus helpers.
-      if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey) {
-        if (e.code === 'KeyL') {
-          const tagInput = document.querySelector<HTMLInputElement>('[data-tag-input]');
-          if (tagInput) {
-            e.preventDefault();
-            tagInput.focus();
-          }
-        } else if (e.code === 'KeyE') {
-          const cmEditor = document.querySelector<HTMLElement>('.cm-content');
-          if (cmEditor) {
-            e.preventDefault();
-            cmEditor.focus();
-          }
-        }
-      }
+      if (dispatchConfiguredAction(e, handlers)) return;
+      dispatchFocusHelper(e);
     };
 
     // Use capture phase to intercept before CodeMirror handles the event
