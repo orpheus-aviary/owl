@@ -48,6 +48,10 @@ writeFileSync(join(webDir, 'index.html'), '<!doctype html><title>owl</title>');
 writeFileSync(join(webDir, 'assets', 'app.js'), 'console.log("owl")');
 after(() => rmSync(webDir, { recursive: true, force: true }));
 
+// A6 — a local daemon must carry a local token (buildServer fail-closes without
+// one); boundary tests send it explicitly via Authorization.
+const LOCAL_TEST_TOKEN = 'web-host-local-token';
+
 function buildCtx(config: OwlConfig): {
   ctx: AppContext;
   sqlite: Database.Database;
@@ -69,6 +73,7 @@ function buildCtx(config: OwlConfig): {
     previewStore: new PreviewStore(),
     eventsBus: new EventsBus(),
     skybridgeSession: null,
+    localToken: config.daemon.mode === 'local' ? LOCAL_TEST_TOKEN : undefined,
   };
   return { ctx, sqlite, scheduler };
 }
@@ -135,45 +140,27 @@ describe('assertWebRootValid', () => {
   });
 });
 
-describe('static hosting (local mode)', () => {
-  it('serves index.html at / and assets, 404s missing files, leaves API 404 untouched', async () => {
+describe('local mode does not host a web shell (A6 — browser=cloud)', () => {
+  it('GET / is token-gated (401) then 404 — never a shell — even with web_root set', async () => {
     const { ctx, sqlite, scheduler } = buildCtx(localConfig(webDir));
     const app = buildServer(ctx);
     await app.ready();
 
-    const index = await app.inject({ method: 'GET', url: '/' });
-    assert.equal(index.statusCode, 200);
-    assert.match(index.body, /owl/);
+    // No token → the local gate 401s (it is not a public shell, and no read leak).
+    const noAuth = await app.inject({ method: 'GET', url: '/' });
+    assert.equal(noAuth.statusCode, 401);
+    assert.equal(noAuth.json().error_code, 'LOCAL_TOKEN_REQUIRED');
 
-    const asset = await app.inject({ method: 'GET', url: '/assets/app.js' });
-    assert.equal(asset.statusCode, 200);
+    // With the token → 404 (not hosted): no shell body, no CSP header.
+    const authed = await app.inject({
+      method: 'GET',
+      url: '/',
+      headers: { authorization: `Bearer ${LOCAL_TEST_TOKEN}` },
+    });
+    assert.equal(authed.statusCode, 404);
+    assert.doesNotMatch(authed.body, /<!doctype html>/i);
+    assert.equal(authed.headers['content-security-policy'], undefined);
 
-    const missingAsset = await app.inject({ method: 'GET', url: '/assets/missing.js' });
-    assert.equal(missingAsset.statusCode, 404);
-    // NOT the SPA index — a missing asset must stay a real 404.
-    assert.doesNotMatch(missingAsset.body, /<!doctype html>/i);
-
-    // Unmatched API GET keeps Fastify's default 404 (wildcard:false didn't shadow it).
-    const apiMiss = await app.inject({ method: 'GET', url: '/notes/a/b/c' });
-    assert.equal(apiMiss.statusCode, 404);
-    assert.doesNotMatch(apiMiss.body, /<!doctype html>/i);
-
-    // CSP + hardening headers are stamped on served responses.
-    assert.match(index.headers['content-security-policy'] as string, /default-src 'self'/);
-    assert.equal(index.headers['x-content-type-options'], 'nosniff');
-
-    scheduler.stop();
-    await app.close();
-    sqlite.close();
-  });
-
-  it('does not register static / CSP when web_root is unset', async () => {
-    const { ctx, sqlite, scheduler } = buildCtx(localConfig());
-    const app = buildServer(ctx);
-    await app.ready();
-    const res = await app.inject({ method: 'GET', url: '/' });
-    assert.equal(res.statusCode, 404); // no static route
-    assert.equal(res.headers['content-security-policy'], undefined);
     scheduler.stop();
     await app.close();
     sqlite.close();
@@ -220,7 +207,7 @@ describe('route coverage — every registered route is under API_PREFIXES', () =
     registerConfigRoutes(app, ctx);
     registerAiRoutes(app, ctx);
     registerAuthRoutes(app, ctx);
-    registerSystemRoutes(app);
+    registerSystemRoutes(app, ctx);
     registerEventsRoutes(app, ctx);
     registerSyncRoutes(app, ctx);
     registerConflictsRoutes(app, ctx);

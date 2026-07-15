@@ -22,25 +22,51 @@ const daemonTarget = `http://127.0.0.1:${process.env.OWL_DAEMON_PORT ?? '47010'}
 // (see @orpheus-aviary/owl-shared/api-paths) — the proxy forwards exactly the
 // prefixes the daemon treats as API, so dev and same-origin prod agree.
 
-export default defineConfig({
-  plugins: [react(), tailwindcss()],
-  resolve: {
-    alias: {
-      '@': rendererSrc,
+// A6 — the web client is a CLOUD concept (browser=cloud): it authenticates with
+// a Layer-2 session, whereas a LOCAL daemon's token gate would 401 every request
+// a browser makes (a browser can't read the 0600 token file). So dev-web must
+// point at a cloud-mode daemon. Fail fast if the target is local instead of
+// silently serving a shell whose every API call 401s; only warn if unreachable
+// (the dev may start the daemon after Vite).
+async function assertCloudDaemon(target: string): Promise<void> {
+  let mode: string | undefined;
+  try {
+    const res = await fetch(`${target}/status`);
+    const body = (await res.json()) as { data?: { mode?: string } };
+    mode = body.data?.mode;
+  } catch (err) {
+    console.warn(`[dev-web] could not probe ${target}/status; skipping cloud-mode check (${err})`);
+    return;
+  }
+  if (mode && mode !== 'cloud') {
+    throw new Error(
+      `[dev-web] target daemon ${target} is in '${mode}' mode, but the web app needs a CLOUD daemon (browser=cloud). A local daemon token-gates every API call and a browser cannot read its token. Point OWL_DAEMON_PORT at a cloud-mode daemon (see the dev-web-cloud rig).`,
+    );
+  }
+}
+
+export default defineConfig(async ({ command }) => {
+  if (command === 'serve') await assertCloudDaemon(daemonTarget);
+  return {
+    plugins: [react(), tailwindcss()],
+    resolve: {
+      alias: {
+        '@': rendererSrc,
+      },
+      // The renderer lives outside this app's node_modules; without dedupe Vite
+      // can resolve a second React copy from packages/gui and break hooks.
+      dedupe: ['react', 'react-dom'],
     },
-    // The renderer lives outside this app's node_modules; without dedupe Vite
-    // can resolve a second React copy from packages/gui and break hooks.
-    dedupe: ['react', 'react-dom'],
-  },
-  server: {
-    port: 5274,
-    // The renderer source is outside apps/web — allow serving from repo root.
-    fs: { allow: [repoRoot] },
-    proxy: Object.fromEntries(
-      API_PREFIXES.map((p) => [p, { target: daemonTarget, changeOrigin: true }]),
-    ),
-  },
-  build: {
-    outDir: 'dist',
-  },
+    server: {
+      port: 5274,
+      // The renderer source is outside apps/web — allow serving from repo root.
+      fs: { allow: [repoRoot] },
+      proxy: Object.fromEntries(
+        API_PREFIXES.map((p) => [p, { target: daemonTarget, changeOrigin: true }]),
+      ),
+    },
+    build: {
+      outDir: 'dist',
+    },
+  };
 });

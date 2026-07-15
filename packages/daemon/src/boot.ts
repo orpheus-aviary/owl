@@ -82,10 +82,18 @@ export async function boot(options: BootOptions = {}): Promise<void> {
   // unchanged → today's desktop behaviour is untouched.
   try {
     assertDaemonStartupSafe(config, { resolvedApiKey: resolveLlmConfig(config).api_key });
-    // B4 — refuse to boot if the effective web_root (operator's [daemon].web_root
-    // or the embedded fallback) is set but unservable. Touches disk, so it lives
-    // here, not in the pure startup guard.
-    assertWebRootValid(resolveWebRoot(config) ?? options.embeddedWebRoot);
+    // B4 / A6 — web hosting is cloud-only (browser=cloud). Only validate the
+    // effective web_root in cloud mode; a local daemon never hosts a shell (the
+    // token gate would 401 a browser's API calls anyway), so it ignores web_root
+    // — warned, not silently, so a stale config isn't dropped without a trace.
+    if (config.daemon.mode === 'cloud') {
+      assertWebRootValid(resolveWebRoot(config) ?? options.embeddedWebRoot);
+    } else if (resolveWebRoot(config)) {
+      logger.warn(
+        { kind: 'web-host' },
+        'ignoring [daemon].web_root — web hosting is cloud-only (browser=cloud)',
+      );
+    }
   } catch (err) {
     if (err instanceof DaemonStartupError) {
       logger.error({ kind: 'startup-guard' }, err.message);

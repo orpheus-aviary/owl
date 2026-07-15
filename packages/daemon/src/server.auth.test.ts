@@ -22,6 +22,7 @@ import type Database from 'better-sqlite3';
 import { ConversationStore } from './ai/conversations.js';
 import { PreviewStore } from './ai/preview-store.js';
 import { createBuiltinRegistry } from './ai/tools/index.js';
+import { isLocalPublicPath, timingSafeEqualStr } from './auth.js';
 import type { AppContext } from './context.js';
 import { EventsBus } from './events/bus.js';
 import { ReminderScheduler } from './scheduler.js';
@@ -39,6 +40,10 @@ function cloudConfig(): OwlConfig {
     },
   };
 }
+
+// A6 — a local daemon must carry a local token (buildServer fail-closes without
+// one); the local-gate tests present / withhold it explicitly.
+const LOCAL_TOKEN = 'server-auth-local-token';
 
 function buildCtx(config: OwlConfig): {
   ctx: AppContext;
@@ -62,6 +67,7 @@ function buildCtx(config: OwlConfig): {
     previewStore: new PreviewStore(),
     eventsBus: new EventsBus(),
     skybridgeSession: null,
+    localToken: config.daemon.mode === 'local' ? LOCAL_TOKEN : undefined,
   };
   return { ctx, db, sqlite, scheduler };
 }
@@ -138,15 +144,128 @@ describe('auth preHandler — cloud mode', () => {
   });
 });
 
-describe('auth preHandler — local mode (no-op, desktop unchanged)', () => {
-  it('allows protected routes with no bearer', async () => {
+describe('auth preHandler — local mode (A6 local token gate)', () => {
+  it('401 LOCAL_TOKEN_REQUIRED when a protected route gets no token', async () => {
     const { ctx, sqlite, scheduler } = buildCtx(structuredClone(DEFAULT_CONFIG));
     const app = buildServer(ctx);
     await app.ready();
     const res = await app.inject({ method: 'GET', url: '/notes' });
+    assert.equal(res.statusCode, 401);
+    assert.equal(res.json().error_code, 'LOCAL_TOKEN_REQUIRED');
+    scheduler.stop();
+    await app.close();
+    sqlite.close();
+  });
+
+  it('allows a protected route with the correct local token', async () => {
+    const { ctx, sqlite, scheduler } = buildCtx(structuredClone(DEFAULT_CONFIG));
+    const app = buildServer(ctx);
+    await app.ready();
+    const res = await app.inject({
+      method: 'GET',
+      url: '/notes',
+      headers: { authorization: `Bearer ${LOCAL_TOKEN}` },
+    });
     assert.equal(res.statusCode, 200);
     scheduler.stop();
     await app.close();
     sqlite.close();
+  });
+
+  it('401 on a wrong token', async () => {
+    const { ctx, sqlite, scheduler } = buildCtx(structuredClone(DEFAULT_CONFIG));
+    const app = buildServer(ctx);
+    await app.ready();
+    const res = await app.inject({
+      method: 'GET',
+      url: '/notes',
+      headers: { authorization: 'Bearer not-the-token' },
+    });
+    assert.equal(res.statusCode, 401);
+    scheduler.stop();
+    await app.close();
+    sqlite.close();
+  });
+
+  it('GET /status stays public (no token needed)', async () => {
+    const { ctx, sqlite, scheduler } = buildCtx(structuredClone(DEFAULT_CONFIG));
+    const app = buildServer(ctx);
+    await app.ready();
+    const res = await app.inject({ method: 'GET', url: '/status' });
+    assert.equal(res.statusCode, 200);
+    scheduler.stop();
+    await app.close();
+    sqlite.close();
+  });
+
+  it('an unregistered path is 401 without a token, 404 with it', async () => {
+    const { ctx, sqlite, scheduler } = buildCtx(structuredClone(DEFAULT_CONFIG));
+    const app = buildServer(ctx);
+    await app.ready();
+
+    const noAuth = await app.inject({ method: 'POST', url: '/no-such-route', payload: {} });
+    assert.equal(noAuth.statusCode, 401);
+    assert.equal(noAuth.json().error_code, 'LOCAL_TOKEN_REQUIRED');
+
+    const authed = await app.inject({
+      method: 'POST',
+      url: '/no-such-route',
+      payload: {},
+      headers: { authorization: `Bearer ${LOCAL_TOKEN}` },
+    });
+    assert.equal(authed.statusCode, 404);
+
+    scheduler.stop();
+    await app.close();
+    sqlite.close();
+  });
+});
+
+describe('GET /status shape (A6)', () => {
+  it('local mode advertises mode + pid + local_auth_version', async () => {
+    const { ctx, sqlite, scheduler } = buildCtx(structuredClone(DEFAULT_CONFIG));
+    const app = buildServer(ctx);
+    await app.ready();
+    const data = (await app.inject({ method: 'GET', url: '/status' })).json().data;
+    assert.equal(data.mode, 'local');
+    assert.equal(data.pid, process.pid);
+    assert.equal(data.local_auth_version, 1);
+    scheduler.stop();
+    await app.close();
+    sqlite.close();
+  });
+
+  it('cloud mode advertises mode but omits pid + local_auth_version', async () => {
+    const { ctx, sqlite, scheduler } = buildCtx(cloudConfig());
+    const app = buildServer(ctx);
+    await app.ready();
+    const data = (await app.inject({ method: 'GET', url: '/status' })).json().data;
+    assert.equal(data.mode, 'cloud');
+    assert.equal(data.pid, undefined);
+    assert.equal(data.local_auth_version, undefined);
+    scheduler.stop();
+    await app.close();
+    sqlite.close();
+  });
+});
+
+describe('local-auth helpers (A6)', () => {
+  it('isLocalPublicPath allows only GET /status', () => {
+    assert.equal(isLocalPublicPath('GET', '/status'), true);
+    assert.equal(isLocalPublicPath('GET', '/status?x=1'), true);
+    assert.equal(isLocalPublicPath('POST', '/status'), false);
+    assert.equal(isLocalPublicPath('GET', '/notes'), false);
+    assert.equal(isLocalPublicPath('GET', '/'), false);
+  });
+
+  it('timingSafeEqualStr matches equal, rejects mismatches, never throws on length', () => {
+    assert.equal(timingSafeEqualStr('abc', 'abc'), true);
+    assert.equal(timingSafeEqualStr('abc', 'abd'), false);
+    // Different lengths (empty / super-long / unicode) must be false, not a 500.
+    assert.equal(timingSafeEqualStr('', 'abc'), false);
+    assert.equal(timingSafeEqualStr('abc', ''), false);
+    assert.equal(timingSafeEqualStr('a'.repeat(100000), 'a'), false);
+    assert.equal(timingSafeEqualStr('café', 'cafe'), false); // multibyte vs ascii
+    assert.equal(timingSafeEqualStr('café', 'café'), true);
   });
 });

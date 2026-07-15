@@ -15,7 +15,7 @@
  * Design: `docs/plans/2026-06-12-phase-a-cloud-daemon-design.md` §4.2 / §5.3.
  */
 
-import { randomBytes } from 'node:crypto';
+import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { isApiPath } from '@orpheus-aviary/owl-shared/api-paths';
 import type { OwlConfig } from '@owl/core';
 import type { AppContext } from './context.js';
@@ -171,16 +171,41 @@ export function isPublicPath(method: string, url: string): boolean {
 }
 
 /**
- * Whether a request bypasses the Layer-2 bearer requirement. `local` mode is
- * always exempt (no Layer-2 auth — desktop unchanged). In cloud mode: the public
- * allowlist (`isPublicPath`) plus — Phase B4 — the static web shell, i.e. any
- * GET/HEAD to a NON-API path. The API surface (`isApiPath`) stays bearer-gated,
- * and a non-GET to a non-API path is fail-closed (not public).
+ * Whether a request bypasses the Layer-2 bearer requirement (cloud mode). The
+ * public allowlist (`isPublicPath`) plus — Phase B4 — the static web shell, i.e.
+ * any GET/HEAD to a NON-API path. The API surface (`isApiPath`) stays
+ * bearer-gated, and a non-GET to a non-API path is fail-closed (not public).
+ *
+ * NOTE (A6): local mode is handled by its own gate in server.ts (only
+ * `GET /status` is public there, and it requires the local token otherwise), so
+ * this is now consulted only in cloud mode.
  */
 export function isAuthExempt(config: OwlConfig, method: string, url: string): boolean {
   if (config.daemon.mode === 'local') return true;
   if (isPublicPath(method, url)) return true;
   return (method === 'GET' || method === 'HEAD') && !isApiPath(url);
+}
+
+/**
+ * Phase A (A6) — in local mode the ONLY request reachable without the local
+ * token: `GET /status` (the health probe GUI main / CLI hit before they can
+ * attach anything). Everything else — all API, all methods, unregistered paths
+ * — requires the token, so no future route silently joins the public face.
+ */
+export function isLocalPublicPath(method: string, url: string): boolean {
+  return method === 'GET' && url.split('?')[0] === '/status';
+}
+
+/**
+ * Constant-time string equality that never throws on a length mismatch
+ * (`timingSafeEqual` requires equal-length buffers, so we length-guard first —
+ * a Unicode / over-long / empty candidate token must return false, not 500).
+ */
+export function timingSafeEqualStr(a: string, b: string): boolean {
+  const ab = Buffer.from(a);
+  const bb = Buffer.from(b);
+  if (ab.length !== bb.length) return false;
+  return timingSafeEqual(ab, bb);
 }
 
 /**

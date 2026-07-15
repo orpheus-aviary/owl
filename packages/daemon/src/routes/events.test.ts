@@ -16,7 +16,7 @@ import { createBuiltinRegistry } from '../ai/tools/index.js';
 import type { AppContext } from '../context.js';
 import { EventsBus } from '../events/bus.js';
 import { ReminderScheduler } from '../scheduler.js';
-import { buildTestServer } from '../testing/build-test-server.js';
+import { TEST_LOCAL_TOKEN, buildTestServer } from '../testing/build-test-server.js';
 
 /** Parse SSE `event:` / `data:` blocks out of a raw buffer. */
 interface SseEvent {
@@ -210,7 +210,7 @@ describe('events routes', () => {
     const ac = new AbortController();
     const resp = await fetch(`http://127.0.0.1:${port}/events`, {
       signal: ac.signal,
-      headers: { Accept: 'text/event-stream' },
+      headers: { Accept: 'text/event-stream', Authorization: `Bearer ${TEST_LOCAL_TOKEN}` },
     });
     assert.equal(resp.status, 200);
     if (!resp.body) throw new Error('expected streaming body');
@@ -283,7 +283,7 @@ describe('events routes', () => {
     const ac = new AbortController();
     const resp = await fetch(`http://127.0.0.1:${port}/events`, {
       signal: ac.signal,
-      headers: { Accept: 'text/event-stream' },
+      headers: { Accept: 'text/event-stream', Authorization: `Bearer ${TEST_LOCAL_TOKEN}` },
     });
     assert.equal(resp.status, 200);
     if (!resp.body) throw new Error('expected streaming body');

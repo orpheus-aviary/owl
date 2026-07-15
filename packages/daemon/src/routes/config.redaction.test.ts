@@ -64,6 +64,10 @@ function localConfig(apiKey = SECRET): OwlConfig {
   return { ...DEFAULT_CONFIG, llm: { ...DEFAULT_CONFIG.llm, api_key: apiKey } };
 }
 
+// A6 — a local daemon must carry a local token (buildServer fail-closes without
+// one); local-mode tests present it via the bearer helper.
+const LOCAL_TOKEN = 'config-local-token';
+
 function buildCtx(config: OwlConfig): {
   ctx: AppContext;
   sqlite: Database.Database;
@@ -86,6 +90,7 @@ function buildCtx(config: OwlConfig): {
     previewStore: new PreviewStore(),
     eventsBus: new EventsBus(),
     skybridgeSession: null,
+    localToken: config.daemon.mode === 'local' ? LOCAL_TOKEN : undefined,
   };
   return { ctx, sqlite, scheduler };
 }
@@ -166,7 +171,7 @@ describe('GET /config — secret redaction (A5)', () => {
     const { ctx, sqlite, scheduler } = buildCtx(localConfig());
     const app = buildServer(ctx);
     await app.ready();
-    const res = await app.inject({ method: 'GET', url: '/config' });
+    const res = await app.inject({ method: 'GET', url: '/config', headers: bearer(LOCAL_TOKEN) });
     assert.equal(res.statusCode, 200);
     assert.equal(res.json().data.llm.api_key, SECRET);
     assert.equal(res.json().data.llm.has_api_key, undefined);
@@ -244,6 +249,7 @@ describe('PATCH /config — llm owner-gate (A5)', () => {
       method: 'PATCH',
       url: '/config',
       payload: { llm: { model: 'local-model' } },
+      headers: bearer(LOCAL_TOKEN),
     });
     assert.equal(res.statusCode, 200);
     assert.equal(res.json().data.llm.model, 'local-model');

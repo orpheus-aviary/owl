@@ -105,6 +105,10 @@ function cloudConfig(overrides: Partial<OwlConfig['daemon']> = {}): OwlConfig {
   };
 }
 
+// A6 — a local daemon must carry a local token (buildServer fail-closes
+// without one); local-mode tests present it explicitly to reach the route.
+const LOCAL_TOKEN = 'auth-route-local-token';
+
 function makeCtx(config: OwlConfig, sdk: SkybridgeClientModule): AppContext {
   mkdirSync(paths.owlDir(), { recursive: true });
   const { db, sqlite } = createDatabase({ dbPath: paths.localProfileDbPath() });
@@ -127,6 +131,7 @@ function makeCtx(config: OwlConfig, sdk: SkybridgeClientModule): AppContext {
     syncScheduler: null,
     credentialStore: new CredentialStore(),
     skybridgeLoader: async () => sdk,
+    localToken: config.daemon.mode === 'local' ? LOCAL_TOKEN : undefined,
   } as AppContext;
 }
 
@@ -235,10 +240,13 @@ describe('POST /auth/login', () => {
     ctx = makeCtx(structuredClone(DEFAULT_CONFIG), mockSdk({ logout: 0 }));
     const app = buildServer(ctx);
     await app.ready();
+    // A6 — carry the local token so the request clears the local gate and
+    // reaches the route's own local-mode 404 guard (the point of this test).
     const res = await app.inject({
       method: 'POST',
       url: '/auth/login',
       payload: { email: 'a@test', password: 'pw' },
+      headers: { authorization: `Bearer ${LOCAL_TOKEN}` },
     });
     assert.equal(res.statusCode, 404);
     await app.close();

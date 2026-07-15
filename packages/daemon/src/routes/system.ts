@@ -1,10 +1,27 @@
+import { LOCAL_AUTH_VERSION } from '@orpheus-aviary/owl-shared';
 import type { FastifyInstance } from 'fastify';
+import type { AppContext } from '../context.js';
 import { ok } from '../response.js';
 
-export function registerSystemRoutes(app: FastifyInstance): void {
-  // GET /status — health check
+export function registerSystemRoutes(app: FastifyInstance, ctx: AppContext): void {
+  // GET /status — health check. Public in both modes (GUI/CLI probe it before
+  // they can authenticate). A6 — advertises `mode`, and in LOCAL mode the daemon
+  // pid + `local_auth_version` so GUI main can detect+replace a stale pre-A6
+  // daemon; cloud omits pid (don't leak the OS pid) and local_auth_version.
   app.get('/status', async (_req, reply) => {
-    ok(reply, { status: 'ok', uptime: process.uptime() }, 'daemon is running');
+    const mode = ctx.config.daemon.mode;
+    const payload: {
+      status: string;
+      uptime: number;
+      mode: 'local' | 'cloud';
+      pid?: number;
+      local_auth_version?: number;
+    } = { status: 'ok', uptime: process.uptime(), mode };
+    if (mode === 'local') {
+      payload.pid = process.pid;
+      payload.local_auth_version = LOCAL_AUTH_VERSION;
+    }
+    ok(reply, payload, 'daemon is running');
   });
 
   // GET /api/capabilities — describe all available endpoints

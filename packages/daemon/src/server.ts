@@ -1,7 +1,14 @@
 import cors from '@fastify/cors';
 import Fastify, { type FastifyError } from 'fastify';
 import { corsOriginDelegate, isHostAllowed } from './access-guard.js';
-import { type Session, bearerToken, ensureSessionStore, isAuthExempt } from './auth.js';
+import {
+  type Session,
+  bearerToken,
+  ensureSessionStore,
+  isAuthExempt,
+  isLocalPublicPath,
+  timingSafeEqualStr,
+} from './auth.js';
 import type { AppContext } from './context.js';
 import { fail } from './response.js';
 import { registerAiRoutes } from './routes/ai.js';
@@ -36,6 +43,13 @@ const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 const SWITCH_INITIATING_PATHS = new Set(['/sync/switch', '/auth/login']);
 
 export function buildServer(ctx: AppContext) {
+  // A6 fail-closed — a local daemon MUST carry a local token (boot.ts generates
+  // it; buildTestServer sets one). Missing it would silently reopen the CSRF
+  // hole, so refuse to build the server rather than gate on an absent secret.
+  if (ctx.config.daemon.mode === 'local' && !ctx.localToken) {
+    throw new Error('local daemon requires ctx.localToken to be set (A6 fail-closed)');
+  }
+
   const app = Fastify({
     logger: false, // We use our own pino logger
     // Phase A A4 — only read X-Forwarded-For (and thus base req.ip on it) when
@@ -74,8 +88,17 @@ export function buildServer(ctx: AppContext) {
   // downstream owner-gating (A4/A5).
   const sessionStore = ensureSessionStore(ctx);
   app.addHook('preHandler', async (req, reply) => {
-    // Exempt: local mode, the public allowlist, and (B4) the static web shell
-    // — any GET/HEAD to a non-API path. The API surface stays bearer-gated.
+    // A6 — local mode: every request except GET /status must carry the local
+    // token (closes cross-site simple-POST CSRF + the null-origin GET read leak).
+    if (ctx.config.daemon.mode === 'local') {
+      if (isLocalPublicPath(req.method, req.url)) return;
+      const token = bearerToken(req.headers.authorization);
+      if (token && ctx.localToken && timingSafeEqualStr(token, ctx.localToken)) return;
+      fail(reply, 401, 'local token required', 'LOCAL_TOKEN_REQUIRED');
+      return reply;
+    }
+    // cloud — Layer-2 bearer session. Exempt: the public allowlist and (B4) the
+    // static web shell — any GET/HEAD to a non-API path. The API stays gated.
     if (isAuthExempt(ctx.config, req.method, req.url)) return;
     const token = bearerToken(req.headers.authorization);
     const session = token ? sessionStore.verify(token) : null;
@@ -133,6 +156,22 @@ export function buildServer(ctx: AppContext) {
     });
   });
 
+  // A6 — an unregistered path must not skip the local auth gate: gate first
+  // (401 without a valid token), then a plain 404. Self-contained so the
+  // behaviour holds regardless of whether Fastify runs the global preHandler
+  // for the not-found route.
+  app.setNotFoundHandler((req, reply) => {
+    if (ctx.config.daemon.mode === 'local' && !isLocalPublicPath(req.method, req.url)) {
+      const token = bearerToken(req.headers.authorization);
+      if (!(token && ctx.localToken && timingSafeEqualStr(token, ctx.localToken))) {
+        fail(reply, 401, 'local token required', 'LOCAL_TOKEN_REQUIRED');
+        return reply;
+      }
+    }
+    fail(reply, 404, 'not found', 'NOT_FOUND');
+    return reply;
+  });
+
   // Register routes
   registerNoteRoutes(app, ctx);
   registerFolderRoutes(app, ctx);
@@ -141,17 +180,23 @@ export function buildServer(ctx: AppContext) {
   registerConfigRoutes(app, ctx);
   registerAiRoutes(app, ctx);
   registerAuthRoutes(app, ctx);
-  registerSystemRoutes(app);
+  registerSystemRoutes(app, ctx);
   registerEventsRoutes(app, ctx);
   registerSyncRoutes(app, ctx);
   registerConflictsRoutes(app, ctx);
 
-  // B4 — same-origin web hosting. Prefer the operator's [daemon].web_root; fall
-  // back to `ctx.embeddedWebRoot` (Stage 1.1 — the bundle shipped inside
-  // `@orpheus-aviary/owl-server`). Registered AFTER the API routes so specific
-  // routes win; the shell is public (the cloud auth gate above bypasses non-API
-  // GET/HEAD). `cli.ts` / `boot()` has already fail-fast-validated the path.
-  const webRoot = resolveWebRoot(ctx.config) ?? ctx.embeddedWebRoot;
+  // B4 — same-origin web hosting, A6 — cloud-only. The web client is a cloud
+  // concept (browser=cloud): it authenticates with a Layer-2 session, whereas a
+  // local daemon's token gate would 401 every API call a browser makes. So a
+  // local daemon never hosts a shell; only cloud registers the operator's
+  // [daemon].web_root (or `ctx.embeddedWebRoot`, the owl-server bundle).
+  // Registered AFTER the API routes so specific routes win; the shell is public
+  // (the cloud auth gate bypasses non-API GET/HEAD). `cli.ts`/`boot()` has
+  // already fail-fast-validated the path.
+  const webRoot =
+    ctx.config.daemon.mode === 'cloud'
+      ? (resolveWebRoot(ctx.config) ?? ctx.embeddedWebRoot)
+      : undefined;
   if (webRoot) registerWebHost(app, webRoot);
 
   return app;
