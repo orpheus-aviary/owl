@@ -50,22 +50,27 @@ export function parseTag(raw: string): ParsedTag | null {
 
   // Time-based tags
   if (trimmed.startsWith('/time') || trimmed.startsWith('/alarm')) {
-    const isAlarm = trimmed.startsWith('/alarm');
-    const tagType: TagType = isAlarm ? '/alarm' : '/time';
-    const dateStr = trimmed
-      .slice(isAlarm ? 6 : 5)
-      .replace(/^:/, '')
-      .trim();
-
-    if (!dateStr) return { tagType, tagValue: '' };
-
-    const parsed = inferDateTime(dateStr);
-    if (!parsed) return null;
-
-    return { tagType, tagValue: parsed };
+    return parseTimeTag(trimmed);
   }
 
   return null;
+}
+
+/** Parse a `/time …` or `/alarm …` tag (caller has confirmed the prefix). */
+function parseTimeTag(trimmed: string): ParsedTag | null {
+  const isAlarm = trimmed.startsWith('/alarm');
+  const tagType: TagType = isAlarm ? '/alarm' : '/time';
+  const dateStr = trimmed
+    .slice(isAlarm ? 6 : 5)
+    .replace(/^:/, '')
+    .trim();
+
+  if (!dateStr) return { tagType, tagValue: '' };
+
+  const parsed = inferDateTime(dateStr);
+  if (!parsed) return null;
+
+  return { tagType, tagValue: parsed };
 }
 
 /**
@@ -99,81 +104,17 @@ export function inferDateTime(input: string): string | null {
 
   const now = new Date();
 
-  // Try to split into date and time parts (space or T separator)
-  const parts = trimmed.split(/[\sT]+/);
+  const split = splitDateTimeParts(trimmed);
+  if (!split) return null;
 
-  let datePart: string | null = null;
-  let timePart: string | null = null;
+  const time = parseTimePart(split.timePart);
+  if (!time) return null;
 
-  if (parts.length === 2) {
-    datePart = parts[0];
-    timePart = parts[1];
-  } else if (parts.length === 1) {
-    // Could be just date or just time
-    if (parts[0].includes('-')) {
-      datePart = parts[0];
-    } else if (parts[0].includes(':')) {
-      timePart = parts[0];
-    } else {
-      return null;
-    }
-  } else {
-    return null;
-  }
+  const date = parseDatePart(split.datePart, time, now);
+  if (!date) return null;
 
-  let year: number;
-  let month: number;
-  let day: number;
-  let hour: number;
-  let minute: number;
-  let second: number;
-
-  // Parse time
-  if (timePart) {
-    const timeParts = timePart.split(':').map(Number);
-    if (timeParts.some((n) => Number.isNaN(n))) return null;
-    hour = timeParts[0];
-    minute = timeParts[1] ?? 0;
-    second = timeParts[2] ?? 0;
-  } else {
-    hour = 23;
-    minute = 59;
-    second = 59;
-  }
-
-  // Parse date
-  if (datePart) {
-    const dateParts = datePart.split('-').map(Number);
-    if (dateParts.some((n) => Number.isNaN(n))) return null;
-
-    if (dateParts.length === 3) {
-      // YYYY-MM-DD or YY-MM-DD
-      year = dateParts[0] < 100 ? 2000 + dateParts[0] : dateParts[0];
-      month = dateParts[1];
-      day = dateParts[2];
-    } else if (dateParts.length === 2) {
-      // MM-DD → infer year
-      month = dateParts[0];
-      day = dateParts[1];
-      const candidate = new Date(now.getFullYear(), month - 1, day, hour, minute, second);
-      year = candidate.getTime() >= now.getTime() ? now.getFullYear() : now.getFullYear() + 1;
-    } else {
-      return null;
-    }
-  } else {
-    // Time only → infer today or tomorrow
-    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate(), hour, minute, second);
-    if (today.getTime() >= now.getTime()) {
-      year = now.getFullYear();
-      month = now.getMonth() + 1;
-      day = now.getDate();
-    } else {
-      const tomorrow = new Date(today.getTime() + 86400000);
-      year = tomorrow.getFullYear();
-      month = tomorrow.getMonth() + 1;
-      day = tomorrow.getDate();
-    }
-  }
+  const { hour, minute, second } = time;
+  const { year, month, day } = date;
 
   // Validate
   const result = new Date(year, month - 1, day, hour, minute, second);
@@ -182,4 +123,89 @@ export function inferDateTime(input: string): string | null {
   // Format as ISO-like string: YYYY-MM-DDTHH:MM:SS
   const pad = (n: number, w = 2) => n.toString().padStart(w, '0');
   return `${pad(year, 4)}-${pad(month)}-${pad(day)}T${pad(hour)}:${pad(minute)}:${pad(second)}`;
+}
+
+interface TimeOfDay {
+  hour: number;
+  minute: number;
+  second: number;
+}
+
+interface DateParts {
+  year: number;
+  month: number;
+  day: number;
+}
+
+/** Split on space/`T` into date + time parts; a lone token is date (has `-`) or time (has `:`). */
+function splitDateTimeParts(
+  trimmed: string,
+): { datePart: string | null; timePart: string | null } | null {
+  const parts = trimmed.split(/[\sT]+/);
+  if (parts.length === 2) {
+    return { datePart: parts[0], timePart: parts[1] };
+  }
+  if (parts.length === 1) {
+    if (parts[0].includes('-')) return { datePart: parts[0], timePart: null };
+    if (parts[0].includes(':')) return { datePart: null, timePart: parts[0] };
+    return null;
+  }
+  return null;
+}
+
+/** Parse `HH[:MM[:SS]]`; absent time defaults to end-of-day 23:59:59. */
+function parseTimePart(timePart: string | null): TimeOfDay | null {
+  if (!timePart) return { hour: 23, minute: 59, second: 59 };
+  const timeParts = timePart.split(':').map(Number);
+  if (timeParts.some((n) => Number.isNaN(n))) return null;
+  return { hour: timeParts[0], minute: timeParts[1] ?? 0, second: timeParts[2] ?? 0 };
+}
+
+/**
+ * Parse the date part, inferring the year when abbreviated. With no date part
+ * (time-only input), infer today or tomorrow relative to `now`. The `time` of
+ * day is needed for the MM-DD / time-only "current or next" comparison.
+ */
+function parseDatePart(datePart: string | null, time: TimeOfDay, now: Date): DateParts | null {
+  if (datePart) {
+    const dateParts = datePart.split('-').map(Number);
+    if (dateParts.some((n) => Number.isNaN(n))) return null;
+
+    if (dateParts.length === 3) {
+      // YYYY-MM-DD or YY-MM-DD
+      const year = dateParts[0] < 100 ? 2000 + dateParts[0] : dateParts[0];
+      return { year, month: dateParts[1], day: dateParts[2] };
+    }
+    if (dateParts.length === 2) {
+      // MM-DD → infer year (current or next)
+      const month = dateParts[0];
+      const day = dateParts[1];
+      const candidate = new Date(
+        now.getFullYear(),
+        month - 1,
+        day,
+        time.hour,
+        time.minute,
+        time.second,
+      );
+      const year = candidate.getTime() >= now.getTime() ? now.getFullYear() : now.getFullYear() + 1;
+      return { year, month, day };
+    }
+    return null;
+  }
+
+  // Time only → infer today or tomorrow
+  const today = new Date(
+    now.getFullYear(),
+    now.getMonth(),
+    now.getDate(),
+    time.hour,
+    time.minute,
+    time.second,
+  );
+  if (today.getTime() >= now.getTime()) {
+    return { year: now.getFullYear(), month: now.getMonth() + 1, day: now.getDate() };
+  }
+  const tomorrow = new Date(today.getTime() + 86400000);
+  return { year: tomorrow.getFullYear(), month: tomorrow.getMonth() + 1, day: tomorrow.getDate() };
 }

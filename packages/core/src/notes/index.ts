@@ -1,5 +1,5 @@
 import type Database from 'better-sqlite3';
-import { and, eq, inArray, sql } from 'drizzle-orm';
+import { type SQL, and, eq, inArray, sql } from 'drizzle-orm';
 import { v4 as uuidv4 } from 'uuid';
 import type { OwlDatabase } from '../db/index.js';
 import { noteTags, notes, tags } from '../db/schema.js';
@@ -179,22 +179,125 @@ export function createNote(
     .immediate();
 }
 
+type NoteTagRow = { id: string; tagType: string; tagValue: string | null };
+
+/** Hydrate a note row with its tags (shared by getNote / listNotes / listAlarmNotes). */
+function attachTags<T extends { id: string }>(
+  db: OwlDatabase,
+  note: T,
+): T & { tags: NoteTagRow[] } {
+  const noteTags_ = db
+    .select({ id: tags.id, tagType: tags.tagType, tagValue: tags.tagValue })
+    .from(noteTags)
+    .innerJoin(tags, eq(noteTags.tagId, tags.id))
+    .where(eq(noteTags.noteId, note.id))
+    .all();
+  return { ...note, tags: noteTags_ };
+}
+
 export function getNote(db: OwlDatabase, id: string): NoteWithTags | null {
   const note = db.select().from(notes).where(eq(notes.id, id)).get();
   if (!note) return null;
+  return attachTags(db, note);
+}
 
-  const noteTags_ = db
-    .select({
-      id: tags.id,
-      tagType: tags.tagType,
-      tagValue: tags.tagValue,
-    })
+/** FTS search: trigram MATCH for >= 3 chars, LIKE fallback otherwise. Returns matching note ids (empty = no matches). */
+function resolveFtsIds(sqlite: Database.Database, q: string): string[] {
+  if (q.length < 3) {
+    const likeRows = sqlite.prepare('SELECT id FROM notes WHERE content LIKE ?').all(`%${q}%`) as {
+      id: string;
+    }[];
+    return likeRows.map((r) => r.id);
+  }
+  const ftsResults = sqlite
+    .prepare('SELECT rowid FROM notes_fts WHERE notes_fts MATCH ? ORDER BY rank')
+    .all(q) as { rowid: number }[];
+  const rowids = ftsResults.map((r) => r.rowid);
+  if (rowids.length === 0) return [];
+  const idRows = sqlite
+    .prepare(`SELECT id FROM notes WHERE rowid IN (${rowids.map(() => '?').join(',')})`)
+    .all(...rowids) as { id: string }[];
+  return idRows.map((r) => r.id);
+}
+
+/** Tag filter (AND): note ids carrying ALL of `tagValues` as `#` tags (empty = none match). */
+function resolveTagFilterIds(db: OwlDatabase, tagValues: string[]): string[] {
+  const tagRows = db
+    .select({ noteId: noteTags.noteId, tagValue: tags.tagValue })
     .from(noteTags)
     .innerJoin(tags, eq(noteTags.tagId, tags.id))
-    .where(eq(noteTags.noteId, id))
+    .where(and(eq(tags.tagType, '#'), inArray(tags.tagValue, tagValues)))
     .all();
+  const countByNote = new Map<string, number>();
+  for (const row of tagRows) {
+    countByNote.set(row.noteId, (countByNote.get(row.noteId) ?? 0) + 1);
+  }
+  return [...countByNote.entries()]
+    .filter(([, count]) => count >= tagValues.length)
+    .map(([noteId]) => noteId);
+}
 
-  return { ...note, tags: noteTags_ };
+/**
+ * Intersect the FTS + tag filters into a note-id allowlist. Returns `null` when
+ * neither filter applies (no id restriction), or the sentinel `'empty'` when a
+ * filter matched nothing (caller short-circuits to an empty page).
+ */
+function computeIdFilter(
+  db: OwlDatabase,
+  sqlite: Database.Database,
+  q: string | undefined,
+  tagValues: string[] | undefined,
+): string[] | null | 'empty' {
+  let matchingIds: string[] | null = null;
+  if (q) {
+    matchingIds = resolveFtsIds(sqlite, q);
+    if (matchingIds.length === 0) return 'empty';
+  }
+  if (tagValues?.length) {
+    const tagNoteIds = resolveTagFilterIds(db, tagValues);
+    if (tagNoteIds.length === 0) return 'empty';
+    matchingIds = matchingIds ? matchingIds.filter((id) => tagNoteIds.includes(id)) : tagNoteIds;
+    if (matchingIds.length === 0) return 'empty';
+  }
+  return matchingIds;
+}
+
+/**
+ * Folder scoping condition. `null` = no folder filter; `'empty'` = folder has an
+ * empty descendant subtree (caller short-circuits); otherwise a WHERE fragment.
+ */
+function buildFolderCondition(
+  sqlite: Database.Database,
+  folderId: string | null | undefined,
+  includeDescendants: boolean,
+): SQL | null | 'empty' {
+  if (folderId === undefined) return null;
+  if (folderId === null) return sql`${notes.folderId} IS NULL`;
+  if (includeDescendants) {
+    const subtreeIds = getFolderSubtreeIds(sqlite, folderId);
+    if (subtreeIds.length === 0) return 'empty';
+    return inArray(notes.folderId, subtreeIds);
+  }
+  return eq(notes.folderId, folderId);
+}
+
+/**
+ * ORDER BY clause. Ordering semantics:
+ *   pinnedFirst=true  → `(pinned_at IS NULL) ASC` groups pinned rows (0) before
+ *                       non-pinned rows (1); in-group ordering falls through
+ *   sortBy='position' → `position ASC NULLS LAST, updated_at DESC` (sortOrder ignored)
+ *   sortBy='updated' | 'created' + sortOrder → conventional column sort
+ */
+function buildOrderClause(sortBy: string, sortOrder: string, pinnedFirst: boolean): SQL {
+  const dir = sortOrder === 'asc' ? sql`ASC` : sql`DESC`;
+  const groupClause = pinnedFirst ? sql`(${notes.pinnedAt} IS NULL) ASC, ` : sql``;
+  const mainClause =
+    sortBy === 'position'
+      ? sql`${notes.position} ASC NULLS LAST, ${notes.updatedAt} DESC`
+      : sortBy === 'created'
+        ? sql`${notes.createdAt} ${dir}`
+        : sql`${notes.updatedAt} ${dir}`;
+  return sql`${groupClause}${mainClause}`;
 }
 
 export function listNotes(
@@ -216,117 +319,30 @@ export function listNotes(
   } = options;
   const offset = (page - 1) * limit;
 
-  let matchingIds: string[] | null = null;
+  const idFilter = computeIdFilter(db, sqlite, q, tagValues);
+  if (idFilter === 'empty') return { items: [], total: 0 };
 
-  // FTS search (trigram requires >= 3 chars, fallback to LIKE)
-  if (q) {
-    if (q.length < 3) {
-      const likeRows = sqlite
-        .prepare('SELECT id FROM notes WHERE content LIKE ?')
-        .all(`%${q}%`) as { id: string }[];
-      matchingIds = likeRows.map((r) => r.id);
-    } else {
-      const ftsResults = sqlite
-        .prepare('SELECT rowid FROM notes_fts WHERE notes_fts MATCH ? ORDER BY rank')
-        .all(q) as { rowid: number }[];
-
-      const rowids = ftsResults.map((r) => r.rowid);
-      if (rowids.length === 0) return { items: [], total: 0 };
-
-      const idRows = sqlite
-        .prepare(`SELECT id FROM notes WHERE rowid IN (${rowids.map(() => '?').join(',')})`)
-        .all(...rowids) as { id: string }[];
-
-      matchingIds = idRows.map((r) => r.id);
-    }
-    if (matchingIds.length === 0) return { items: [], total: 0 };
-  }
-
-  // Tag filter (AND: notes must have ALL specified tags)
-  if (tagValues?.length) {
-    const tagRows = db
-      .select({ noteId: noteTags.noteId, tagValue: tags.tagValue })
-      .from(noteTags)
-      .innerJoin(tags, eq(noteTags.tagId, tags.id))
-      .where(and(eq(tags.tagType, '#'), inArray(tags.tagValue, tagValues)))
-      .all();
-
-    // Group by noteId and keep only those matching ALL requested tags
-    const countByNote = new Map<string, number>();
-    for (const row of tagRows) {
-      countByNote.set(row.noteId, (countByNote.get(row.noteId) ?? 0) + 1);
-    }
-    const tagNoteIds = [...countByNote.entries()]
-      .filter(([, count]) => count >= tagValues.length)
-      .map(([noteId]) => noteId);
-    if (tagNoteIds.length === 0) return { items: [], total: 0 };
-
-    matchingIds = matchingIds ? matchingIds.filter((id) => tagNoteIds.includes(id)) : tagNoteIds;
-
-    if (matchingIds.length === 0) return { items: [], total: 0 };
-  }
-
-  // Build conditions
   const conditions = [eq(notes.trashLevel, trashLevel)];
-
-  if (folderId !== undefined) {
-    if (folderId === null) {
-      conditions.push(sql`${notes.folderId} IS NULL`);
-    } else if (includeDescendants) {
-      const subtreeIds = getFolderSubtreeIds(sqlite, folderId);
-      if (subtreeIds.length === 0) return { items: [], total: 0 };
-      conditions.push(inArray(notes.folderId, subtreeIds));
-    } else {
-      conditions.push(eq(notes.folderId, folderId));
-    }
-  }
-
-  if (matchingIds) {
-    conditions.push(inArray(notes.id, matchingIds));
-  }
+  const folderCondition = buildFolderCondition(sqlite, folderId, includeDescendants);
+  if (folderCondition === 'empty') return { items: [], total: 0 };
+  if (folderCondition) conditions.push(folderCondition);
+  if (idFilter) conditions.push(inArray(notes.id, idFilter));
 
   const where = and(...conditions);
 
-  // Count
   const countResult = db.select({ count: sql<number>`count(*)` }).from(notes).where(where).get();
   const total = countResult?.count ?? 0;
-
-  // Fetch
-  //
-  // Ordering semantics:
-  //   pinnedFirst=true  → `(pinned_at IS NULL) ASC` groups pinned rows (0)
-  //                       before non-pinned rows (1); in-group ordering falls
-  //                       through to the sortBy/sortOrder clauses below
-  //   sortBy='position' → `position ASC NULLS LAST, updated_at DESC`
-  //                       (sortOrder is ignored — semantics fixed per design)
-  //   sortBy='updated' | 'created' + sortOrder → conventional column sort
-  const dir = sortOrder === 'asc' ? sql`ASC` : sql`DESC`;
-  const groupClause = pinnedFirst ? sql`(${notes.pinnedAt} IS NULL) ASC, ` : sql``;
-  const mainClause =
-    sortBy === 'position'
-      ? sql`${notes.position} ASC NULLS LAST, ${notes.updatedAt} DESC`
-      : sortBy === 'created'
-        ? sql`${notes.createdAt} ${dir}`
-        : sql`${notes.updatedAt} ${dir}`;
 
   const rows = db
     .select()
     .from(notes)
     .where(where)
-    .orderBy(sql`${groupClause}${mainClause}`)
+    .orderBy(buildOrderClause(sortBy, sortOrder, pinnedFirst))
     .limit(limit)
     .offset(offset)
     .all();
 
-  const items = rows.map((note) => {
-    const noteTags_ = db
-      .select({ id: tags.id, tagType: tags.tagType, tagValue: tags.tagValue })
-      .from(noteTags)
-      .innerJoin(tags, eq(noteTags.tagId, tags.id))
-      .where(eq(noteTags.noteId, note.id))
-      .all();
-    return { ...note, tags: noteTags_ };
-  });
+  const items = rows.map((note) => attachTags(db, note));
 
   return { items, total };
 }
@@ -348,15 +364,46 @@ export function listAlarmNotes(db: OwlDatabase, _sqlite: Database.Database): Not
 
   const rows = db.select().from(notes).where(inArray(notes.id, uniqueIds)).all();
 
-  return rows.map((note) => {
-    const noteTags_ = db
-      .select({ id: tags.id, tagType: tags.tagType, tagValue: tags.tagValue })
-      .from(noteTags)
-      .innerJoin(tags, eq(noteTags.tagId, tags.id))
-      .where(eq(noteTags.noteId, note.id))
-      .all();
-    return { ...note, tags: noteTags_ };
-  });
+  return rows.map((note) => attachTags(db, note));
+}
+
+/** Drizzle column set for an `updateNote` write (content_hash derived from content; device_id falls back to the local skybridge id). */
+function buildNoteUpdateColumns(
+  input: UpdateNoteInput,
+  nowMs: number,
+  counter: number,
+  sqlite: Database.Database,
+): Record<string, unknown> {
+  const updates: Record<string, unknown> = { updatedAt: new Date(nowMs), lwwCounter: counter };
+  if (input.content !== undefined) {
+    updates.content = input.content;
+    updates.contentHash = contentHash(input.content);
+  }
+  if (input.folderId !== undefined) {
+    updates.folderId = input.folderId;
+  }
+  updates.deviceId =
+    input.deviceId !== undefined ? input.deviceId : (readSkybridgeDeviceId(sqlite) ?? null);
+  return updates;
+}
+
+/**
+ * Sparse post-state sync payload for `updateNote`: only the fields the caller
+ * asked to write (plus updated_at_ms). content_hash + device_id are derived
+ * server-side from (content, sync_changes.device_id), so they're omitted.
+ */
+function buildNoteUpdatePayload(
+  input: UpdateNoteInput,
+  nowMs: number,
+  counter: number,
+): Record<string, unknown> {
+  const payload: Record<string, unknown> = { updated_at_ms: nowMs, lww_counter: counter };
+  if (input.content !== undefined) payload.content = input.content;
+  if (input.folderId !== undefined) payload.folder_id = input.folderId;
+  if (input.tags !== undefined) {
+    payload.tags = input.tags.map((t) => ({ tag_type: t.tagType, tag_value: t.tagValue }));
+  }
+  return payload;
 }
 
 export function updateNote(
@@ -379,19 +426,10 @@ export function updateNote(
 
     // W3: server-normalized HLC stamp; lww_counter bumps within the same ms.
     const { ms: nowMs, counter } = serverNormalizedStamp(sqlite);
-    const updates: Record<string, unknown> = { updatedAt: new Date(nowMs), lwwCounter: counter };
-
-    if (input.content !== undefined) {
-      updates.content = input.content;
-      updates.contentHash = contentHash(input.content);
-    }
-    if (input.folderId !== undefined) {
-      updates.folderId = input.folderId;
-    }
-    updates.deviceId =
-      input.deviceId !== undefined ? input.deviceId : (readSkybridgeDeviceId(sqlite) ?? null);
-
-    db.update(notes).set(updates).where(eq(notes.id, id)).run();
+    db.update(notes)
+      .set(buildNoteUpdateColumns(input, nowMs, counter, sqlite))
+      .where(eq(notes.id, id))
+      .run();
 
     if (input.tags !== undefined) {
       syncNoteTags(db, sqlite, id, input.tags);
@@ -402,19 +440,11 @@ export function updateNote(
       syncReminders(db, sqlite, id);
     }
 
-    // Sparse post-state. content_hash + device_id derived server-side from
-    // (content, sync_changes.device_id), so omit from payload.
-    const payload: Record<string, unknown> = { updated_at_ms: nowMs, lww_counter: counter };
-    if (input.content !== undefined) payload.content = input.content;
-    if (input.folderId !== undefined) payload.folder_id = input.folderId;
-    if (input.tags !== undefined) {
-      payload.tags = input.tags.map((t) => ({ tag_type: t.tagType, tag_value: t.tagValue }));
-    }
     emitSyncChange(sqlite, {
       entityType: 'note',
       entityId: id,
       op: 'update',
-      payload,
+      payload: buildNoteUpdatePayload(input, nowMs, counter),
       nowMs,
     });
 

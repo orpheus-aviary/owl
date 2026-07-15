@@ -138,6 +138,39 @@ function assertNoCycle(db: OwlDatabase, id: string, newParentId: string): void {
   }
 }
 
+/** Drizzle column set for an `updateFolder` write (device_id falls back to the local skybridge id). */
+function buildFolderUpdateColumns(
+  input: UpdateFolderInput,
+  nowMs: number,
+  counter: number,
+  sqlite: Database.Database,
+): Record<string, unknown> {
+  const updates: Record<string, unknown> = { updatedAt: new Date(nowMs), lwwCounter: counter };
+  if (input.name !== undefined) updates.name = input.name;
+  if (input.parentId !== undefined) updates.parentId = input.parentId;
+  if (input.position !== undefined) updates.position = input.position;
+  updates.deviceId =
+    input.deviceId !== undefined ? input.deviceId : (readSkybridgeDeviceId(sqlite) ?? null);
+  return updates;
+}
+
+/**
+ * Sparse post-state sync payload: only the columns the caller asked to write
+ * (plus updated_at_ms which always changes). device_id and content-style hashes
+ * are derived server-side from sync_changes.device_id.
+ */
+function buildFolderUpdatePayload(
+  input: UpdateFolderInput,
+  nowMs: number,
+  counter: number,
+): Record<string, unknown> {
+  const payload: Record<string, unknown> = { updated_at_ms: nowMs, lww_counter: counter };
+  if (input.name !== undefined) payload.name = input.name;
+  if (input.parentId !== undefined) payload.parent_id = input.parentId;
+  if (input.position !== undefined) payload.position = input.position;
+  return payload;
+}
+
 export function updateFolder(
   db: OwlDatabase,
   sqlite: Database.Database,
@@ -154,28 +187,17 @@ export function updateFolder(
       }
 
       const { ms: nowMs, counter } = serverNormalizedStamp(sqlite);
-      const updates: Record<string, unknown> = { updatedAt: new Date(nowMs), lwwCounter: counter };
-      if (input.name !== undefined) updates.name = input.name;
-      if (input.parentId !== undefined) updates.parentId = input.parentId;
-      if (input.position !== undefined) updates.position = input.position;
-      updates.deviceId =
-        input.deviceId !== undefined ? input.deviceId : (readSkybridgeDeviceId(sqlite) ?? null);
 
-      db.update(folders).set(updates).where(eq(folders.id, id)).run();
-
-      // Sparse post-state payload: only the columns the caller asked to write
-      // (plus updated_at_ms which always changes). device_id and content-style
-      // hashes are derived server-side from sync_changes.device_id.
-      const payload: Record<string, unknown> = { updated_at_ms: nowMs, lww_counter: counter };
-      if (input.name !== undefined) payload.name = input.name;
-      if (input.parentId !== undefined) payload.parent_id = input.parentId;
-      if (input.position !== undefined) payload.position = input.position;
+      db.update(folders)
+        .set(buildFolderUpdateColumns(input, nowMs, counter, sqlite))
+        .where(eq(folders.id, id))
+        .run();
 
       emitSyncChange(sqlite, {
         entityType: 'folder',
         entityId: id,
         op: 'update',
-        payload,
+        payload: buildFolderUpdatePayload(input, nowMs, counter),
         nowMs,
       });
 
