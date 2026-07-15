@@ -62,6 +62,12 @@ export interface PlatformAdapter {
   readonly remoteClient: boolean;
   /** Daemon HTTP base. Electron: per-profile injected port; web: `''` (same-origin). */
   daemonBaseUrl(): string;
+  /**
+   * Phase A A6 — the local daemon's current CSRF token (Electron host only),
+   * re-read per call so a daemon restart (token rotation) is picked up. Absent
+   * on the web host, which authenticates with a Layer-2 session bearer instead.
+   */
+  getDaemonToken?(): string | null;
   /** Sync surface — required session ops + optional Electron-local profile mgmt. */
   readonly sync: SyncCapability;
   /** Electron-only app-shell capabilities; `undefined` in the web host. */

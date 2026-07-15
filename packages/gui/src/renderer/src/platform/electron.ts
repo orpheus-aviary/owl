@@ -20,6 +20,9 @@ export function createElectronAdapter(): PlatformAdapter {
     // conflict_record covers cross-device divergence on the desktop.
     remoteClient: false,
     daemonBaseUrl: () => window.owlAPI.daemonUrl,
+    // A6 — read fresh each call (preload re-reads the 0600 file), so a daemon
+    // restart's rotated token is picked up on the next REST/SSE connect.
+    getDaemonToken: () => window.owlAPI.getDaemonToken(),
     get sync() {
       return window.owlAPI.sync;
     },
