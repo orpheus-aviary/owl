@@ -14,6 +14,14 @@ lint-fix:
 typecheck:
     pnpm run typecheck
 
+# Phase B / B1 — apps/web is a bundler-mode (noEmit) Vite project that reuses the
+# gui renderer via a `@` source alias, so it can't join the root `tsc -b` project
+# graph (composite would demand it own those files under one rootDir). Typecheck
+# it standalone instead so its own glue (main.tsx / web-session wiring) is gated.
+[group('lint')]
+typecheck-web:
+    pnpm --filter @owl/web run typecheck
+
 [group('lint')]
 core-convergence:
     bash scripts/check-core-convergence.sh
@@ -73,7 +81,7 @@ cloud-creds-no-disk:
     bash scripts/check-cloud-creds-no-disk.sh
 
 [group('lint')]
-check: lint typecheck core-convergence token-not-templated daemon-no-electron-storage no-prod-env-token session-body-not-logged daemon-no-toml-write renderer-owlapi-confined shared-no-node-electron cloud-creds-no-disk
+check: lint typecheck typecheck-web core-convergence token-not-templated daemon-no-electron-storage no-prod-env-token session-body-not-logged daemon-no-toml-write renderer-owlapi-confined shared-no-node-electron cloud-creds-no-disk
     @echo "All checks passed."
 
 # ─── Test ───────────────────────────────────────────────
