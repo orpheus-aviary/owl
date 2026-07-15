@@ -199,3 +199,33 @@
 - 当前状态：`PROCESS.md`
 - A6（刚完成，本轮不碰其 token gate 行为）：`docs/plans/2026-07-15-a6-local-csrf.md`
 - owl-server 打包（bucket 1 core→shared 新边需核实其 externals）：`docs/plans/2026-07-04-owl-server-packaging.md`
+
+---
+
+## 9. 实施记录（✅ 完成并 push origin/main 2026-07-16，13 commit `95c21bb`…`cac23dd`）
+
+全程 `just check`（9 守卫 + `tsc -b` + biome）+ 相关测试逐步全绿；GUI 手测通过；**行为保持型，无回归**。最终：core **532** / cli **139** / daemon **420** / gui **455** / gated e2e 0-fail。
+
+| commit | 内容 |
+|---|---|
+| `95c21bb` | refactor(config): dedup config types into owl-shared |
+| `55187ac` | refactor(core): reduce complexity in notes/tags/folders |
+| `200be86` | refactor(daemon): extract guard/boot/route/auth-hook helpers |
+| `4b366f8` | refactor(gui): reduce complexity in ai cards + lib utils |
+| `44f946e` | refactor(cli): simplify listNotes query + migrate preflight |
+| `806a03b` | refactor(core): split migrateLegacyDb into phase helpers（peel，51）|
+| `87d52eb` | refactor(cli): split runEdit into mode handlers（peel，55）|
+| `e9b0991` | refactor(gui): reduce useEditorShortcuts keydown complexity |
+| `b73b2b8` | refactor(gui): reduce TagBar complexity（peel 3 条）|
+| `3f46e9b` | build(web): add apps/web standalone typecheck to just check（B1 Option B）|
+| `865e01d` | refactor(editor): extract editor-store pure helpers to editor-tabs |
+| `9d6e9c7` | refactor(skybridge): split sync engine into lww + apply modules |
+| `cac23dd` | refactor(skybridge): split sync-auth.ts into 4 modules |
+
+**与原计划的差异 / 关键发现**
+- **复杂度实测 22 条（非旧记 20/5）**；全部消解为 0。
+- **大文件实际拆法**（比 mini-plan 更简）：`engine` 只拆 2 文件（`apply.ts`+`lww.ts`，无 `cursor.ts`/`types.ts`——barreled 类型留 engine，apply→engine 用 **type-only import** 免 runtime 环）；`editor-store` 只抽纯 helper 到 `editor-tabs.ts`（零闭包搬家）；`sync-auth` 按 4-sibling 拆（唯一动到有状态 cluster=renewal 单例，`getCurrentExpiresAt()` getter，靠 `sync-auth.test` 1087 行的 callLog/32bit/prior-timer 钉死）。
+- **B1 前提被推翻**：无「双 @types/react」——真为 composite/rootDir 结构墙，用 Option B 独立 typecheck。
+- **顺序实际**：bucket 1 → 2（含 peel）→ 4 → 3（editor-store → engine → sync-auth，低风险先行）。
+- **⚠️ 踩坑（未修，留 chore）**：`justfile` `ensure-node-abi` 的 `node_modules/.pnpm/better-sqlite3@*/…` glob 在 `node-linker=hoisted` 布局下失配（better-sqlite3 是顶层实目录）→ ABI 自动 rebuild 失败；本轮手动 `(cd node_modules/better-sqlite3 && pnpm run build-release)` 绕过。`just dev`(Electron ABI) ↔ daemon(Node ABI) 切换会触发。
+- **已 push origin/main**（`9d6e9c7..cac23dd`）；PROCESS.md/road-doc 已同步标完成。
