@@ -93,6 +93,25 @@ function toNote(w: WireNote): CliNote {
   };
 }
 
+/** Map a ListNotesQuery to the daemon's snake_case `/notes` query params. */
+function buildListQuery(query: ListNotesQuery): URLSearchParams {
+  const qs = new URLSearchParams();
+  if (query.q !== undefined) qs.set('q', query.q);
+  if (query.page !== undefined) qs.set('page', String(query.page));
+  if (query.limit !== undefined) qs.set('limit', String(query.limit));
+  if (query.folderId !== undefined) {
+    qs.set('folder_id', query.folderId === null ? 'null' : query.folderId);
+  }
+  if (query.includeDescendants !== undefined) {
+    qs.set('include_descendants', String(query.includeDescendants));
+  }
+  if (query.tags?.length) qs.set('tags', query.tags.join(','));
+  if (query.trashLevel !== undefined) qs.set('trash_level', String(query.trashLevel));
+  if (query.sortBy) qs.set('sort_by', query.sortBy);
+  if (query.sortOrder) qs.set('sort_order', query.sortOrder);
+  return qs;
+}
+
 // ─── Backend impl ────────────────────────────────────────
 
 export function createHttpBackend(opts: HttpBackendOptions): OwlBackend {
@@ -135,20 +154,7 @@ export function createHttpBackend(opts: HttpBackendOptions): OwlBackend {
     mode: 'http',
 
     async listNotes(query: ListNotesQuery): Promise<NoteListResult> {
-      const qs = new URLSearchParams();
-      if (query.q !== undefined) qs.set('q', query.q);
-      if (query.page !== undefined) qs.set('page', String(query.page));
-      if (query.limit !== undefined) qs.set('limit', String(query.limit));
-      if (query.folderId !== undefined) {
-        qs.set('folder_id', query.folderId === null ? 'null' : query.folderId);
-      }
-      if (query.includeDescendants !== undefined) {
-        qs.set('include_descendants', String(query.includeDescendants));
-      }
-      if (query.tags?.length) qs.set('tags', query.tags.join(','));
-      if (query.trashLevel !== undefined) qs.set('trash_level', String(query.trashLevel));
-      if (query.sortBy) qs.set('sort_by', query.sortBy);
-      if (query.sortOrder) qs.set('sort_order', query.sortOrder);
+      const qs = buildListQuery(query);
       const suffix = qs.toString() ? `?${qs.toString()}` : '';
       const { status, envelope } = await request<WireNote[]>('GET', `/notes${suffix}`);
       const items = failOrThrow(status, envelope).map(toNote);

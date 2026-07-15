@@ -50,31 +50,30 @@ async function confirmPrompt(dbPath: string, backupHint: string): Promise<boolea
   }
 }
 
-export async function runMigrate(flags: MigrateFlags, deps: MigrateDeps): Promise<void> {
-  const start = Date.now();
-  const probe = probeStartupState(deps.dbPath);
-
+/**
+ * Preflight the db probe. Throws on a missing db or a too-new version; returns
+ * `true` when the db is already at the latest version (caller writes the no-op
+ * result + returns), `false` when a migration is needed.
+ */
+function assertMigratable(probe: ReturnType<typeof probeStartupState>, dbPath: string): boolean {
   if (probe.kind === 'not-found') {
-    throw new CliError('DATA_DIR_MISSING', `db file not found: ${deps.dbPath}`, {
-      db_path: deps.dbPath,
-    });
+    throw new CliError('DATA_DIR_MISSING', `db file not found: ${dbPath}`, { db_path: dbPath });
   }
   if (probe.version === LATEST_KNOWN_VERSION && !probe.schemaEmpty) {
-    writeResult(
-      { success: true, already_migrated: true },
-      { pretty: flags.pretty, streams: deps.streams },
-    );
-    return;
+    return true;
   }
   if (probe.version > LATEST_KNOWN_VERSION) {
     throw new CliError(
       'INCOMPATIBLE_DB',
-      `db ${deps.dbPath} is version ${probe.version} but this CLI only supports up to ${LATEST_KNOWN_VERSION}`,
-      { db_path: deps.dbPath, user_version: probe.version },
+      `db ${dbPath} is version ${probe.version} but this CLI only supports up to ${LATEST_KNOWN_VERSION}`,
+      { db_path: dbPath, user_version: probe.version },
     );
   }
+  return false;
+}
 
-  // §4.5 three-layer daemon lock
+/** §4.5 three-layer daemon lock — refuse to migrate while the daemon is alive (HTTP /status or a live pid). */
+async function assertNoLiveDaemon(deps: MigrateDeps): Promise<void> {
   if (await detectDaemon(deps.daemonPort)) {
     throw new CliError('MIGRATION_BUSY', 'daemon HTTP /status is alive; stop it before migrating', {
       reason: 'daemon-http-alive',
@@ -86,19 +85,37 @@ export async function runMigrate(flags: MigrateFlags, deps: MigrateDeps): Promis
       pid_path: deps.pidPath,
     });
   }
+}
 
+/** TTY confirmation gate: require `--yes` on a non-TTY, else prompt; throws USER_CANCELLED on "no". */
+async function confirmMigration(flags: MigrateFlags, deps: MigrateDeps): Promise<void> {
+  if (flags.yes) return;
   const isTty = deps.isTty ?? Boolean(process.stdin.isTTY);
-  if (!flags.yes) {
-    if (!isTty) {
-      throw new CliError('USAGE_ERROR', '--yes is required when stdin is not a TTY');
-    }
-    const proceed = await (deps.readInput
-      ? deps.readInput().then((v) => /^(y|yes)$/i.test(v.trim()))
-      : confirmPrompt(deps.dbPath, `${deps.dbPath}.v0.2-backup-<ts>`));
-    if (!proceed) {
-      throw new CliError('USER_CANCELLED', 'migration cancelled by user');
-    }
+  if (!isTty) {
+    throw new CliError('USAGE_ERROR', '--yes is required when stdin is not a TTY');
   }
+  const proceed = await (deps.readInput
+    ? deps.readInput().then((v) => /^(y|yes)$/i.test(v.trim()))
+    : confirmPrompt(deps.dbPath, `${deps.dbPath}.v0.2-backup-<ts>`));
+  if (!proceed) {
+    throw new CliError('USER_CANCELLED', 'migration cancelled by user');
+  }
+}
+
+export async function runMigrate(flags: MigrateFlags, deps: MigrateDeps): Promise<void> {
+  const start = Date.now();
+  const probe = probeStartupState(deps.dbPath);
+
+  if (assertMigratable(probe, deps.dbPath)) {
+    writeResult(
+      { success: true, already_migrated: true },
+      { pretty: flags.pretty, streams: deps.streams },
+    );
+    return;
+  }
+
+  await assertNoLiveDaemon(deps);
+  await confirmMigration(flags, deps);
 
   try {
     const result = await migrateLegacyDb(deps.dbPath, {
