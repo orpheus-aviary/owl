@@ -1,7 +1,6 @@
-import { spawn } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { type ChildProcess, spawn } from 'node:child_process';
 import { createRequire } from 'node:module';
-import { paths } from '@owl/core';
+import { LOCAL_AUTH_VERSION } from '@orpheus-aviary/owl-shared';
 
 /**
  * Daemon port resolution: `OWL_DAEMON_PORT` env override → 47010 default.
@@ -29,18 +28,64 @@ const DAEMON_URL = `http://127.0.0.1:${DAEMON_PORT}`;
 // ESM context — recreate CommonJS-style resolver bound to this module.
 const esmRequire = createRequire(import.meta.url);
 
-// True only when THIS GUI process successfully spawned the daemon AND saw it
-// respond on /status. Determines whether Cmd+Q stops the daemon.
-let daemonStartedByGui = false;
+/**
+ * The pid of the daemon THIS GUI spawned AND verified as its own via
+ * `/status.pid` (A6). Null when we reused an external daemon or never spawned
+ * one successfully. It is the ONLY pid `stopDaemonGracefully` ever signals — the
+ * pid FILE is not trusted for identity (it can be stale / reused / another GUI's).
+ */
+let ownedDaemonPid: number | null = null;
 
-/** Check if daemon is running by hitting /status endpoint. */
-export async function checkDaemon(): Promise<boolean> {
+/** Parsed `GET /status` snapshot (A6 — carries mode + local capability). */
+export interface DaemonStatus {
+  mode?: 'local' | 'cloud';
+  /** Present only for a local daemon (used to prove identity before we signal it). */
+  pid?: number;
+  /** Present only for a local daemon; absent on a pre-A6 daemon. */
+  localAuthVersion?: number;
+}
+
+export type DaemonReadiness =
+  | { state: 'ready' }
+  /** Reachable, but not a compatible A6 local daemon (stale pre-A6 / wrong mode). */
+  | { state: 'incompatible'; pid?: number }
+  /** Could not spawn a daemon, or it never became reachable. */
+  | { state: 'failed' };
+
+/** Probe `GET /status`; returns the parsed snapshot or null if unreachable. */
+export async function probeDaemonStatus(): Promise<DaemonStatus | null> {
   try {
     const res = await fetch(`${DAEMON_URL}/status`);
-    return res.ok;
+    if (!res.ok) return null;
+    const body = (await res.json()) as {
+      data?: { mode?: 'local' | 'cloud'; pid?: number; local_auth_version?: number };
+    };
+    const d = body.data ?? {};
+    return { mode: d.mode, pid: d.pid, localAuthVersion: d.local_auth_version };
   } catch {
-    return false;
+    return null;
   }
+}
+
+/** Simple reachability probe (kept for callers that only need up/down). */
+export async function checkDaemon(): Promise<boolean> {
+  return (await probeDaemonStatus()) !== null;
+}
+
+/**
+ * True when a reachable daemon is a compatible A6 local daemon — local mode and
+ * advertising a local_auth_version at least ours (so it enforces the token
+ * gate). A pre-A6 daemon lacks the field → incompatible.
+ */
+export function isCompatibleLocalDaemon(status: DaemonStatus): boolean {
+  return status.mode === 'local' && (status.localAuthVersion ?? 0) >= LOCAL_AUTH_VERSION;
+}
+
+/** Pure: map a probe snapshot to readiness (ownership handled by the caller). */
+export function classifyReadiness(status: DaemonStatus): DaemonReadiness {
+  return isCompatibleLocalDaemon(status)
+    ? { state: 'ready' }
+    : { state: 'incompatible', pid: status.pid };
 }
 
 /**
@@ -53,8 +98,8 @@ export async function checkDaemon(): Promise<boolean> {
  * What we deliberately do NOT do here:
  *   - inject `OWL_DAEMON_TOKEN`, `OWL_DAEMON_DEV_TOKEN`, or any other
  *     token-bearing env. ChildProcess env is copied at spawn and cannot
- *     be reliably revoked — the only token path is the post-listen
- *     HTTP `/sync/session` injection from `sync-auth.ts`.
+ *     be reliably revoked — the daemon publishes its A6 local token to a
+ *     0600 file after it starts listening instead.
  *
  * Exported for direct unit testing (the rest of `spawnDaemon` touches
  * `process.execPath` + the actual `spawn` call, which would force the
@@ -71,16 +116,16 @@ export function buildSpawnEnv(parentEnv: NodeJS.ProcessEnv, parentPid: number): 
 /**
  * Spawn daemon process using Electron-as-Node (ELECTRON_RUN_AS_NODE=1).
  * Packaged app doesn't have a standalone `node` binary; run the Electron
- * binary in node mode instead. Inherits parent env so HOME/PATH/proxy/API
- * keys reach the child — see buildSpawnEnv for the token-related caveats.
+ * binary in node mode instead. Returns the child so the caller can verify
+ * `/status.pid === child.pid` before claiming ownership, or null on failure.
  */
-function spawnDaemon(): boolean {
+function spawnDaemon(): ChildProcess | null {
   let cliPath: string;
   try {
     cliPath = esmRequire.resolve('@owl/daemon/cli');
   } catch (err) {
     console.error('Failed to resolve @owl/daemon/cli:', err);
-    return false;
+    return null;
   }
 
   try {
@@ -90,49 +135,56 @@ function spawnDaemon(): boolean {
       stdio: 'ignore',
     });
     child.unref();
-    return true;
+    return child;
   } catch (err) {
     console.error('Failed to spawn daemon process:', err);
-    return false;
+    return null;
   }
 }
 
-/** Poll /status until daemon responds 200 or timeout. */
-async function waitForDaemonReady({ timeoutMs }: { timeoutMs: number }): Promise<boolean> {
+/** Poll /status until it responds or timeout; returns the snapshot or null. */
+async function waitForStatus({ timeoutMs }: { timeoutMs: number }): Promise<DaemonStatus | null> {
   const deadline = Date.now() + timeoutMs;
-  const interval = 500;
   while (Date.now() < deadline) {
-    if (await checkDaemon()) return true;
-    await new Promise((r) => setTimeout(r, interval));
+    const status = await probeDaemonStatus();
+    if (status) return status;
+    await sleep(500);
   }
-  return false;
+  return null;
 }
 
 /**
- * Ensure a daemon is reachable. If already running, mark as NOT owned by
- * this GUI and return true. Otherwise spawn + wait, returning true iff the
- * spawned daemon became reachable.
+ * Ensure a compatible local daemon is reachable, spawning one if needed.
  *
- * The boolean is consumed by the MigrationDialog flow: a false return after
- * migration success means we should NOT destroy the migration window — the
- * renderer needs to show the daemon-failed banner instead.
+ * Returns a tri-state (A6):
+ *   - `ready`        — a compatible A6 local daemon is up (reused or freshly spawned).
+ *   - `incompatible` — a daemon answers but isn't a compatible local daemon
+ *                      (e.g. a stale pre-A6 daemon still holding the port after an
+ *                      upgrade). `pid` is set iff it advertised one (provable identity).
+ *   - `failed`       — spawn failed, or the spawned daemon never became reachable.
+ *
+ * We only claim ownership (→ Cmd+Q stops it) when the daemon that answers is the
+ * very child we spawned, proven by `/status.pid === child.pid`. An external
+ * daemon that won the port while our child died is never owned or signalled.
  */
-export async function ensureDaemonRunning(): Promise<boolean> {
-  if (await checkDaemon()) {
-    daemonStartedByGui = false;
-    return true;
-  }
-  const spawned = spawnDaemon();
-  if (!spawned) {
-    daemonStartedByGui = false;
-    return false;
-  }
-  const ready = await waitForDaemonReady({ timeoutMs: 10_000 });
-  daemonStartedByGui = ready;
-  if (!ready) {
+export async function ensureDaemonRunning(): Promise<DaemonReadiness> {
+  const existing = await probeDaemonStatus();
+  if (existing) return classifyReadiness(existing); // reused — never owned by us
+
+  const child = spawnDaemon();
+  if (!child) return { state: 'failed' };
+
+  const status = await waitForStatus({ timeoutMs: 10_000 });
+  if (!status) {
     console.error('Daemon spawn returned but /status never responded');
+    return { state: 'failed' };
   }
-  return ready;
+
+  const readiness = classifyReadiness(status);
+  if (readiness.state === 'ready' && child.pid !== undefined && status.pid === child.pid) {
+    ownedDaemonPid = status.pid;
+  }
+  return readiness;
 }
 
 /** Get the daemon API base URL. */
@@ -149,44 +201,41 @@ export function getDaemonPort(): number {
 }
 
 /**
- * Stop the daemon IF this GUI owns it. SIGTERM → poll → 3s timeout → SIGKILL.
- * Never touches a daemon we didn't start (external daemon / failed spawn).
+ * Stop the daemon IF this GUI owns it (spawned + `/status.pid`-verified).
+ * Never touches a daemon we didn't start or couldn't prove is ours.
  */
 export async function stopDaemonGracefully(): Promise<void> {
-  if (!daemonStartedByGui) return;
+  if (ownedDaemonPid === null) return;
+  await stopPid(ownedDaemonPid);
+  ownedDaemonPid = null;
+}
 
-  const pid = readPid();
-  if (pid === null) return;
+/**
+ * Stop a specific daemon pid (the `/status`-provable incompatible daemon), on
+ * explicit user confirmation only. Returns true once the process is gone.
+ */
+export async function stopDaemonByPid(pid: number): Promise<boolean> {
+  await stopPid(pid);
+  return !processAlive(pid);
+}
 
+/** SIGTERM → poll → 3s timeout → SIGKILL a pid. */
+async function stopPid(pid: number): Promise<void> {
   try {
     process.kill(pid, 'SIGTERM');
   } catch {
     // Process already gone — nothing to stop.
     return;
   }
-
   const deadline = Date.now() + 3000;
   while (Date.now() < deadline) {
     if (!processAlive(pid)) return;
-    await new Promise((r) => setTimeout(r, 100));
+    await sleep(100);
   }
-
   try {
     process.kill(pid, 'SIGKILL');
   } catch {
     // Process died between the timeout and the kill — fine.
-  }
-}
-
-function readPid(): number | null {
-  const path = paths.pidPath();
-  if (!existsSync(path)) return null;
-  try {
-    const raw = readFileSync(path, 'utf8').trim();
-    const pid = Number.parseInt(raw, 10);
-    return Number.isFinite(pid) && pid > 0 ? pid : null;
-  } catch {
-    return null;
   }
 }
 
@@ -197,4 +246,8 @@ function processAlive(pid: number): boolean {
   } catch {
     return false;
   }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
 }

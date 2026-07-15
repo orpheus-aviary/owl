@@ -95,8 +95,8 @@ export function registerMigrationIpc(
   });
 
   ipcMain.on('migration:done', async () => {
-    const daemonOk = await ensureDaemonRunning();
-    if (!daemonOk) {
+    const readiness = await ensureDaemonRunning();
+    if (readiness.state !== 'ready') {
       if (!win.isDestroyed()) {
         win.webContents.send('migration:daemon-failed');
       }

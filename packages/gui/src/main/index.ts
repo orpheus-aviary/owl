@@ -1,8 +1,14 @@
 import { loadConfig, resolveActiveProfileDbPath } from '@owl/core';
-import { BrowserWindow, app, ipcMain, powerMonitor } from 'electron';
+import { BrowserWindow, app, dialog, ipcMain, powerMonitor } from 'electron';
 import { detectCli } from './cli-detect.js';
 import { getLocalTokenPath } from './daemon-auth.js';
-import { ensureDaemonRunning, getDaemonPort, stopDaemonGracefully } from './daemon.js';
+import {
+  type DaemonReadiness,
+  ensureDaemonRunning,
+  getDaemonPort,
+  stopDaemonByPid,
+  stopDaemonGracefully,
+} from './daemon.js';
 import { setGlobalShortcut, unregisterGlobalShortcut } from './global-shortcut.js';
 import { registerMigrationIpc } from './migration-ipc.js';
 import type { StartupMode } from './migration-precheck.js';
@@ -76,6 +82,88 @@ function askRendererAboutUnsaved(): Promise<boolean> {
   });
 }
 
+/**
+ * A6 — ensure a compatible local daemon before the main window opens. Returns
+ * true only when one is ready. On `failed`/`incompatible`/user-cancel it shows a
+ * native dialog (window not created yet) and quits, returning false so the
+ * caller does NOT open a main window that would only 401 every request.
+ */
+async function ensureNormalDaemon(): Promise<boolean> {
+  const readiness = await ensureDaemonRunning();
+  if (readiness.state === 'ready') return true;
+  if (readiness.state === 'failed') {
+    dialog.showMessageBoxSync({
+      type: 'error',
+      title: '无法启动后台服务',
+      message: '无法启动 Owl 后台服务。',
+      detail: '请稍后重试；如果问题持续，请重新安装或查看日志。',
+      buttons: ['退出'],
+    });
+    app.quit();
+    return false;
+  }
+  return handleIncompatibleDaemon(readiness);
+}
+
+async function handleIncompatibleDaemon(
+  readiness: Extract<DaemonReadiness, { state: 'incompatible' }>,
+): Promise<boolean> {
+  // No pid in /status → a pre-A6 daemon we cannot prove the identity of, so we
+  // must not signal any pid. Guide the user to stop it themselves.
+  if (readiness.pid === undefined) {
+    dialog.showMessageBoxSync({
+      type: 'warning',
+      title: '检测到不兼容的后台服务',
+      message: '检测到一个旧版本的 Owl 后台服务正在运行。',
+      detail:
+        '请完全退出旧版 Owl（含菜单栏 / Dock 图标）；如果它仍在运行，' +
+        '在「活动监视器」中结束名为 Owl 的后台进程，然后重新启动本应用。',
+      buttons: ['退出'],
+    });
+    app.quit();
+    return false;
+  }
+
+  const choice = dialog.showMessageBoxSync({
+    type: 'warning',
+    title: '检测到不兼容的后台服务',
+    message: '检测到一个不兼容的 Owl 后台服务正在运行。',
+    detail: '是否停止它并继续启动？正在进行的操作可能会中断。',
+    buttons: ['停止并继续', '取消'],
+    defaultId: 0,
+    cancelId: 1,
+  });
+  if (choice !== 0) {
+    app.quit();
+    return false;
+  }
+
+  const stopped = await stopDaemonByPid(readiness.pid);
+  if (!stopped) {
+    dialog.showMessageBoxSync({
+      type: 'error',
+      title: '无法停止后台服务',
+      message: '无法停止旧的 Owl 后台服务。',
+      detail: '请在「活动监视器」中手动结束它，然后重新启动本应用。',
+      buttons: ['退出'],
+    });
+    app.quit();
+    return false;
+  }
+
+  const retry = await ensureDaemonRunning();
+  if (retry.state === 'ready') return true;
+  dialog.showMessageBoxSync({
+    type: 'error',
+    title: '无法启动后台服务',
+    message: '停止旧服务后仍无法启动新的后台服务。',
+    detail: '请稍后重试或查看日志。',
+    buttons: ['退出'],
+  });
+  app.quit();
+  return false;
+}
+
 app.whenReady().then(async () => {
   // A losing second instance has already been told to quit — do no boot work.
   if (!isPrimaryInstance) return;
@@ -119,18 +207,18 @@ app.whenReady().then(async () => {
   const daemonTokenPath = getLocalTokenPath();
 
   if (precheck.mode === 'normal') {
-    const daemonReady = await ensureDaemonRunning();
-    // P5-d Phase 7 — once daemon is reachable, restore the encrypted
-    // skybridge session into daemon's ctx via POST /sync/session. Best-
-    // effort: a missing toml / locked keychain / partial config returns
-    // null silently; the user sees the unauthenticated state and can
-    // log in from Settings. Never block GUI startup on this.
-    if (daemonReady) {
-      try {
-        await restoreSessionOnStartup();
-      } catch (err) {
-        console.warn('skybridge session restore failed (continuing):', err);
-      }
+    // A6 — tri-state daemon check + native dialogs BEFORE any window. A false
+    // return means a dialog was shown and the app is quitting; do not open a
+    // main window that would only 401 every request.
+    if (!(await ensureNormalDaemon())) return;
+    // P5-d Phase 7 — daemon is ready; restore the encrypted skybridge session
+    // into daemon's ctx via POST /sync/session. Best-effort: a missing toml /
+    // locked keychain / partial config returns null silently; the user sees the
+    // unauthenticated state and can log in from Settings. Never block on this.
+    try {
+      await restoreSessionOnStartup();
+    } catch (err) {
+      console.warn('skybridge session restore failed (continuing):', err);
     }
     createWindow({ daemonPort, daemonTokenPath, onClose: onWindowClose });
   } else {

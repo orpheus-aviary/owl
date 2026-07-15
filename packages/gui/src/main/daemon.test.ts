@@ -12,7 +12,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { buildSpawnEnv } from './daemon.js';
+import { buildSpawnEnv, classifyReadiness, isCompatibleLocalDaemon } from './daemon.js';
 
 describe('buildSpawnEnv (P5-d Phase 7)', () => {
   it('attaches OWL_GUI_PARENT_PID as a decimal string', () => {
@@ -59,5 +59,41 @@ describe('buildSpawnEnv (P5-d Phase 7)', () => {
     );
     expect(env.OWL_DAEMON_DEV_TOKEN).toBe('tk-from-shell');
     expect(env.OWL_ALLOW_INSECURE_DEV_TOKEN).toBe('1');
+  });
+});
+
+describe('isCompatibleLocalDaemon (A6)', () => {
+  it('true only for a local daemon advertising local_auth_version >= 1', () => {
+    expect(isCompatibleLocalDaemon({ mode: 'local', localAuthVersion: 1 })).toBe(true);
+    expect(isCompatibleLocalDaemon({ mode: 'local', localAuthVersion: 2 })).toBe(true);
+  });
+
+  it('false for a pre-A6 local daemon (no local_auth_version)', () => {
+    expect(isCompatibleLocalDaemon({ mode: 'local' })).toBe(false);
+    expect(isCompatibleLocalDaemon({ mode: 'local', localAuthVersion: 0 })).toBe(false);
+  });
+
+  it('false for a cloud daemon', () => {
+    expect(isCompatibleLocalDaemon({ mode: 'cloud' })).toBe(false);
+    expect(isCompatibleLocalDaemon({})).toBe(false);
+  });
+});
+
+describe('classifyReadiness (A6)', () => {
+  it('ready for a compatible local daemon', () => {
+    expect(classifyReadiness({ mode: 'local', pid: 42, localAuthVersion: 1 })).toEqual({
+      state: 'ready',
+    });
+  });
+
+  it('incompatible (carrying pid) for a pre-A6 local daemon', () => {
+    expect(classifyReadiness({ mode: 'local', pid: 42 })).toEqual({
+      state: 'incompatible',
+      pid: 42,
+    });
+  });
+
+  it('incompatible without a pid when /status omits it (old daemon)', () => {
+    expect(classifyReadiness({ mode: 'local' })).toEqual({ state: 'incompatible', pid: undefined });
   });
 });
