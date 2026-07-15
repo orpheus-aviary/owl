@@ -20,7 +20,8 @@ import { createBuiltinRegistry } from './ai/tools/index.js';
 import { clearRefreshTimer } from './cloud-login.js';
 import type { AppContext } from './context.js';
 import { EventsBus } from './events/bus.js';
-import { isDaemonRunning, readPid, removePid, writePid } from './pid.js';
+import { generateLocalToken, publishLocalToken, removeLocalTokenFile } from './local-token.js';
+import { DaemonAlreadyRunningError, acquireDaemonLock, removePid } from './pid.js';
 import { ReminderScheduler } from './scheduler.js';
 import { buildServer } from './server.js';
 import { DaemonStartupError, assertDaemonStartupSafe } from './startup-guard.js';
@@ -63,11 +64,6 @@ export interface BootOptions {
  * process stays alive via the open server socket + signal listeners.
  */
 export async function boot(options: BootOptions = {}): Promise<void> {
-  if (isDaemonRunning()) {
-    console.error(`Daemon is already running (PID: ${readPid()})`);
-    process.exit(1);
-  }
-
   // Ensure data directories exist
   const owlDir = paths.owlDir();
   if (!existsSync(owlDir)) mkdirSync(owlDir, { recursive: true });
@@ -99,10 +95,20 @@ export async function boot(options: BootOptions = {}): Promise<void> {
     throw err;
   }
 
-  // Write pid BEFORE opening the database so the migration runner's Layer 1
-  // daemon probe can see us the instant this process exists. If DB open
-  // fails, removePid() runs in the catch below.
-  writePid();
+  // Acquire the PID lock atomically (A6) BEFORE opening the database — so the
+  // migration runner's Layer-1 probe sees us the instant this process exists,
+  // and a concurrent boot can't clobber the winner's file (the old
+  // check-then-write let the loser's removePid() delete it). If DB open fails,
+  // removePid() runs in the catch below.
+  try {
+    acquireDaemonLock();
+  } catch (err) {
+    if (err instanceof DaemonAlreadyRunningError) {
+      console.error(err.message);
+      process.exit(1);
+    }
+    throw err;
+  }
 
   let db: ReturnType<typeof createDatabase>['db'];
   let sqlite: ReturnType<typeof createDatabase>['sqlite'];
@@ -147,6 +153,10 @@ export async function boot(options: BootOptions = {}): Promise<void> {
     // Stage 1.1 — web_root fallback for the packaged owl-server (undefined on
     // desktop/CLI daemons → no hosting, unchanged). Kept off `config`.
     embeddedWebRoot: options.embeddedWebRoot,
+    // A6 — local-mode CSRF token, generated in memory now (the auth gate reads
+    // it) and published to a 0600 file only after listen() succeeds. Undefined
+    // in cloud mode, which gates via Layer-2 sessions instead.
+    localToken: config.daemon.mode === 'local' ? generateLocalToken() : undefined,
     logger,
     deviceId,
     scheduler,
@@ -205,6 +215,31 @@ export async function boot(options: BootOptions = {}): Promise<void> {
       port: config.daemon.port,
     });
     logger.info({ address, pid: process.pid }, 'Daemon started');
+
+    // A6 — publish the local token now that we own the port. Synchronous, so
+    // the 0600 file is in place before the first HTTP request is served (a
+    // client that sees /status 200 can rely on the token being readable). A
+    // publish failure is fatal: without it no local client could authenticate.
+    // In cloud mode there is no local token — clear any stale file a prior local
+    // boot left, so clients never send it as a bogus bearer.
+    if (ctx.localToken) {
+      try {
+        publishLocalToken(ctx.localToken);
+      } catch (err) {
+        logger.error({ err, kind: 'local-token' }, 'failed to publish local token');
+        console.error('\n无法写入本地鉴权令牌文件，daemon 启动失败。\n');
+        removePid();
+        await server.close();
+        process.exit(1);
+      }
+    } else {
+      try {
+        removeLocalTokenFile();
+      } catch (err) {
+        logger.warn({ err, kind: 'local-token' }, 'failed to clear stale local token file');
+      }
+    }
+
     // Tell the operator whether skybridge config is present at boot — no
     // network probe, just file existence + [server].url. Sync routes are
     // always registered; an absent config just makes them fail with
