@@ -18,13 +18,13 @@ import { PreviewStore } from './ai/preview-store.js';
 import { createBuiltinRegistry } from './ai/tools/index.js';
 import { EventsBus } from './events/bus.js';
 import { ReminderScheduler } from './scheduler.js';
-import { buildServer } from './server.js';
+import { buildTestServer } from './testing/build-test-server.js';
 
 const TEST_DIR = join(tmpdir(), `owl-daemon-test-${Date.now()}`);
 const TEST_CONFIG_PATH = join(TEST_DIR, 'owl_config.toml');
 
 describe('daemon API', () => {
-  let app: ReturnType<typeof buildServer>;
+  let app: ReturnType<typeof buildTestServer>;
   let db: OwlDatabase;
   let sqlite: Database.Database;
   let scheduler: ReminderScheduler;
@@ -42,7 +42,7 @@ describe('daemon API', () => {
     const logger = createConsoleLogger('test', 'silent');
     ctxConfig = structuredClone(DEFAULT_CONFIG);
     scheduler = new ReminderScheduler(db, sqlite, ctxConfig, logger);
-    app = buildServer({
+    app = buildTestServer({
       db,
       sqlite,
       config: ctxConfig,

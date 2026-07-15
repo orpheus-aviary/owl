@@ -29,7 +29,7 @@ import { createBuiltinRegistry } from '../ai/tools/index.js';
 import type { AppContext } from '../context.js';
 import { EventsBus } from '../events/bus.js';
 import { ReminderScheduler } from '../scheduler.js';
-import { buildServer } from '../server.js';
+import { buildTestServer } from '../testing/build-test-server.js';
 import { createSwitchGate, ensureSwitchGate } from './switch-gate.js';
 
 const HEX = 'a'.repeat(32);
@@ -77,7 +77,7 @@ describe('POST /sync/switch (P5-d Phase 15)', () => {
   let nest: string;
   let priorEnv: string | undefined;
   let ctx: AppContext;
-  let app: ReturnType<typeof buildServer>;
+  let app: ReturnType<typeof buildTestServer>;
 
   before(() => {
     priorEnv = process.env.OWL_NEST_DIR;
@@ -96,7 +96,7 @@ describe('POST /sync/switch (P5-d Phase 15)', () => {
     process.env.OWL_NEST_DIR = nest;
     mkdirSync(join(nest, 'owl'), { recursive: true });
     ctx = makeCtx(paths.localProfileDbPath()); // start on local = owl/owl.db
-    app = buildServer(ctx);
+    app = buildTestServer(ctx);
     await app.ready();
   });
 

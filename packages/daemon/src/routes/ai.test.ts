@@ -17,7 +17,7 @@ import { PreviewStore } from '../ai/preview-store.js';
 import { createBuiltinRegistry } from '../ai/tools/index.js';
 import { EventsBus } from '../events/bus.js';
 import { ReminderScheduler } from '../scheduler.js';
-import { buildServer } from '../server.js';
+import { buildTestServer } from '../testing/build-test-server.js';
 
 // ─── Mock LLM ──────────────────────────────────────────────────────────
 
@@ -61,7 +61,7 @@ function parseSseEvents(raw: string): SseEvent[] {
 // ─── Test fixtures ─────────────────────────────────────────────────────
 
 describe('AI routes (P2-7d)', () => {
-  let app: ReturnType<typeof buildServer>;
+  let app: ReturnType<typeof buildTestServer>;
   let db: OwlDatabase;
   let sqlite: Database.Database;
   let scheduler: ReminderScheduler;
@@ -92,7 +92,7 @@ describe('AI routes (P2-7d)', () => {
     conversationStore = new ConversationStore(sqlite);
     previewStore = new PreviewStore();
 
-    app = buildServer({
+    app = buildTestServer({
       db,
       sqlite,
       config,

@@ -25,10 +25,10 @@ import { createBuiltinRegistry } from '../ai/tools/index.js';
 import { EventsBus } from '../events/bus.js';
 import type { OwlEvent } from '../events/types.js';
 import { ReminderScheduler } from '../scheduler.js';
-import { buildServer } from '../server.js';
+import { buildTestServer } from '../testing/build-test-server.js';
 
 describe('conflicts routes (P5-c Step 13)', () => {
-  let app: ReturnType<typeof buildServer>;
+  let app: ReturnType<typeof buildTestServer>;
   let db: OwlDatabase;
   let sqlite: Database.Database;
   let scheduler: ReminderScheduler;
@@ -49,7 +49,7 @@ describe('conflicts routes (P5-c Step 13)', () => {
       captured.push(event);
     });
 
-    app = buildServer({
+    app = buildTestServer({
       db,
       sqlite,
       config,

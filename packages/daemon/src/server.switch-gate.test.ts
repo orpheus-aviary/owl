@@ -16,8 +16,8 @@ import { PreviewStore } from './ai/preview-store.js';
 import type { AppContext } from './context.js';
 import { EventsBus } from './events/bus.js';
 import { ReminderScheduler } from './scheduler.js';
-import { buildServer } from './server.js';
 import type { SwitchGate } from './sync/switch-gate.js';
+import { buildTestServer } from './testing/build-test-server.js';
 
 function silentLogger(): Logger {
   const noop = (): void => {};
@@ -74,7 +74,7 @@ afterEach(() => {
 describe('switch-gate server hook (P5-d Phase 14)', () => {
   it('503 + SWITCH_IN_PROGRESS on a mutating request while switching', async () => {
     gate.switching = true;
-    const app = buildServer(ctx);
+    const app = buildTestServer(ctx);
     const res = await app.inject({ method: 'POST', url: '/notes', payload: { content: 'x' } });
     assert.equal(res.statusCode, 503);
     assert.equal(res.json().error_code, 'SWITCH_IN_PROGRESS');
@@ -83,7 +83,7 @@ describe('switch-gate server hook (P5-d Phase 14)', () => {
 
   it('does not gate GET requests while switching', async () => {
     gate.switching = true;
-    const app = buildServer(ctx);
+    const app = buildTestServer(ctx);
     const res = await app.inject({ method: 'GET', url: '/sync/status' });
     assert.notEqual(res.statusCode, 503);
     await app.close();
@@ -91,7 +91,7 @@ describe('switch-gate server hook (P5-d Phase 14)', () => {
 
   it('lets mutating requests through when not switching', async () => {
     gate.switching = false;
-    const app = buildServer(ctx);
+    const app = buildTestServer(ctx);
     const res = await app.inject({ method: 'POST', url: '/notes', payload: { content: 'hi' } });
     assert.notEqual(res.statusCode, 503);
     await app.close();

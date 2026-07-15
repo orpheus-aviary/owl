@@ -104,4 +104,13 @@ export interface AppContext {
    * module (mirrors `llmClientFactory`).
    */
   skybridgeLoader?: () => Promise<SkybridgeClientModule>;
+  /**
+   * Phase A (A6) — local-mode CSRF token (in-RAM). Generated at boot in local
+   * mode and published to a 0600 file the trusted local clients (Electron
+   * preload, CLI) read; every non-public request must carry it as
+   * `Authorization: Bearer <localToken>` (server.ts local auth gate). Undefined
+   * on cloud daemons (they use the Layer-2 SessionStore instead) — a local
+   * daemon MUST have it set or `buildServer` fails closed.
+   */
+  localToken?: string;
 }

@@ -36,14 +36,14 @@ import { createBuiltinRegistry } from '../ai/tools/index.js';
 import type { AppContext } from '../context.js';
 import { EventsBus } from '../events/bus.js';
 import { ReminderScheduler } from '../scheduler.js';
-import { buildServer } from '../server.js';
+import { buildTestServer } from '../testing/build-test-server.js';
 import { __resetInflightSync } from './manual.js';
 import type { RealSkybridgeClient, SkybridgeSession } from './session.js';
 
 const TEST_SERVER_URL = 'http://127.0.0.1:18443';
 
 describe('sync routes (P5-a Step 7)', () => {
-  let app: ReturnType<typeof buildServer>;
+  let app: ReturnType<typeof buildTestServer>;
   let ctx: AppContext;
   let db: OwlDatabase;
   let sqlite: Database.Database;
@@ -84,7 +84,7 @@ describe('sync routes (P5-a Step 7)', () => {
       eventsBus: new EventsBus(),
       skybridgeSession: null,
     };
-    app = buildServer(ctx);
+    app = buildTestServer(ctx);
     await app.ready();
   });
 

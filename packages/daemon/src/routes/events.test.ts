@@ -16,7 +16,7 @@ import { createBuiltinRegistry } from '../ai/tools/index.js';
 import type { AppContext } from '../context.js';
 import { EventsBus } from '../events/bus.js';
 import { ReminderScheduler } from '../scheduler.js';
-import { buildServer } from '../server.js';
+import { buildTestServer } from '../testing/build-test-server.js';
 
 /** Parse SSE `event:` / `data:` blocks out of a raw buffer. */
 interface SseEvent {
@@ -70,7 +70,7 @@ async function readUntilEvent(
 }
 
 describe('events routes', () => {
-  let app: ReturnType<typeof buildServer>;
+  let app: ReturnType<typeof buildTestServer>;
   let db: OwlDatabase;
   let sqlite: Database.Database;
   let scheduler: ReminderScheduler;
@@ -90,7 +90,7 @@ describe('events routes', () => {
     scheduler = new ReminderScheduler(db, sqlite, config, logger);
     eventsBus = new EventsBus();
 
-    app = buildServer({
+    app = buildTestServer({
       db,
       sqlite,
       config,
@@ -189,7 +189,7 @@ describe('events routes', () => {
   it('GET /events streams hello + open_note, shutdown unblocks in <1s', async () => {
     // Own bus so we don't collide with the outer `eventsBus`.
     const localBus = new EventsBus();
-    const localApp = buildServer({
+    const localApp = buildTestServer({
       db,
       sqlite,
       config: structuredClone(DEFAULT_CONFIG),
@@ -264,7 +264,7 @@ describe('events routes', () => {
 
   it('subscribers drops to 0 after a client disconnects', async () => {
     const localBus = new EventsBus();
-    const localApp = buildServer({
+    const localApp = buildTestServer({
       db,
       sqlite,
       config: structuredClone(DEFAULT_CONFIG),
@@ -347,7 +347,7 @@ describe('events routes', () => {
       eventsBus: localBus,
       skybridgeSession: null,
     };
-    const localApp = buildServer(cloudCtx);
+    const localApp = buildTestServer(cloudCtx);
     await localApp.listen({ host: '127.0.0.1', port: 0 });
     const port = (localApp.server.address() as { port: number }).port;
 
@@ -404,7 +404,7 @@ describe('events routes', () => {
       eventsBus: new EventsBus(),
       skybridgeSession: null,
     };
-    const localApp = buildServer(cloudCtx);
+    const localApp = buildTestServer(cloudCtx);
     const res = await localApp.inject({ method: 'GET', url: '/events' });
     assert.equal(res.statusCode, 401);
     assert.equal(res.json().error_code, 'SESSION_REQUIRED');
