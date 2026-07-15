@@ -1,4 +1,5 @@
 import type { ResolvedConfig } from '../lib/config.js';
+import { daemonAuthHeaders } from '../lib/daemon-auth.js';
 import { detectDaemon } from '../lib/daemon-detect.js';
 import { CliError } from '../lib/errors.js';
 import type { OutputStreams } from '../lib/output.js';
@@ -37,7 +38,7 @@ async function emitOpenNote(
   try {
     res = await doFetch(`http://127.0.0.1:${port}/events/emit`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { ...daemonAuthHeaders(), 'content-type': 'application/json' },
       body: JSON.stringify({ type: 'open_note', note_id: noteId }),
     });
   } catch (err) {

@@ -1,3 +1,4 @@
+import { daemonAuthHeaders } from '../lib/daemon-auth.js';
 import { type DaemonFailBody, mapHttpError } from '../lib/errors.js';
 import type {
   CasOptions,
@@ -106,7 +107,10 @@ export function createHttpBackend(opts: HttpBackendOptions): OwlBackend {
     const hasBody = init.body !== undefined;
     const res = await doFetch(`${base}${path}`, {
       method,
-      headers: hasBody ? { 'content-type': 'application/json' } : undefined,
+      headers: {
+        ...daemonAuthHeaders(),
+        ...(hasBody ? { 'content-type': 'application/json' } : {}),
+      },
       body: hasBody ? JSON.stringify(init.body) : undefined,
     });
     const envelope = (await res.json()) as DaemonEnvelope<T>;

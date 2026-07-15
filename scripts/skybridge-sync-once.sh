@@ -24,6 +24,19 @@ PORT=$(OWL_NEST_DIR="$NEST_DIR" node "$REPO_ROOT/packages/core/scripts/read-daem
 
 echo "[sync-once] nest=$NEST_DIR port=$PORT"
 
+# A6 — the daemon requires a local token in local mode. Read it from the 0600
+# file and pass the Authorization header via `curl --config -` (stdin), NOT on
+# the command line: `read`/`printf` are bash builtins, so the token never lands
+# in any process's argv (visible in `ps`). Absent file → send no header (cloud /
+# daemon down), and let the daemon respond.
+#
 # --fail-with-body so HTTP 4xx / 5xx still gets piped through jq, but
 # the script exits non-zero so callers can branch on it.
-curl --fail-with-body --silent -X POST "http://127.0.0.1:${PORT}/sync/run" | jq .
+TOKEN_FILE="$NEST_DIR/owl/daemon-token"
+if [ -r "$TOKEN_FILE" ]; then
+  read -r TOK < "$TOKEN_FILE"
+  printf 'header = "Authorization: Bearer %s"\n' "$TOK" |
+    curl --config - --fail-with-body --silent -X POST "http://127.0.0.1:${PORT}/sync/run" | jq .
+else
+  curl --fail-with-body --silent -X POST "http://127.0.0.1:${PORT}/sync/run" | jq .
+fi

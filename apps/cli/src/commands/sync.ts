@@ -22,6 +22,7 @@ import {
   readSkybridgeConfig,
 } from '@owl/core';
 import { resolveConfig } from '../lib/config.js';
+import { daemonAuthHeaders } from '../lib/daemon-auth.js';
 import { detectDaemon } from '../lib/daemon-detect.js';
 import { CliError, type DaemonFailBody, mapHttpError } from '../lib/errors.js';
 import { type OutputStreams, writeError, writeResult } from '../lib/output.js';
@@ -85,7 +86,10 @@ async function withDaemonHttp<T>(
 async function postOrThrow<T>(doFetch: typeof fetch, url: string, body?: unknown): Promise<T> {
   const res = await doFetch(url, {
     method: 'POST',
-    headers: body ? { 'content-type': 'application/json' } : undefined,
+    headers: {
+      ...daemonAuthHeaders(),
+      ...(body ? { 'content-type': 'application/json' } : {}),
+    },
     body: body ? JSON.stringify(body) : undefined,
   });
   const envelope = (await res.json()) as DaemonEnvelope<T>;
@@ -97,7 +101,7 @@ async function postOrThrow<T>(doFetch: typeof fetch, url: string, body?: unknown
 }
 
 async function getOrThrow<T>(doFetch: typeof fetch, url: string): Promise<T> {
-  const res = await doFetch(url);
+  const res = await doFetch(url, { headers: daemonAuthHeaders() });
   const envelope = (await res.json()) as DaemonEnvelope<T>;
   if (res.status >= 400 || envelope.success === false) {
     throw mapHttpError(res.status, envelope as DaemonFailBody);
