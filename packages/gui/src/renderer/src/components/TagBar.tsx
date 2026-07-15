@@ -31,67 +31,70 @@ function normalizeHashtagInput(raw: string): string {
   return trimmed;
 }
 
+/** Split a hint into date + time tokens: two tokens = date then time; a lone `HH:MM` = time-only. */
+function splitHintParts(trimmed: string): { datePart: string; timePart: string } {
+  const parts = trimmed.split(/\s+/);
+  if (parts.length >= 2) return { datePart: parts[0], timePart: parts[1] };
+  if (parts[0].includes(':')) return { datePart: '', timePart: parts[0] };
+  return { datePart: parts[0], timePart: '' };
+}
+
+/** Parse an `HH[:MM]` hint into a zero-padded `HH:MM` string, or undefined when out of range / empty. */
+function parseTimeHint(timePart: string): string | undefined {
+  if (!timePart) return undefined;
+  const tParts = timePart.split(':').map(Number);
+  if (tParts.length >= 1 && !Number.isNaN(tParts[0])) {
+    const h = tParts[0];
+    const m = tParts[1] ?? 0;
+    if (h >= 0 && h <= 23 && m >= 0 && m <= 59) {
+      return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+    }
+  }
+  return undefined;
+}
+
+/** Parse a date hint (YYYYMMDD / YYYY-MM-DD / MM-DD, `-./` separators); MM-DD rolls to next year if already past. */
+function parseDateHint(datePart: string, now: Date): Date | undefined {
+  if (!datePart) return undefined;
+
+  // YYYYMMDD (e.g., 20260503)
+  if (/^\d{8}$/.test(datePart)) {
+    const y = Number(datePart.slice(0, 4));
+    const mo = Number(datePart.slice(4, 6));
+    const d = Number(datePart.slice(6, 8));
+    const candidate = new Date(y, mo - 1, d);
+    return Number.isNaN(candidate.getTime()) ? undefined : candidate;
+  }
+  // YYYY-MM-DD or YYYY.MM.DD
+  if (/^\d{4}[-./]\d{1,2}[-./]\d{1,2}$/.test(datePart)) {
+    const [y, mo, d] = datePart.split(/[-./]/).map(Number);
+    const candidate = new Date(y, mo - 1, d);
+    return Number.isNaN(candidate.getTime()) ? undefined : candidate;
+  }
+  // MM-DD or MM.DD or M-DD (e.g., 4-21, 3.15)
+  if (/^\d{1,2}[-./]\d{1,2}$/.test(datePart)) {
+    const [mo, d] = datePart.split(/[-./]/).map(Number);
+    let y = now.getFullYear();
+    const candidate = new Date(y, mo - 1, d);
+    if (candidate.getTime() < now.getTime()) y++;
+    return new Date(y, mo - 1, d);
+  }
+
+  return undefined;
+}
+
 function parseDateTimeHint(input: string): { date?: Date; time?: string } {
   const trimmed = input.trim();
   if (!trimmed) return {};
 
-  // Split by space — first part is date, second is time (if both present)
-  const parts = trimmed.split(/\s+/);
-  let datePart = '';
-  let timePart = '';
-
-  if (parts.length >= 2) {
-    datePart = parts[0];
-    timePart = parts[1];
-  } else if (parts[0].includes(':')) {
-    // Only time (e.g., "15:00")
-    timePart = parts[0];
-  } else {
-    // Only date
-    datePart = parts[0];
-  }
-
-  const result: { date?: Date; time?: string } = {};
+  const { datePart, timePart } = splitHintParts(trimmed);
   const now = new Date();
 
-  // Parse time (HH:MM or just HH)
-  if (timePart) {
-    const tParts = timePart.split(':').map(Number);
-    if (tParts.length >= 1 && !Number.isNaN(tParts[0])) {
-      const h = tParts[0];
-      const m = tParts[1] ?? 0;
-      if (h >= 0 && h <= 23 && m >= 0 && m <= 59) {
-        result.time = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
-      }
-    }
-  }
-
-  // Parse date
-  if (datePart) {
-    // YYYYMMDD (e.g., 20260503)
-    if (/^\d{8}$/.test(datePart)) {
-      const y = Number(datePart.slice(0, 4));
-      const mo = Number(datePart.slice(4, 6));
-      const d = Number(datePart.slice(6, 8));
-      const candidate = new Date(y, mo - 1, d);
-      if (!Number.isNaN(candidate.getTime())) result.date = candidate;
-    }
-    // YYYY-MM-DD or YYYY.MM.DD
-    else if (/^\d{4}[-./]\d{1,2}[-./]\d{1,2}$/.test(datePart)) {
-      const [y, mo, d] = datePart.split(/[-./]/).map(Number);
-      const candidate = new Date(y, mo - 1, d);
-      if (!Number.isNaN(candidate.getTime())) result.date = candidate;
-    }
-    // MM-DD or MM.DD or M-DD (e.g., 4-21, 3.15)
-    else if (/^\d{1,2}[-./]\d{1,2}$/.test(datePart)) {
-      const [mo, d] = datePart.split(/[-./]/).map(Number);
-      let y = now.getFullYear();
-      const candidate = new Date(y, mo - 1, d);
-      if (candidate.getTime() < now.getTime()) y++;
-      result.date = new Date(y, mo - 1, d);
-    }
-  }
-
+  const result: { date?: Date; time?: string } = {};
+  const time = parseTimeHint(timePart);
+  if (time !== undefined) result.time = time;
+  const date = parseDateHint(datePart, now);
+  if (date !== undefined) result.date = date;
   return result;
 }
 
@@ -318,25 +321,39 @@ export function TagBar({ tags, onTagsChange }: TagBarProps) {
     addHashtagDirect();
   }
 
+  function completeSuggestion(): boolean {
+    const tag = suggestions[selectedIndex] ?? suggestions[0];
+    if (!tag) return false;
+    setInput(`#${tag.tagValue}`);
+    setSuggestions([]);
+    setHasNavigated(false);
+    return true;
+  }
+
+  function completeFrequency(): boolean {
+    const opt = filteredFrequency[selectedIndex] ?? filteredFrequency[0];
+    if (!opt) return false;
+    const needsArg = opt.type === '/time' || opt.type === '/alarm';
+    setInput(needsArg ? `${opt.type} ` : opt.type);
+    setShowFrequency(false);
+    setHasNavigated(false);
+    return true;
+  }
+
   function handleTabComplete(): boolean {
-    if (suggestions.length > 0) {
-      const tag = suggestions[selectedIndex] ?? suggestions[0];
-      if (!tag) return false;
-      setInput(`#${tag.tagValue}`);
-      setSuggestions([]);
-      setHasNavigated(false);
-      return true;
-    }
-    if (showFrequency && filteredFrequency.length > 0) {
-      const opt = filteredFrequency[selectedIndex] ?? filteredFrequency[0];
-      if (!opt) return false;
-      const needsArg = opt.type === '/time' || opt.type === '/alarm';
-      setInput(needsArg ? `${opt.type} ` : opt.type);
-      setShowFrequency(false);
-      setHasNavigated(false);
-      return true;
-    }
+    if (suggestions.length > 0) return completeSuggestion();
+    if (showFrequency && filteredFrequency.length > 0) return completeFrequency();
     return false;
+  }
+
+  function handleEnter() {
+    if (suggestions.length > 0) {
+      handleEnterWithSuggestions();
+    } else if (showFrequency) {
+      handleEnterWithFrequency();
+    } else {
+      handleEnterDirect();
+    }
   }
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
@@ -364,13 +381,7 @@ export function TagBar({ tags, onTagsChange }: TagBarProps) {
 
     if (e.key === 'Enter') {
       e.preventDefault();
-      if (suggestions.length > 0) {
-        handleEnterWithSuggestions();
-      } else if (showFrequency) {
-        handleEnterWithFrequency();
-      } else {
-        handleEnterDirect();
-      }
+      handleEnter();
     }
   }
 
