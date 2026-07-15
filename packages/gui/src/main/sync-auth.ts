@@ -88,6 +88,7 @@ import {
 import { safeStorage } from 'electron';
 import type { LoginAndOpenSessionInput } from '../shared/sync-auth-types.js';
 import { promptClaim } from './claim-prompt.js';
+import { daemonAuthHeaders } from './daemon-auth.js';
 import { getDaemonUrl } from './daemon.js';
 
 export interface SyncSessionSummary {
@@ -883,7 +884,7 @@ interface SyncSessionPayload {
 async function postSyncSession(payload: SyncSessionPayload): Promise<void> {
   const res = await fetch(`${getDaemonUrl()}/sync/session`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { ...daemonAuthHeaders(), 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   });
   if (!res.ok) {
@@ -895,7 +896,7 @@ async function postSyncSession(payload: SyncSessionPayload): Promise<void> {
 async function postSyncSwitch(profileId: string): Promise<{ device_id: string | null }> {
   const res = await fetch(`${getDaemonUrl()}/sync/switch`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { ...daemonAuthHeaders(), 'Content-Type': 'application/json' },
     body: JSON.stringify({ profile_id: profileId }),
   });
   if (!res.ok) {
@@ -927,7 +928,7 @@ async function postSyncSwitchStrict(profileId: string): Promise<void> {
   try {
     res = await fetch(`${getDaemonUrl()}/sync/switch`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { ...daemonAuthHeaders(), 'Content-Type': 'application/json' },
       body: JSON.stringify({ profile_id: profileId }),
     });
   } catch (err) {

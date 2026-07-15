@@ -39,6 +39,7 @@ import type {
   SyncStatusReply,
   SyncStatusResult,
 } from '../shared/sync-status-types.js';
+import { daemonAuthHeaders } from './daemon-auth.js';
 import { getDaemonUrl } from './daemon.js';
 import {
   QuickSwitchNeedsLoginError,
@@ -126,7 +127,10 @@ function buildProfiles(): SyncProfilesReply {
 async function runSyncNow(): Promise<RunSyncResult> {
   let res: Response;
   try {
-    res = await fetch(`${getDaemonUrl()}/sync/run`, { method: 'POST' });
+    res = await fetch(`${getDaemonUrl()}/sync/run`, {
+      method: 'POST',
+      headers: daemonAuthHeaders(),
+    });
   } catch (err) {
     throw new NetworkError(
       err instanceof Error ? err.message : String(err),
@@ -166,7 +170,7 @@ async function buildStatus(): Promise<SyncStatusReply> {
 
   let snapshot: SyncStatusResult | null = null;
   try {
-    const res = await fetch(`${getDaemonUrl()}/sync/status`);
+    const res = await fetch(`${getDaemonUrl()}/sync/status`, { headers: daemonAuthHeaders() });
     if (res.ok) {
       const body = (await res.json()) as { data?: SyncStatusResult };
       snapshot = body.data ?? null;
@@ -231,7 +235,7 @@ async function buildDevices(): Promise<SyncDevicesReply> {
 
   let res: Response;
   try {
-    res = await fetch(`${getDaemonUrl()}/sync/devices`);
+    res = await fetch(`${getDaemonUrl()}/sync/devices`, { headers: daemonAuthHeaders() });
   } catch (err) {
     throw new NetworkError(
       err instanceof Error ? err.message : String(err),
@@ -271,7 +275,7 @@ async function revokeDevice(deviceId: string): Promise<{ revoked: boolean }> {
   try {
     res = await fetch(`${getDaemonUrl()}/sync/revoke-device`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { ...daemonAuthHeaders(), 'Content-Type': 'application/json' },
       body: JSON.stringify({ device_id: deviceId }),
     });
   } catch (err) {

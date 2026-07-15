@@ -21,6 +21,14 @@ export interface CreateWindowOptions {
    */
   daemonPort?: number;
   /**
+   * Phase A A6: absolute path to the daemon's 0600 local-token file. Pushed to
+   * preload via `additionalArguments = ['--daemon-token-path=<path>']` (the
+   * PATH is not secret — the token stays in the 0600 file). Preload reads the
+   * file and exposes `window.owlAPI.getDaemonToken()` so the renderer can attach
+   * the bearer. Absent → preload has no token (renderer sends none).
+   */
+  daemonTokenPath?: string;
+  /**
    * Called on every renderer 'close' event. main/index.ts wires this to the
    * shared `isQuitting` state so red-cross hides the window on macOS but
    * Cmd+Q still lets it close.
@@ -45,6 +53,9 @@ export function createWindow(options: CreateWindowOptions = {}): BrowserWindow {
   }
   if (options.daemonPort !== undefined) {
     additionalArguments.push(`--daemon-port=${options.daemonPort}`);
+  }
+  if (options.daemonTokenPath !== undefined) {
+    additionalArguments.push(`--daemon-token-path=${options.daemonTokenPath}`);
   }
 
   const win = new BrowserWindow({

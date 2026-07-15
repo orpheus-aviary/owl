@@ -1,6 +1,7 @@
 import { loadConfig, resolveActiveProfileDbPath } from '@owl/core';
 import { BrowserWindow, app, ipcMain, powerMonitor } from 'electron';
 import { detectCli } from './cli-detect.js';
+import { getLocalTokenPath } from './daemon-auth.js';
 import { ensureDaemonRunning, getDaemonPort, stopDaemonGracefully } from './daemon.js';
 import { setGlobalShortcut, unregisterGlobalShortcut } from './global-shortcut.js';
 import { registerMigrationIpc } from './migration-ipc.js';
@@ -115,6 +116,7 @@ app.whenReady().then(async () => {
   });
 
   const daemonPort = getDaemonPort();
+  const daemonTokenPath = getLocalTokenPath();
 
   if (precheck.mode === 'normal') {
     const daemonReady = await ensureDaemonRunning();
@@ -130,10 +132,17 @@ app.whenReady().then(async () => {
         console.warn('skybridge session restore failed (continuing):', err);
       }
     }
-    createWindow({ daemonPort, onClose: onWindowClose });
+    createWindow({ daemonPort, daemonTokenPath, onClose: onWindowClose });
   } else {
-    const win = createWindow({ startupMode: precheck, daemonPort, onClose: onWindowClose });
-    registerMigrationIpc(win, dbPath, () => createWindow({ daemonPort, onClose: onWindowClose }));
+    const win = createWindow({
+      startupMode: precheck,
+      daemonPort,
+      daemonTokenPath,
+      onClose: onWindowClose,
+    });
+    registerMigrationIpc(win, dbPath, () =>
+      createWindow({ daemonPort, daemonTokenPath, onClose: onWindowClose }),
+    );
   }
 
   // P5-d Phase 15b — keep the short-lived access token fresh. A scheduled
@@ -155,7 +164,7 @@ app.whenReady().then(async () => {
       // activate only fires on macOS after the app has a normal window,
       // which in MigrationDialog flow only happens post-migration. So it's
       // always safe to recreate in normal mode here.
-      createWindow({ daemonPort, onClose: onWindowClose });
+      createWindow({ daemonPort, daemonTokenPath, onClose: onWindowClose });
     }
   });
 });

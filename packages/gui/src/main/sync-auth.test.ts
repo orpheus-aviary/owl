@@ -245,6 +245,13 @@ vi.mock('./daemon.js', () => ({
   getDaemonUrl: vi.fn(() => 'http://127.0.0.1:47010'),
 }));
 
+// A6 — daemonAuthHeaders reads the real token file; stub it so these tests stay
+// hermetic (the header itself is covered by daemon-auth.test.ts).
+vi.mock('./daemon-auth.js', () => ({
+  daemonAuthHeaders: () => ({ authorization: 'Bearer test-local' }),
+  getLocalTokenPath: () => '/tmp/owl-test/daemon-token',
+}));
+
 // Import AFTER the mocks so the SUT picks them up.
 import {
   QuickSwitchNeedsLoginError,
