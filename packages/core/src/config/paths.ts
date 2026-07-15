@@ -86,6 +86,17 @@ export function pidPath(): string {
 }
 
 /**
+ * Daemon local-mode auth token file (Phase A A6). In local mode the daemon
+ * writes a per-boot 0600 random token here after it starts listening; the
+ * trusted local clients (Electron preload, CLI) read it and send it as
+ * `Authorization: Bearer <token>`. Lives in the owl tree so it migrates with
+ * the nest. Never written in cloud mode (Layer-2 sessions gate there instead).
+ */
+export function localTokenPath(): string {
+  return join(owlDir(), 'daemon-token');
+}
+
+/**
  * Cross-process profile-switch lockfile (P5-d Phase 21, W10). GUI main holds it
  * while swapping the active profile; CLI direct mode reads it to refuse opening
  * a db mid-swap. Lives in the owl tree so it migrates with the nest.

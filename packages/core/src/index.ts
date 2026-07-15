@@ -45,6 +45,7 @@ export type {
   BrowserConfig,
 } from './config/index.js';
 export * as paths from './config/paths.js';
+export { readLocalToken } from './config/local-token.js';
 
 // Profile (P5-d Phase 12 — per-profile isolation foundation, blocker B6)
 export { normalizeServerUrl, computeProfileId, InvalidServerUrlError } from './profile/id.js';

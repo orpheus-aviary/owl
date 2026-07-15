@@ -7,6 +7,7 @@ import {
   configPath,
   daemonLogPath,
   dbPath,
+  localTokenPath,
   logDir,
   nestDir,
   owlDir,
@@ -63,6 +64,7 @@ describe('paths.ts — OWL_NEST_DIR env override (Step 0a)', () => {
     assert.equal(owlLogPath(), '/tmp/owl-x/owl/logs/owl.log');
     assert.equal(daemonLogPath(), '/tmp/owl-x/owl/logs/daemon.log');
     assert.equal(pidPath(), '/tmp/owl-x/owl/daemon.pid');
+    assert.equal(localTokenPath(), '/tmp/owl-x/owl/daemon-token');
     assert.equal(aviaryConfigPath(), '/tmp/owl-x/aviary/aviary_config.toml');
   });
 
