@@ -423,49 +423,48 @@ const FTS_REBUILD =
  * that is already at LATEST_KNOWN_VERSION. Throws IncompatibleDbError if
  * user_version is higher than what this build knows about.
  */
-export async function migrateLegacyDb(
-  dbPath: string,
-  options?: MigrateOptions,
-): Promise<MigrateResult> {
-  // ----- Idempotency short-circuit ------------------------------------------
-  // Reading user_version up-front lets us skip the rebuild entirely when the
-  // db is already current. Kept intentionally light — full validation happens
-  // later inside the locked section.
-  if (existsSync(dbPath)) {
-    const peek = new BetterSqlite3(dbPath, { readonly: true });
-    try {
-      const v = peek.pragma('user_version', { simple: true }) as number;
-      if (v > LATEST_KNOWN_VERSION) {
-        throw new IncompatibleDbError(dbPath, v);
-      }
-      if (v === LATEST_KNOWN_VERSION) {
-        const row = peek.prepare('SELECT count(*) AS n FROM notes').get() as { n: number };
-        return {
-          backupPath: '',
-          notesCount: row.n,
-          elapsedMs: 0,
-          alreadyMigrated: true,
-        };
-      }
-    } finally {
-      peek.close();
+/**
+ * Idempotency short-circuit. Reading user_version up-front lets us skip the
+ * rebuild entirely when the db is already current. Kept intentionally light —
+ * full validation happens later inside the locked section. Returns a no-op
+ * result when already at LATEST_KNOWN_VERSION, throws IncompatibleDbError when
+ * newer, and `null` when a migration is needed (or the file is absent).
+ */
+function peekIdempotency(dbPath: string): MigrateResult | null {
+  if (!existsSync(dbPath)) return null;
+  const peek = new BetterSqlite3(dbPath, { readonly: true });
+  try {
+    const v = peek.pragma('user_version', { simple: true }) as number;
+    if (v > LATEST_KNOWN_VERSION) {
+      throw new IncompatibleDbError(dbPath, v);
     }
+    if (v === LATEST_KNOWN_VERSION) {
+      const row = peek.prepare('SELECT count(*) AS n FROM notes').get() as { n: number };
+      return { backupPath: '', notesCount: row.n, elapsedMs: 0, alreadyMigrated: true };
+    }
+    return null;
+  } finally {
+    peek.close();
   }
+}
 
-  // ----- Layer 1 — daemon pid probe ----------------------------------------
+/**
+ * Layers 1+2 of the concurrency guard: refuse if the daemon is alive (pid
+ * probe), then create the `${dbPath}.migrate.lock` file with O_EXCL. Returns the
+ * open lock fd — the caller MUST close + unlink it in a finally.
+ */
+function acquireMigrateLock(dbPath: string): number {
   if (probeDaemonPid(dbPath) !== null) {
     throw new MigrationBusyError(
       'daemon_alive',
       'Owl daemon is running; stop it (or close the GUI) before migrating.',
     );
   }
-
-  // ----- Layer 2 — file lock -----------------------------------------------
   const lockPath = `${dbPath}.migrate.lock`;
-  let lockFd: number;
   try {
-    lockFd = openSync(lockPath, 'wx');
+    const lockFd = openSync(lockPath, 'wx');
     writeSync(lockFd, String(process.pid));
+    return lockFd;
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code === 'EEXIST') {
       throw new MigrationBusyError(
@@ -475,167 +474,219 @@ export async function migrateLegacyDb(
     }
     throw e;
   }
+}
 
+/** Phase A — (re)create the `.new` database with the initial v0.3 schema. */
+function initNewDb(newPath: string): void {
+  if (existsSync(newPath)) unlinkSync(newPath);
+  const init = new BetterSqlite3(newPath);
+  try {
+    init.pragma('journal_mode = DELETE');
+    init.pragma('foreign_keys = ON');
+    applyInitialSchema(init);
+  } finally {
+    init.close();
+  }
+}
+
+/** Trigger EXCLUSIVE lock acquisition on the source (any read works); SQLITE_BUSY → MigrationBusyError. */
+function acquireExclusiveSourceLock(old: BetterSqlite3.Database): void {
+  try {
+    old.prepare('SELECT count(*) FROM sqlite_master').get();
+  } catch (e) {
+    if ((e as { code?: string }).code === 'SQLITE_BUSY') {
+      throw new MigrationBusyError(
+        'exclusive_lock_busy',
+        'Cannot acquire exclusive lock on source database; another process is holding it.',
+      );
+    }
+    throw e;
+  }
+}
+
+/** BEGIN the copy transaction; SQLITE_BUSY → MigrationBusyError (locking_mode should have prevented it). */
+function beginCopyTransaction(old: BetterSqlite3.Database): void {
+  try {
+    old.exec('BEGIN');
+  } catch (e) {
+    if ((e as { code?: string }).code === 'SQLITE_BUSY') {
+      throw new MigrationBusyError(
+        'begin_busy',
+        'BEGIN returned busy; locking_mode should have prevented this.',
+      );
+    }
+    throw e;
+  }
+}
+
+/**
+ * Phase C — atomically swap the rebuilt `.new` file into place. Moves the
+ * original aside to `${dbPath}.old-pre-v0.3`, drops stale -wal/-shm, renames
+ * `.new` → `dbPath`, then removes the aside copy. On any failure mid-swap it
+ * rolls the original back (when it's safe to) and rethrows.
+ */
+function atomicSwap(dbPath: string, newPath: string): void {
+  const preSwapPath = `${dbPath}.old-pre-v0.3`;
+  try {
+    renameSync(dbPath, preSwapPath);
+    for (const suf of ['-wal', '-shm']) {
+      try {
+        unlinkSync(`${dbPath}${suf}`);
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
+      }
+    }
+    renameSync(newPath, dbPath);
+  } catch (err) {
+    if (existsSync(preSwapPath) && !existsSync(dbPath)) {
+      renameSync(preSwapPath, dbPath);
+    }
+    throw err;
+  }
+
+  try {
+    unlinkSync(preSwapPath);
+  } catch {
+    /* best-effort */
+  }
+}
+
+/** Best-effort rollback + detach after a mid-copy failure (each guarded by whether it happened). */
+function rollbackAndDetach(
+  old: BetterSqlite3.Database,
+  txStarted: boolean,
+  attached: boolean,
+): void {
+  if (txStarted) {
+    try {
+      old.exec('ROLLBACK');
+    } catch {
+      /* rollback best-effort */
+    }
+  }
+  if (attached) {
+    try {
+      old.exec('DETACH DATABASE dest');
+    } catch {
+      /* detach best-effort */
+    }
+  }
+}
+
+/**
+ * Phase B + C — open the source under an EXCLUSIVE lock, ATTACH the fresh db AS
+ * dest, copy rows FK-safe inside one transaction (backup first), rebuild FTS,
+ * COMMIT, then atomically swap `.new` into place. Rolls back / detaches on any
+ * failure and always closes the source connection.
+ */
+async function copyToNewAndSwap(
+  dbPath: string,
+  newPath: string,
+  options?: MigrateOptions,
+): Promise<MigrateResult> {
+  const startedAt = Date.now();
+  const old = new BetterSqlite3(dbPath);
+  let txStarted = false;
+  let attached = false;
+
+  try {
+    old.pragma('busy_timeout = 0');
+    old.pragma('foreign_keys = ON');
+    old.pragma('locking_mode = EXCLUSIVE');
+    acquireExclusiveSourceLock(old);
+
+    // Column existence probe for auto_delete_at + required-column validation
+    const noteCols = old.pragma('table_info(notes)') as { name: string }[];
+    const hasAutoDeleteAt = noteCols.some((c) => c.name === 'auto_delete_at');
+    verifyExpectedColumns(old, dbPath);
+
+    // Source FK pre-check (authoritative). Needs schema-qualified pragma.
+    const mainViolations = old.pragma('main.foreign_key_check') as unknown[];
+    if (mainViolations.length > 0) {
+      throw new SourceDbCorruptionError(mainViolations.length);
+    }
+
+    // WAL checkpoint — under locking_mode=EXCLUSIVE this never waits.
+    const ckpt = old.pragma('wal_checkpoint(TRUNCATE)') as Array<{ busy: number }>;
+    if (ckpt[0]?.busy !== 0) {
+      throw new MigrationBusyError('checkpoint_busy', 'WAL checkpoint reports busy.');
+    }
+
+    // Online backup (consistent snapshot). ms-precision ts avoids same-second collision.
+    await emitPhase(options, 'backup');
+    const ts = Date.now();
+    const backupPath = `${dbPath}.v0.2-backup-${ts}`;
+    await backupDatabase(old, backupPath);
+
+    // ATTACH must come before BEGIN (SQLite forbids ATTACH inside
+    // EXCLUSIVE/IMMEDIATE transactions).
+    old.prepare('ATTACH DATABASE ? AS dest').run(newPath);
+    attached = true;
+
+    beginCopyTransaction(old);
+    txStarted = true;
+
+    // Copy rows FK-safe. auto_delete_at is projected NULL when source lacks it.
+    await emitPhase(options, 'copy');
+    const autoProj = hasAutoDeleteAt ? 'auto_delete_at' : 'NULL';
+    for (const stmt of COPY_TEMPLATE) {
+      old.prepare(stmt.replace('$AUTO', autoProj)).run();
+    }
+
+    // Dest-side FK re-check (belt-and-suspenders). Schema-qualified pragma.
+    const destViolations = old.pragma('dest.foreign_key_check') as unknown[];
+    if (destViolations.length > 0) {
+      throw new SourceDbCorruptionError(destViolations.length);
+    }
+
+    // FTS rebuild: wipe any posting left by the INSERT trigger, then set-based.
+    await emitPhase(options, 'fts-rebuild');
+    old.prepare(FTS_DELETE_ALL).run();
+    old.prepare(FTS_REBUILD).run();
+
+    const notesCount = (
+      old.prepare('SELECT count(*) AS n FROM dest.notes').get() as {
+        n: number;
+      }
+    ).n;
+
+    old.exec('COMMIT');
+    txStarted = false;
+    old.exec('DETACH DATABASE dest');
+    attached = false;
+
+    // ----- Phase C — atomic file swap ----------------------------------
+    old.close();
+    await emitPhase(options, 'swap');
+    atomicSwap(dbPath, newPath);
+
+    return { backupPath, notesCount, elapsedMs: Date.now() - startedAt };
+  } catch (err) {
+    rollbackAndDetach(old, txStarted, attached);
+    throw err;
+  } finally {
+    try {
+      old.close();
+    } catch {
+      /* close best-effort — Phase C success path already closed it */
+    }
+  }
+}
+
+export async function migrateLegacyDb(
+  dbPath: string,
+  options?: MigrateOptions,
+): Promise<MigrateResult> {
+  const shortCircuit = peekIdempotency(dbPath);
+  if (shortCircuit) return shortCircuit;
+
+  const lockFd = acquireMigrateLock(dbPath);
+  const lockPath = `${dbPath}.migrate.lock`;
   const newPath = `${dbPath}.new`;
 
   try {
-    // ----- Phase A — initialise .new --------------------------------------
-    if (existsSync(newPath)) unlinkSync(newPath);
-    const init = new BetterSqlite3(newPath);
-    try {
-      init.pragma('journal_mode = DELETE');
-      init.pragma('foreign_keys = ON');
-      applyInitialSchema(init);
-    } finally {
-      init.close();
-    }
-
-    // ----- Phase B — lock old, ATTACH new AS dest, COPY --------------------
-    const startedAt = Date.now();
-    const old = new BetterSqlite3(dbPath);
-    let txStarted = false;
-    let attached = false;
-
-    try {
-      old.pragma('busy_timeout = 0');
-      old.pragma('foreign_keys = ON');
-      old.pragma('locking_mode = EXCLUSIVE');
-
-      // Trigger lock acquisition — any read on old.db works; sqlite_master is cheap.
-      try {
-        old.prepare('SELECT count(*) FROM sqlite_master').get();
-      } catch (e) {
-        if ((e as { code?: string }).code === 'SQLITE_BUSY') {
-          throw new MigrationBusyError(
-            'exclusive_lock_busy',
-            'Cannot acquire exclusive lock on source database; another process is holding it.',
-          );
-        }
-        throw e;
-      }
-
-      // Column existence probe for auto_delete_at + required-column validation
-      const noteCols = old.pragma('table_info(notes)') as { name: string }[];
-      const hasAutoDeleteAt = noteCols.some((c) => c.name === 'auto_delete_at');
-      verifyExpectedColumns(old, dbPath);
-
-      // Source FK pre-check (authoritative). Needs schema-qualified pragma.
-      const mainViolations = old.pragma('main.foreign_key_check') as unknown[];
-      if (mainViolations.length > 0) {
-        throw new SourceDbCorruptionError(mainViolations.length);
-      }
-
-      // WAL checkpoint — under locking_mode=EXCLUSIVE this never waits.
-      const ckpt = old.pragma('wal_checkpoint(TRUNCATE)') as Array<{ busy: number }>;
-      if (ckpt[0]?.busy !== 0) {
-        throw new MigrationBusyError('checkpoint_busy', 'WAL checkpoint reports busy.');
-      }
-
-      // Online backup (consistent snapshot). ms-precision ts avoids same-second collision.
-      await emitPhase(options, 'backup');
-      const ts = Date.now();
-      const backupPath = `${dbPath}.v0.2-backup-${ts}`;
-      await backupDatabase(old, backupPath);
-
-      // ATTACH must come before BEGIN (SQLite forbids ATTACH inside
-      // EXCLUSIVE/IMMEDIATE transactions).
-      old.prepare('ATTACH DATABASE ? AS dest').run(newPath);
-      attached = true;
-
-      try {
-        old.exec('BEGIN');
-      } catch (e) {
-        if ((e as { code?: string }).code === 'SQLITE_BUSY') {
-          throw new MigrationBusyError(
-            'begin_busy',
-            'BEGIN returned busy; locking_mode should have prevented this.',
-          );
-        }
-        throw e;
-      }
-      txStarted = true;
-
-      // Copy rows FK-safe. auto_delete_at is projected NULL when source lacks it.
-      await emitPhase(options, 'copy');
-      const autoProj = hasAutoDeleteAt ? 'auto_delete_at' : 'NULL';
-      for (const stmt of COPY_TEMPLATE) {
-        old.prepare(stmt.replace('$AUTO', autoProj)).run();
-      }
-
-      // Dest-side FK re-check (belt-and-suspenders). Schema-qualified pragma.
-      const destViolations = old.pragma('dest.foreign_key_check') as unknown[];
-      if (destViolations.length > 0) {
-        throw new SourceDbCorruptionError(destViolations.length);
-      }
-
-      // FTS rebuild: wipe any posting left by the INSERT trigger, then set-based.
-      await emitPhase(options, 'fts-rebuild');
-      old.prepare(FTS_DELETE_ALL).run();
-      old.prepare(FTS_REBUILD).run();
-
-      const notesCount = (
-        old.prepare('SELECT count(*) AS n FROM dest.notes').get() as {
-          n: number;
-        }
-      ).n;
-
-      old.exec('COMMIT');
-      txStarted = false;
-      old.exec('DETACH DATABASE dest');
-      attached = false;
-
-      // ----- Phase C — atomic file swap ----------------------------------
-      old.close();
-      await emitPhase(options, 'swap');
-
-      const preSwapPath = `${dbPath}.old-pre-v0.3`;
-      try {
-        renameSync(dbPath, preSwapPath);
-        for (const suf of ['-wal', '-shm']) {
-          try {
-            unlinkSync(`${dbPath}${suf}`);
-          } catch (e) {
-            if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
-          }
-        }
-        renameSync(newPath, dbPath);
-      } catch (err) {
-        if (existsSync(preSwapPath) && !existsSync(dbPath)) {
-          renameSync(preSwapPath, dbPath);
-        }
-        throw err;
-      }
-
-      try {
-        unlinkSync(preSwapPath);
-      } catch {
-        /* best-effort */
-      }
-
-      return { backupPath, notesCount, elapsedMs: Date.now() - startedAt };
-    } catch (err) {
-      if (txStarted) {
-        try {
-          old.exec('ROLLBACK');
-        } catch {
-          /* rollback best-effort */
-        }
-      }
-      if (attached) {
-        try {
-          old.exec('DETACH DATABASE dest');
-        } catch {
-          /* detach best-effort */
-        }
-      }
-      throw err;
-    } finally {
-      try {
-        old.close();
-      } catch {
-        /* close best-effort — Phase C success path already closed it */
-      }
-    }
+    initNewDb(newPath);
+    return await copyToNewAndSwap(dbPath, newPath, options);
   } finally {
     try {
       closeSync(lockFd);
