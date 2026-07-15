@@ -4,6 +4,11 @@
 // Electron / Node / DOM-host concept so the same definitions compile for web
 // and React Native.
 
+// Config types (OwlConfig + sections + cloud projections) are the `/config`
+// wire contract; they live in ./config-types (canonical, shared with @owl/core)
+// and are re-exported here so `@orpheus-aviary/owl-shared` keeps one surface.
+export type * from './config-types.js';
+
 export interface ApiResponse<T = unknown> {
   success: boolean;
   data?: T;
@@ -80,108 +85,6 @@ export interface TodoGroup {
   created_at: string;
   items: TodoItem[];
 }
-
-export interface ShortcutsConfig {
-  save: string;
-  close_tab: string;
-  toggle_wrap: string;
-  toggle_edit_mode: string;
-  new_note: string;
-  nav_editor: string;
-  nav_browser: string;
-  nav_trash: string;
-  nav_reminders: string;
-  nav_todo: string;
-  nav_ai: string;
-  nav_settings: string;
-  toggle_folder_panel: string;
-  /** OS-level invoke shortcut handled by main process Electron globalShortcut. */
-  global_invoke: string;
-}
-
-export type LlmApiFormat = 'openai' | 'anthropic';
-
-export interface LlmConfig {
-  url: string;
-  model: string;
-  api_key: string;
-  api_format: LlmApiFormat;
-  /** Round-trip the model's reasoning/thinking back. See core config docs. */
-  thinking_round_trip: boolean;
-}
-
-export interface EditorConfig {
-  default_mode: 'edit' | 'split' | 'preview';
-}
-
-export interface BrowserConfig {
-  default_sort_field: 'updated' | 'created';
-  default_sort_direction: 'asc' | 'desc';
-}
-
-// Contract (Phase A): on a local daemon `GET/PATCH /config` returns the full
-// `OwlConfig` including `llm.api_key`. On a cloud daemon, GET returns the full
-// config to the owner session but a `PublicOwlConfig` projection (secret
-// stripped, `has_api_key` flagged) to a non-owner; PATCH of `llm.*` is
-// owner-only. Web consumers should type the GET response as
-// `OwlConfig | PublicOwlConfig` and never assume `llm.api_key` is present.
-// See the ecosystem arch §9 + Phase A design §6.
-export interface OwlConfig {
-  llm: LlmConfig;
-  window: { width: number; height: number };
-  font: { global_offset: number; editor_font_size: number; editor_line_height: number };
-  navigation: { order: string[] };
-  daemon: {
-    poll_interval_min: number;
-    port: number;
-    // Phase A — mirrors core DaemonConfig. `mode`/`bind` always present;
-    // the cloud-only fields are present only on a cloud daemon's config.
-    mode: 'local' | 'cloud';
-    bind: string;
-    server_url?: string;
-    account_lock?: string;
-    public_url?: string;
-    allowed_origins?: string[];
-    allowed_hosts?: string[];
-    session_ttl_min?: number;
-    trust_proxy?: boolean;
-    /** Phase B4 — server FS path to the web bundle. Owner-only (absent in the non-owner projection). */
-    web_root?: string;
-  };
-  ai: {
-    context_rounds: number;
-    max_recent_notes: number;
-    max_context_chars: number;
-  };
-  trash: { auto_delete_days: number };
-  log: {
-    max_size_mb: number;
-    max_backups: number;
-    max_age_days: number;
-    level: 'debug' | 'info' | 'warn' | 'error';
-  };
-  editor: EditorConfig;
-  browser: BrowserConfig;
-  shortcuts: ShortcutsConfig;
-}
-
-// Cloud non-owner projection of OwlConfig. Mirrors `@owl/core`'s redactConfig
-// output: `llm` drops `api_key` and gains `has_api_key`; everything else is
-// identical. The key itself is never sent over the wire to a non-owner.
-export interface PublicLlmConfig {
-  url: string;
-  model: string;
-  api_format: LlmApiFormat;
-  thinking_round_trip: boolean;
-  has_api_key: boolean;
-}
-
-// Mirrors `@owl/core` PublicOwlConfig: `daemon` also drops the owner-only
-// `web_root` (a server FS path).
-export type PublicOwlConfig = Omit<OwlConfig, 'llm' | 'daemon'> & {
-  llm: PublicLlmConfig;
-  daemon: Omit<OwlConfig['daemon'], 'web_root'>;
-};
 
 export interface AiToolDescriptor {
   name: string;
