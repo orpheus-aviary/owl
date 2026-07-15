@@ -43,139 +43,78 @@
  * report the same app version through registerDevice.
  */
 
-import { existsSync, mkdirSync } from 'node:fs';
-import { hostname } from 'node:os';
-import { dirname } from 'node:path';
+import { existsSync } from 'node:fs';
 import {
-  ApiError,
   type ApiRefreshResult,
-  type AuthContext,
-  CLIENT_VERSION,
   NetworkError,
-  type SkybridgeClient,
   createSkybridgeClient,
   login as skybridgeLogin,
   refresh as skybridgeRefresh,
 } from '@orpheus-aviary/skybridge-client';
 import {
   LOCAL_PROFILE,
-  OWL_APP_VERSION,
   type ProfileConfigSection,
   ProfileDbMissingError,
-  type SkybridgeConfig,
   type SkybridgeDeviceSection,
   clearProfileAuth,
   clearSkybridgeAuth,
   computeProfileId,
-  copyLocalProfileDbInto,
   deleteProfileDb,
-  inspectLocalProfile,
   newSwitchLockNonce,
   normalizeServerUrl,
   paths,
   readEffectiveActiveProfileId,
   readProfileSection,
-  readSkybridgeConfig,
   releaseSwitchLock,
   removeProfile,
   setActiveProfile,
   touchSwitchLock,
-  updateActiveProfileAuth,
   updateProfileAuth,
   writeProfileConfig,
   writeSwitchLock,
 } from '@owl/core';
 import { safeStorage } from 'electron';
 import type { LoginAndOpenSessionInput } from '../shared/sync-auth-types.js';
-import { promptClaim } from './claim-prompt.js';
-import { daemonAuthHeaders } from './daemon-auth.js';
-import { getDaemonUrl } from './daemon.js';
+import {
+  QuickSwitchNeedsLoginError,
+  SafeStorageUnavailableError,
+  SkybridgeServerTooOldError,
+  type SyncSessionSummary,
+  decryptB64,
+  safeReadConfig,
+} from './sync-auth-crypto.js';
+import {
+  clearRefreshTimer,
+  getCurrentExpiresAt,
+  isRefreshDead,
+  persistRotated,
+  scheduleRefresh,
+} from './sync-auth-renewal.js';
+import {
+  bestEffortRemoteLogout,
+  bestEffortRevokeProfile,
+  bestEffortSwitchLocal,
+  ensureOwlWorkspace,
+  maybeClaimLocalInto,
+  postSyncSession,
+  postSyncSwitch,
+  postSyncSwitchStrict,
+  registerNewDevice,
+  remoteRevoke,
+  reuseDevice,
+} from './sync-auth-transport.js';
+import { runSwitchExclusive } from './sync-switch-queue.js';
 
-export interface SyncSessionSummary {
-  server_url: string;
-  user_id: string;
-  email: string;
-  device_id: string;
-  workspace_id: string;
-}
-
-export class SafeStorageUnavailableError extends Error {
-  readonly code = 'SAFE_STORAGE_UNAVAILABLE';
-  constructor() {
-    super('electron safeStorage is unavailable on this system; cannot encrypt skybridge token');
-    this.name = 'SafeStorageUnavailableError';
-  }
-}
-
-/** The server didn't return a `server_id` → it's older than 0.1.4 (R5). */
-export class SkybridgeServerTooOldError extends Error {
-  readonly code = 'SKYBRIDGE_SERVER_TOO_OLD';
-  constructor() {
-    super('this server is too old — owl needs a skybridge 0.1.4+ server (no server_id returned)');
-    this.name = 'SkybridgeServerTooOldError';
-  }
-}
-
-/**
- * P5-d Phase 17 (W4) — a saved profile can't be quick-switched without a
- * password (no usable refresh token / incomplete stored section). The renderer
- * maps this to "请在设置中重新登录".
- */
-export class QuickSwitchNeedsLoginError extends Error {
-  readonly code = 'QUICK_SWITCH_NEEDS_LOGIN';
-  constructor() {
-    super('this account needs a password re-login (no usable refresh token)');
-    this.name = 'QuickSwitchNeedsLoginError';
-  }
-}
-
-// ─── proactive token renewal (Phase 15b) ────────────────────────────
-//
-// 0.1.4 access tokens are short-lived; GUI main keeps the daemon's session
-// alive by refreshing slightly before `expiresAt` (we own the refresh token
-// in the keychain — the daemon never sees it). The daemon never has to learn
-// about renewal: we just re-POST /sync/session with a fresh access token.
-
-const REFRESH_MARGIN_MS = 60_000; // refresh this long before expiry
-const REFRESH_MIN_DELAY_MS = 1_000; // never schedule a zero/negative timeout
-const REFRESH_RETRY_MS = 30_000; // back off after a transient (network) failure
-// setTimeout's 32-bit signed-int ceiling (~24.8 days). A larger delay clamps to
-// 1ms and fires immediately, so a long-lived token's renewal must be chunked.
-const MAX_TIMER_MS = 2_147_483_647;
-
-let refreshTimer: ReturnType<typeof setTimeout> | null = null;
-/** Expiry of the currently-installed access token, or null when none. */
-let currentExpiresAt: number | null = null;
-
-// ─── profile-switch serialization (Phase 21, layer B) ───────────────
-//
-// Every top-level op that swaps the daemon's active profile or (re)installs a
-// session — login / logout / quick-switch / delete-local-copy / refresh /
-// startup-restore — runs through one in-process queue. Two interleaving would
-// race the same toml `active_profile` + /sync/session install; a stray refresh
-// landing mid-switch could write the prior account's token into the switched-to
-// profile. Each body re-reads config, so serialization alone pins every op to
-// one consistent active profile. This is the GUI-internal partner of the
-// cross-process switch lockfile (Phase 21c) and the daemon's switch-gate.
-//
-// NON-REENTRANT: a wrapped function must never call another wrapped function
-// (it would deadlock waiting on the queue tail it's holding). Verified: the six
-// wrapped entries only call private helpers, never each other.
-
-let switchQueue: Promise<unknown> = Promise.resolve();
-
-export function runSwitchExclusive<T>(fn: () => Promise<T>): Promise<T> {
-  const run = switchQueue.then(() => fn());
-  // Swallow rejections on the queue tail so one failed op doesn't poison the
-  // next; the caller still observes the real rejection via the returned promise.
-  switchQueue = run.catch(() => undefined);
-  return run;
-}
-
-/** Test-only: reset the serialization queue between cases. */
-export function __resetSwitchQueueForTests(): void {
-  switchQueue = Promise.resolve();
-}
+// Re-export the public surface that moved to sibling modules so the two runtime
+// consumers (sync-ipc.ts, index.ts) + the test import path stay unchanged.
+export {
+  QuickSwitchNeedsLoginError,
+  SafeStorageUnavailableError,
+  SkybridgeServerTooOldError,
+  type SyncSessionSummary,
+} from './sync-auth-crypto.js';
+export { clearRefreshTimer, maybeRefreshNow } from './sync-auth-renewal.js';
+export { __resetSwitchQueueForTests, runSwitchExclusive } from './sync-switch-queue.js';
 
 // ─── cross-process switch lockfile (Phase 21, layer C / W10) ─────────
 //
@@ -238,7 +177,7 @@ async function loginAndOpenSessionImpl(
   // Now that login succeeded and we're committing to touch the daemon: capture
   // the prior token's expiry, then stop its renewal timer so no stray refresh
   // of the prior account fires into the target's db during the switch window.
-  const priorExpiresAt = currentExpiresAt;
+  const priorExpiresAt = getCurrentExpiresAt();
   clearRefreshTimer();
   let switched = false;
   // Acquired lazily right before the first /sync/switch (NOT around the claim
@@ -411,7 +350,7 @@ async function switchToProfileImpl(targetId: string): Promise<void> {
   const prior = readEffectiveActiveProfileId();
   if (targetId === prior) return; // already here — leave the timer alone
 
-  const priorExpiresAt = currentExpiresAt; // capture before clear (rollback/reschedule)
+  const priorExpiresAt = getCurrentExpiresAt(); // capture before clear (rollback/reschedule)
   clearRefreshTimer();
 
   if (targetId === LOCAL_PROFILE) {
@@ -582,7 +521,7 @@ async function deleteProfileLocalCopyImpl(targetId: string): Promise<{ wasActive
   const wasActive = readEffectiveActiveProfileId() === targetId;
 
   if (wasActive) {
-    const activeExpiresAt = currentExpiresAt;
+    const activeExpiresAt = getCurrentExpiresAt();
     clearRefreshTimer();
     // Critical section: the daemon swap → toml write. The remote revoke + db
     // delete below run after the daemon is consistently on local (no divergence).
@@ -673,371 +612,4 @@ async function restoreSessionOnStartupImpl(): Promise<SyncSessionSummary | null>
   if (!token) return null;
   await postSyncSession({ token, ...sessionBase });
   return summary;
-}
-
-/**
- * Refresh the access token now and re-install the session (daemon stays on the
- * active profile db — no switch). Rotates the stored refresh token and
- * reschedules the next renewal. Shared by the timer and the resume/focus
- * triggers. A dead refresh token stops renewal (user re-logs in); a transient
- * network failure backs off and retries.
- */
-// Routed through the switch queue so a refresh can never interleave with a
-// profile switch: `refreshSessionImpl` re-reads config at its top, so under the
-// queue it always targets whatever profile is active *now*, never a stale one
-// captured before a switch (layer B, Phase 21).
-function refreshSession(): Promise<void> {
-  return runSwitchExclusive(refreshSessionImpl);
-}
-
-async function refreshSessionImpl(): Promise<void> {
-  const cfg = safeReadConfig();
-  const refreshTok = decryptB64(cfg?.auth?.encrypted_refresh_token);
-  if (
-    !cfg?.auth?.user_id ||
-    !cfg.auth.email ||
-    !cfg.device?.id ||
-    !cfg.workspace?.id ||
-    !refreshTok
-  ) {
-    clearRefreshTimer();
-    return;
-  }
-
-  let rotated: ApiRefreshResult;
-  try {
-    rotated = await skybridgeRefresh(cfg.server.url, refreshTok);
-  } catch (err) {
-    if (isRefreshDead(err)) {
-      clearRefreshTimer(); // refresh token gone → user must log in again
-      return;
-    }
-    scheduleRefreshIn(REFRESH_RETRY_MS); // transient → back off + retry
-    return;
-  }
-
-  persistRotated(rotated);
-  await postSyncSession({
-    token: rotated.token,
-    user_id: cfg.auth.user_id,
-    email: cfg.auth.email,
-    server_url: cfg.server.url,
-    device: cfg.device,
-    workspace: { id: cfg.workspace.id, slug: cfg.workspace.slug },
-  });
-  scheduleRefresh(rotated.expiresAt);
-}
-
-/**
- * Renew now if the installed access token is at/near expiry. Wired to
- * `powerMonitor` resume + window focus in the main entry, so a machine that
- * slept past a scheduled timer recovers as soon as the user comes back.
- */
-export async function maybeRefreshNow(): Promise<void> {
-  if (currentExpiresAt === null) return; // no renewable session
-  if (Date.now() < currentExpiresAt - REFRESH_MARGIN_MS) return; // still fresh
-  await refreshSession();
-}
-
-/** Cancel any pending renewal (logout / dead refresh / no session). */
-export function clearRefreshTimer(): void {
-  if (refreshTimer) {
-    clearTimeout(refreshTimer);
-    refreshTimer = null;
-  }
-  currentExpiresAt = null;
-}
-
-function scheduleRefresh(expiresAt?: number): void {
-  if (refreshTimer) clearTimeout(refreshTimer);
-  refreshTimer = null;
-  currentExpiresAt = expiresAt ?? null;
-  if (expiresAt === undefined) return;
-  const delay = Math.max(REFRESH_MIN_DELAY_MS, expiresAt - Date.now() - REFRESH_MARGIN_MS);
-  scheduleRefreshIn(delay);
-}
-
-function scheduleRefreshIn(delayMs: number): void {
-  if (refreshTimer) clearTimeout(refreshTimer);
-  // setTimeout's delay is a 32-bit signed int; a larger value silently clamps
-  // to 1ms and fires immediately. Access tokens are long-lived (the server's
-  // default TTL is 30 days), so `expiresAt - now - margin` routinely exceeds
-  // this ceiling. When it does, sleep the max, then re-evaluate the remaining
-  // delay against `currentExpiresAt` and re-arm — instead of refreshing in a
-  // tight 1ms loop.
-  if (delayMs > MAX_TIMER_MS) {
-    refreshTimer = setTimeout(() => {
-      if (currentExpiresAt !== null) scheduleRefresh(currentExpiresAt);
-    }, MAX_TIMER_MS);
-  } else {
-    refreshTimer = setTimeout(() => {
-      void refreshSession();
-    }, delayMs);
-  }
-  // Don't keep the process alive just for the renewal timer.
-  refreshTimer.unref?.();
-}
-
-function persistRotated(rotated: ApiRefreshResult): void {
-  updateActiveProfileAuth({
-    encrypted_token: safeStorage.encryptString(rotated.token).toString('base64'),
-    encrypted_refresh_token: safeStorage.encryptString(rotated.refreshToken).toString('base64'),
-  });
-}
-
-function isRefreshDead(err: unknown): boolean {
-  return (
-    err instanceof ApiError && (err.code === 'REFRESH_INVALID' || err.code === 'REFRESH_REPLAYED')
-  );
-}
-
-// ─── helpers ─────────────────────────────────────────────────────────
-
-/**
- * ensureWorkspace('owl','default') → the owl-shaped `{ id, slug }`. ApiWorkspace
- * exposes tool + name (not slug); synthesise "<tool>/<name>" so toml + daemon
- * stay in the pre-Phase-7 format. Reuses `client` when the caller already built
- * a device-bound one (avoids a second client).
- */
-async function ensureOwlWorkspace(
-  auth: AuthContext,
-  deviceId: string,
-  client?: SkybridgeClient,
-): Promise<{ id: string; slug: string }> {
-  const c = client ?? createSkybridgeClient({ authContext: auth, deviceId });
-  const ws = await c.ensureWorkspace('owl', 'default');
-  return { id: ws.id, slug: `${ws.tool}/${ws.name}` };
-}
-
-/**
- * Phase 16 (D10b): on a first login to an *empty* account that has local
- * notes, ask the user to merge (whole-db claim) or stay independent. On
- * "merge" copy `owl/owl.db` → the target profile db BEFORE the switch (B9),
- * so `switchProfile` opens the claimed copy. No-op for a non-empty account
- * (pure pull, never merges local) or an empty local. Account sync never
- * writes the local db (D10b invariant).
- */
-async function maybeClaimLocalInto(
-  client: SkybridgeClient,
-  workspaceId: string,
-  profileId: string,
-  email: string,
-): Promise<void> {
-  if (!(await isAccountEmpty(client, workspaceId))) return;
-  const local = inspectLocalProfile();
-  if (local.noteCount === 0) return;
-  const choice = await promptClaim({
-    email,
-    localCount: local.noteCount,
-    hasSyncTraces: local.hasSyncTraces,
-  });
-  if (choice !== 'merge') return;
-  const target = paths.profileDbPath(profileId);
-  mkdirSync(dirname(target), { recursive: true });
-  await copyLocalProfileDbInto(target);
-}
-
-/** An account is empty when its change-log has nothing (latestSeq 0, no rows). */
-async function isAccountEmpty(client: SkybridgeClient, workspaceId: string): Promise<boolean> {
-  const res = await client.pullChanges(workspaceId, 0, 1);
-  return res.latestSeq === 0 && res.changes.length === 0;
-}
-
-/** Reuse a remembered device: read its stored meta, else synth (§5.3). */
-function reuseDevice(profileId: string, deviceId: string): SkybridgeDeviceSection {
-  const stored = readProfileSection(profileId)?.device;
-  if (stored) return stored;
-  // No stored section (e.g. db remembered the id but toml was cleared) → synth.
-  // The name is display-only and hostname-deterministic, so it stays stable.
-  return {
-    id: deviceId,
-    name: defaultDeviceName(),
-    app_version: `owl ${OWL_APP_VERSION}`,
-    client_version: CLIENT_VERSION,
-  };
-}
-
-async function registerNewDevice(auth: AuthContext): Promise<SkybridgeDeviceSection> {
-  const seed = createSkybridgeClient({ authContext: auth });
-  const device = await seed.registerDevice({
-    name: defaultDeviceName(),
-    appVersion: `owl ${OWL_APP_VERSION}`,
-    clientVersion: CLIENT_VERSION,
-  });
-  return {
-    id: device.id,
-    name: device.name,
-    app_version: `owl ${OWL_APP_VERSION}`,
-    client_version: CLIENT_VERSION,
-  };
-}
-
-interface SyncSessionPayload {
-  token: string;
-  user_id: string;
-  email: string;
-  server_url: string;
-  device: { id: string; name: string; app_version?: string; client_version?: string };
-  workspace: { id: string; slug?: string };
-}
-
-async function postSyncSession(payload: SyncSessionPayload): Promise<void> {
-  const res = await fetch(`${getDaemonUrl()}/sync/session`, {
-    method: 'POST',
-    headers: { ...daemonAuthHeaders(), 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
-  if (!res.ok) {
-    throw new Error(`daemon /sync/session returned HTTP ${res.status}`);
-  }
-}
-
-/** Switch the daemon onto a profile db; returns the remembered device id. */
-async function postSyncSwitch(profileId: string): Promise<{ device_id: string | null }> {
-  const res = await fetch(`${getDaemonUrl()}/sync/switch`, {
-    method: 'POST',
-    headers: { ...daemonAuthHeaders(), 'Content-Type': 'application/json' },
-    body: JSON.stringify({ profile_id: profileId }),
-  });
-  if (!res.ok) {
-    throw new Error(`daemon /sync/switch returned HTTP ${res.status}`);
-  }
-  const body = (await res.json()) as { data?: { device_id?: string | null } };
-  return { device_id: body.data?.device_id ?? null };
-}
-
-async function bestEffortSwitchLocal(): Promise<void> {
-  try {
-    await postSyncSwitch(LOCAL_PROFILE);
-  } catch {
-    // best-effort — daemon may be down; the toml's active_profile (set to
-    // local by the caller on logout) wins on the next boot.
-  }
-}
-
-/**
- * P5-d Phase 17 (delete-local-copy) — switch the daemon onto a profile, but
- * surface failures the active-delete handle-release gate needs to tell apart:
- * a non-2xx throws a plain Error (daemon is up but the switch failed → it may
- * still hold the db handle → the caller MUST abort the delete), while a bare
- * fetch failure is wrapped as NetworkError (daemon unreachable → no handle held
- * → safe to continue). Unlike `bestEffortSwitchLocal`, it never swallows.
- */
-async function postSyncSwitchStrict(profileId: string): Promise<void> {
-  let res: Response;
-  try {
-    res = await fetch(`${getDaemonUrl()}/sync/switch`, {
-      method: 'POST',
-      headers: { ...daemonAuthHeaders(), 'Content-Type': 'application/json' },
-      body: JSON.stringify({ profile_id: profileId }),
-    });
-  } catch (err) {
-    throw new NetworkError(
-      err instanceof Error ? err.message : String(err),
-      err instanceof Error ? err : undefined,
-    );
-  }
-  if (!res.ok) throw new Error(`daemon /sync/switch returned HTTP ${res.status}`);
-}
-
-async function bestEffortRemoteLogout(auth: AuthContext): Promise<void> {
-  try {
-    const client = createSkybridgeClient({ authContext: auth });
-    await client.logout();
-  } catch {
-    // best-effort; server may be unreachable or token already revoked
-  }
-}
-
-/**
- * P5-d Phase 17 — best-effort remote teardown for a profile, shared by full
- * logout and delete-local-copy. **device-first, logout-last** (③): `logout()`
- * kills the token family, after which the same token 401s, so a device revoke
- * must precede it (the skybridge SDK smoke test verifies this). Obtains a usable
- * access token from the stored one, refreshing once on a missing / expired
- * access — refresh-only profiles work too (⑨). Every step is swallowed; the
- * caller's local cleanup proceeds regardless.
- */
-async function bestEffortRevokeProfile(input: {
-  serverUrl: string;
-  user: { id: string; email: string; displayName: null };
-  encryptedAccess?: string;
-  encryptedRefresh?: string;
-  deviceId?: string;
-}): Promise<void> {
-  const { serverUrl, user, deviceId } = input;
-  const refreshTok = decryptB64(input.encryptedRefresh);
-  let access = decryptB64(input.encryptedAccess);
-
-  const makeClient = (token: string) =>
-    createSkybridgeClient({ authContext: { serverUrl, token, user } });
-
-  // Run an authenticated action, refreshing once on a missing / expired access.
-  // `access` is updated to the refreshed token so a later action reuses it.
-  const withAccess = async (action: (client: SkybridgeClient) => Promise<void>): Promise<void> => {
-    if (access) {
-      try {
-        await action(makeClient(access));
-        return;
-      } catch (err) {
-        if (!isTokenExpired(err)) return; // network / already-dead → best-effort
-        // expired → refresh below
-      }
-    }
-    if (!refreshTok) return;
-    try {
-      access = (await skybridgeRefresh(serverUrl, refreshTok)).token;
-    } catch {
-      return; // dead / network refresh → give up the remote step
-    }
-    try {
-      await action(makeClient(access));
-    } catch {
-      // best-effort
-    }
-  };
-
-  if (deviceId) await withAccess((c) => c.revokeDevice(deviceId)); // ③ device-first
-  await withAccess((c) => c.logout()); // logout-last (revokes the family)
-}
-
-/**
- * Revoke the refresh-token family server-side for a full logout (D2). Keeps the
- * device row (so a re-login reuses it, §5.3) → no deviceId, logout only.
- */
-async function remoteRevoke(cfg: SkybridgeConfig): Promise<void> {
-  if (!cfg.auth) return;
-  await bestEffortRevokeProfile({
-    serverUrl: cfg.server.url,
-    user: { id: cfg.auth.user_id, email: cfg.auth.email, displayName: null },
-    encryptedAccess: cfg.auth.encrypted_token,
-    encryptedRefresh: cfg.auth.encrypted_refresh_token,
-  });
-}
-
-function isTokenExpired(err: unknown): boolean {
-  return err instanceof ApiError && err.code === 'TOKEN_EXPIRED';
-}
-
-/** Decrypt a base64 safeStorage ciphertext, or null on any failure. */
-function decryptB64(ciphertext?: string): string | null {
-  if (!ciphertext || !safeStorage.isEncryptionAvailable()) return null;
-  try {
-    return safeStorage.decryptString(Buffer.from(ciphertext, 'base64'));
-  } catch {
-    return null;
-  }
-}
-
-function defaultDeviceName(): string {
-  const host = hostname();
-  return host ? `${host} (owl)` : 'owl device';
-}
-
-function safeReadConfig(): SkybridgeConfig | null {
-  try {
-    return readSkybridgeConfig();
-  } catch {
-    return null;
-  }
 }
