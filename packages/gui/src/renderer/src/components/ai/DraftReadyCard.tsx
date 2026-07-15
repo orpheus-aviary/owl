@@ -96,61 +96,86 @@ export function DraftReadyCard({ draft, onOpen, onApprove }: DraftReadyCardProps
       </button>
 
       {isOpen && (
-        <div className="px-3 py-2 space-y-2">
-          {draft.tags.length > 0 && (
-            <div className="flex flex-wrap gap-1">
-              {draft.tags.map((t) => (
-                <span
-                  key={t}
-                  className="px-1.5 py-0.5 rounded text-[10px] bg-muted text-muted-foreground font-mono"
-                >
-                  {t}
-                </span>
-              ))}
-            </div>
-          )}
-          {draft.folder_id && (
-            <div className="flex items-center gap-1 text-[11px] text-muted-foreground">
-              <FolderClosed className="size-3" />
-              <span className="font-mono">{draft.folder_id}</span>
-            </div>
-          )}
-          <pre className="whitespace-pre-wrap break-words text-[11px] leading-snug text-muted-foreground bg-muted/20 rounded p-2 max-h-40 overflow-y-auto">
-            {preview || '(无内容)'}
-          </pre>
+        <DraftReadyBody
+          draft={draft}
+          preview={preview}
+          disabled={disabled}
+          onOpen={onOpen}
+          onApprove={onApprove}
+        />
+      )}
+    </div>
+  );
+}
 
-          {draft.error && (
-            <div className="flex items-start gap-2 rounded border border-destructive/40 bg-destructive/10 px-2 py-1.5 text-[11px] text-destructive">
-              <AlertCircle className="size-3.5 shrink-0 mt-0.5" />
-              <span className="flex-1">{draft.error}</span>
-            </div>
-          )}
-
-          <div className="flex justify-end gap-2 pt-1">
-            <button
-              type="button"
-              onClick={() => onApprove?.(draft)}
-              disabled={!onApprove || disabled}
-              className="text-xs px-2.5 py-1 rounded border border-border bg-background hover:bg-muted disabled:bg-muted/40 disabled:text-muted-foreground inline-flex items-center gap-1"
+/** The expanded card body: tags / folder / content preview / error band / actions. */
+function DraftReadyBody({
+  draft,
+  preview,
+  disabled,
+  onOpen,
+  onApprove,
+}: {
+  draft: DraftReadyData;
+  preview: string;
+  disabled: boolean;
+  onOpen?: (draft: DraftReadyData) => void;
+  onApprove?: (draft: DraftReadyData) => void | Promise<void>;
+}) {
+  return (
+    <div className="px-3 py-2 space-y-2">
+      {draft.tags.length > 0 && (
+        <div className="flex flex-wrap gap-1">
+          {draft.tags.map((t) => (
+            <span
+              key={t}
+              className="px-1.5 py-0.5 rounded text-[10px] bg-muted text-muted-foreground font-mono"
             >
-              {draft.approving ? (
-                <Loader2 className="size-3 animate-spin" />
-              ) : draft.approved ? (
-                <Check className="size-3" />
-              ) : null}
-              {draft.error ? '重试同意' : '同意'}
-            </button>
-            <button
-              type="button"
-              onClick={() => onOpen?.(draft)}
-              disabled={!onOpen || disabled}
-              className="text-xs px-2.5 py-1 rounded bg-primary text-primary-foreground hover:bg-primary/90 disabled:bg-muted disabled:text-muted-foreground"
-            >
-              {draft.opened ? '已打开' : '打开'}
-            </button>
-          </div>
+              {t}
+            </span>
+          ))}
         </div>
       )}
+      {draft.folder_id && (
+        <div className="flex items-center gap-1 text-[11px] text-muted-foreground">
+          <FolderClosed className="size-3" />
+          <span className="font-mono">{draft.folder_id}</span>
+        </div>
+      )}
+      <pre className="whitespace-pre-wrap break-words text-[11px] leading-snug text-muted-foreground bg-muted/20 rounded p-2 max-h-40 overflow-y-auto">
+        {preview || '(无内容)'}
+      </pre>
+
+      {draft.error && (
+        <div className="flex items-start gap-2 rounded border border-destructive/40 bg-destructive/10 px-2 py-1.5 text-[11px] text-destructive">
+          <AlertCircle className="size-3.5 shrink-0 mt-0.5" />
+          <span className="flex-1">{draft.error}</span>
+        </div>
+      )}
+
+      <div className="flex justify-end gap-2 pt-1">
+        <button
+          type="button"
+          onClick={() => onApprove?.(draft)}
+          disabled={!onApprove || disabled}
+          className="text-xs px-2.5 py-1 rounded border border-border bg-background hover:bg-muted disabled:bg-muted/40 disabled:text-muted-foreground inline-flex items-center gap-1"
+        >
+          {draft.approving ? (
+            <Loader2 className="size-3 animate-spin" />
+          ) : draft.approved ? (
+            <Check className="size-3" />
+          ) : null}
+          {draft.error ? '重试同意' : '同意'}
+        </button>
+        <button
+          type="button"
+          onClick={() => onOpen?.(draft)}
+          disabled={!onOpen || disabled}
+          className="text-xs px-2.5 py-1 rounded bg-primary text-primary-foreground hover:bg-primary/90 disabled:bg-muted disabled:text-muted-foreground"
+        >
+          {draft.opened ? '已打开' : '打开'}
+        </button>
+      </div>
     </div>
   );
 }

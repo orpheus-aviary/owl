@@ -56,38 +56,36 @@ function walk(node: MdastNode): void {
   if (!children || children.length === 0) return;
   const out: MdastNode[] = [];
   for (const child of children) {
-    if (SKIP_TYPES.has(child.type)) {
-      out.push(child);
-      continue;
-    }
-    // `[text](<bare-uuid>)` — rewrite url to `note:<uuid>`. Don't descend
-    // into children (would nest links). Non-UUID urls pass through.
-    if (child.type === 'link') {
-      if (typeof child.url === 'string' && UUID_ONLY_RE.test(child.url)) {
-        child.url = `note:${child.url.trim()}`;
-      }
-      out.push(child);
-      continue;
-    }
-    // Inline-code that is entirely one UUID → replace with link node.
-    // Mixed inline code (e.g. `id = <uuid>`) passes through unchanged.
-    if (child.type === 'inlineCode' && typeof child.value === 'string') {
-      if (UUID_ONLY_RE.test(child.value)) {
-        const uuid = child.value.trim();
-        out.push(makeLink(uuid));
-      } else {
-        out.push(child);
-      }
-      continue;
-    }
-    if (child.type === 'text' && typeof child.value === 'string') {
-      out.push(...splitOnUuid(child.value));
-    } else {
-      walk(child);
-      out.push(child);
-    }
+    out.push(...rewriteChild(child));
   }
   node.children = out;
+}
+
+/** Rewrite one child node into its replacement node(s) (recursing into non-leaf children). */
+function rewriteChild(child: MdastNode): MdastNode[] {
+  if (SKIP_TYPES.has(child.type)) return [child];
+
+  // `[text](<bare-uuid>)` — rewrite url to `note:<uuid>`. Don't descend into
+  // children (would nest links). Non-UUID urls pass through.
+  if (child.type === 'link') {
+    if (typeof child.url === 'string' && UUID_ONLY_RE.test(child.url)) {
+      child.url = `note:${child.url.trim()}`;
+    }
+    return [child];
+  }
+
+  // Inline-code that is entirely one UUID → replace with link node. Mixed inline
+  // code (e.g. `id = <uuid>`) passes through unchanged.
+  if (child.type === 'inlineCode' && typeof child.value === 'string') {
+    return UUID_ONLY_RE.test(child.value) ? [makeLink(child.value.trim())] : [child];
+  }
+
+  if (child.type === 'text' && typeof child.value === 'string') {
+    return splitOnUuid(child.value);
+  }
+
+  walk(child);
+  return [child];
 }
 
 function makeLink(uuid: string): MdastNode {

@@ -33,6 +33,19 @@ import { useCallback, useMemo, useRef, useState } from 'react';
  * and `setActiveConversation` for each step. Search input keeps its native
  * arrow behaviour (tag-guarded).
  */
+
+/** The conversation id one step (`direction` = ±1) from the active one in the filtered list. */
+function nextConversationId(
+  filtered: ConversationMeta[],
+  activeId: string | null,
+  direction: number,
+): string | undefined {
+  const anchorIdx = activeId ? filtered.findIndex((c) => c.id === activeId) : -1;
+  const nextIdx =
+    anchorIdx === -1 ? 0 : Math.min(Math.max(anchorIdx + direction, 0), filtered.length - 1);
+  return filtered[nextIdx]?.id;
+}
+
 export function ChatSidebar() {
   const conversations = useAiStore((s) => s.conversations);
   const activeConversationId = useAiStore((s) => s.activeConversationId);
@@ -72,14 +85,12 @@ export function ChatSidebar() {
       if (filtered.length === 0) return;
       e.preventDefault();
       e.stopPropagation();
-      const anchorIdx = activeConversationId
-        ? filtered.findIndex((c) => c.id === activeConversationId)
-        : -1;
-      const delta = e.key === 'ArrowDown' ? 1 : -1;
-      const nextIdx =
-        anchorIdx === -1 ? 0 : Math.min(Math.max(anchorIdx + delta, 0), filtered.length - 1);
-      const next = filtered[nextIdx];
-      if (next) setActiveConversation(next.id);
+      const nextId = nextConversationId(
+        filtered,
+        activeConversationId,
+        e.key === 'ArrowDown' ? 1 : -1,
+      );
+      if (nextId) setActiveConversation(nextId);
     },
     [filtered, activeConversationId, setActiveConversation],
   );

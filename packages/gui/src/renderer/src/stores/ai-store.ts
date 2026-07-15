@@ -533,43 +533,55 @@ export function hydrateDaemonMessages(historyMessages: AiHistoryMessage[]): Chat
   const out: ChatMessage[] = [];
   for (const m of historyMessages) {
     if (m.role === 'user') {
-      out.push({
-        id: localId(),
-        role: 'user',
-        content: m.content,
-        thinking: '',
-        toolCalls: [],
-        drafts: [],
-        previews: [],
-        isStreaming: false,
-      });
+      out.push(hydrateUserMessage(m));
     } else if (m.role === 'assistant') {
-      const toolCalls: ChatToolCall[] = (m.tool_calls ?? []).map((tc) => ({
-        id: tc.id,
-        name: tc.name,
-        args: safeParseArgs(tc.arguments),
-      }));
-      out.push({
-        id: localId(),
-        role: 'assistant',
-        content: m.content,
-        thinking: m.reasoning_content ?? '',
-        toolCalls,
-        drafts: [],
-        previews: [],
-        isStreaming: false,
-      });
+      out.push(hydrateAssistantMessage(m));
     } else if (m.role === 'tool') {
-      // Slot into the most recent assistant's toolCalls by tool_call_id.
-      const assistant = findLastAssistant(out);
-      if (!assistant || !m.tool_call_id) continue;
-      const call = assistant.toolCalls.find((tc) => tc.id === m.tool_call_id);
-      if (!call) continue;
-      call.result = safeParseResult(m.content);
-      if (m.is_error !== undefined) call.isError = m.is_error;
+      slotToolResult(out, m);
     }
   }
   return out;
+}
+
+function hydrateUserMessage(m: AiHistoryMessage): ChatMessage {
+  return {
+    id: localId(),
+    role: 'user',
+    content: m.content,
+    thinking: '',
+    toolCalls: [],
+    drafts: [],
+    previews: [],
+    isStreaming: false,
+  };
+}
+
+function hydrateAssistantMessage(m: AiHistoryMessage): ChatMessage {
+  const toolCalls: ChatToolCall[] = (m.tool_calls ?? []).map((tc) => ({
+    id: tc.id,
+    name: tc.name,
+    args: safeParseArgs(tc.arguments),
+  }));
+  return {
+    id: localId(),
+    role: 'assistant',
+    content: m.content,
+    thinking: m.reasoning_content ?? '',
+    toolCalls,
+    drafts: [],
+    previews: [],
+    isStreaming: false,
+  };
+}
+
+/** Slot a tool result into the most recent assistant's matching toolCall (by tool_call_id). */
+function slotToolResult(out: ChatMessage[], m: AiHistoryMessage): void {
+  const assistant = findLastAssistant(out);
+  if (!assistant || !m.tool_call_id) return;
+  const call = assistant.toolCalls.find((tc) => tc.id === m.tool_call_id);
+  if (!call) return;
+  call.result = safeParseResult(m.content);
+  if (m.is_error !== undefined) call.isError = m.is_error;
 }
 
 function findLastAssistant(messages: ChatMessage[]): ChatMessage | undefined {
