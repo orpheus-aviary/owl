@@ -27,12 +27,21 @@ interface TransportConfig {
    */
   getAuthHeaders: () => Record<string, string>;
   /**
-   * Phase B (B1) — invoked when a request comes back 401. The web host wires
-   * this to clear its in-memory session so the auth gate falls back to the
-   * login screen. Host-agnostic: the Electron host leaves it unset (a local
-   * daemon never 401s pre-A6), so the hook stays a no-op there.
+   * Phase B (B1) / 0.6 ④ — invoked when a request comes back 401, carrying the
+   * bare bearer token THIS request actually used (`usedToken`, `null` when no
+   * bearer was attached). The web host wires this to clear its in-memory session
+   * so the auth gate falls back to login — but only when `usedToken` matches the
+   * currently-active session, so a late 401 from a request issued under a
+   * now-replaced session can't tear down the new one. Host-agnostic: the
+   * Electron host leaves it unset, so the hook stays a no-op there.
    */
-  onUnauthorized?: () => void;
+  onUnauthorized?: (info: UnauthorizedInfo) => void;
+}
+
+/** Payload handed to `onUnauthorized` — see {@link TransportConfig.onUnauthorized}. */
+export interface UnauthorizedInfo {
+  /** The bare bearer (no `Bearer ` prefix) the 401'd request carried, or null. */
+  readonly usedToken: string | null;
 }
 
 const config: TransportConfig = {
@@ -48,7 +57,7 @@ const config: TransportConfig = {
 export function configureTransport(opts: {
   baseUrl: () => string;
   getAuthHeaders?: () => Record<string, string>;
-  onUnauthorized?: () => void;
+  onUnauthorized?: (info: UnauthorizedInfo) => void;
 }): void {
   config.baseUrl = opts.baseUrl;
   if (opts.getAuthHeaders) config.getAuthHeaders = opts.getAuthHeaders;
@@ -74,10 +83,16 @@ export function authHeaders(): Record<string, string> {
 }
 
 /** Return the body on success, or throw ApiError (firing the 401 hook first). */
-function unwrap<T>(res: Response, json: ApiResponse<T>): ApiResponse<T> {
+function unwrap<T>(res: Response, json: ApiResponse<T>, usedToken: string | null): ApiResponse<T> {
   if (json.success) return json;
-  if (res.status === 401) config.onUnauthorized?.();
+  if (res.status === 401) config.onUnauthorized?.({ usedToken });
   throw new ApiError(res.status, json.error_code, json.message ?? 'Unknown error');
+}
+
+/** The bare bearer from the outgoing headers, so a 401 reports the token used. */
+function bareToken(headers: Record<string, string>): string | null {
+  const auth = headers.Authorization;
+  return typeof auth === 'string' && auth.startsWith('Bearer ') ? auth.slice(7) : null;
 }
 
 export async function request<T>(
@@ -88,6 +103,7 @@ export async function request<T>(
 ): Promise<ApiResponse<T>> {
   const url = `${baseUrl()}${path}`;
   const headers: Record<string, string> = { ...config.getAuthHeaders() };
+  const usedToken = bareToken(headers);
   const init: RequestInit = { method };
   if (body !== undefined) {
     headers['Content-Type'] = 'application/json';
@@ -98,7 +114,7 @@ export async function request<T>(
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
       const res = await fetch(url, init);
-      return unwrap(res, (await res.json()) as ApiResponse<T>);
+      return unwrap(res, (await res.json()) as ApiResponse<T>, usedToken);
     } catch (err) {
       if (err instanceof ApiError) throw err;
       if (attempt === retries) throw err;

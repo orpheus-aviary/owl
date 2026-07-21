@@ -1,6 +1,8 @@
 import { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { subscribeSse } from '../lib/sse-client';
+import { SseHttpError, subscribeSse } from '../lib/sse-client';
+import { clearWebSession, getWebSession } from '../platform/web-session';
+import { invalidateSession } from '../session/session-actions';
 import { useConflictsStore } from '../stores/conflicts-store';
 import { useDataBus } from '../stores/data-bus';
 import { openNoteById } from '../stores/editor-store';
@@ -83,9 +85,24 @@ export function EventsSubscriber(): null {
         void handleDaemonEvent(event, rawData, handlers);
       },
       // Every connection-lifecycle end (error OR silent EOF) re-probes status,
-      // so「未连接」flips back once the daemon answers again (D12).
-      onDisconnect: () => {
+      // so「未连接」flips back once the daemon answers again (D12). ④ (§5.3):
+      // fixed order stale → 401 → re-probe.
+      onDisconnect: ({ error, usedToken }) => {
         if (isStale(gen)) return;
+        // Web: an SSE 401 for the CURRENTLY-active session deactivates, mirroring
+        // the REST 401 hook — and BEFORE the status re-probe, so we don't fire a
+        // now-tokenless probe that would just 401 again. `usedToken` (captured
+        // per attempt) vs `getWebSession()?.token` keeps a stale subscription's
+        // late 401 from kicking a newer session. No-op on desktop (session null).
+        if (
+          error instanceof SseHttpError &&
+          error.status === 401 &&
+          usedToken === getWebSession()?.token
+        ) {
+          clearWebSession();
+          invalidateSession();
+          return;
+        }
         void fetchSyncStatus();
       },
     });
