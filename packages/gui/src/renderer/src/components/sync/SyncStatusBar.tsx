@@ -10,7 +10,7 @@ import {
 } from '@/components/ui/popover';
 import type { SyncState, SyncStatusSnapshot } from '@/lib/api';
 import { getPlatform } from '@/platform';
-import { useSyncStatus } from '@/stores/sync-status';
+import { type ProbeStatus, useSyncStatus } from '@/stores/sync-status';
 import { Check, Loader2, Plus } from 'lucide-react';
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
@@ -31,8 +31,12 @@ import type { ProfileSummary, SyncProfilesReply } from '../../../../shared/sync-
  * on every reconnect, so there is deliberately NO manual reconnect button —
  * offline stays informational; manual sync is the one actionable affordance.
  *
- * The four state labels mirror `SyncState` exactly — adding a new state
- * to the union means updating `STATE_INFO` below.
+ * ① — the label is derived in four branches (strict → permissive): an
+ * unreachable daemon →「未连接」(D12) overrides any stale snapshot; an
+ * unregistered workspace →「本地」(D1, see `isAccountSnapshot`); a registered
+ * account → its live `SyncState` via `STATE_INFO`; no snapshot yet →「连接中」
+ * (D2). Only the account branch mirrors `SyncState`, so adding a state to the
+ * union still means updating `STATE_INFO` — but「本地/连接中/未连接」sit outside it.
  */
 
 interface StateInfo {
@@ -50,8 +54,37 @@ const STATE_INFO: Record<SyncState, StateInfo> = {
   offline: { label: '离线', dotClass: 'bg-amber-500', spin: false },
 };
 
+// States that sit OUTSIDE the account-sync `SyncState` union: a purely-local
+// workspace (D1 — hollow ring, no cloud), a not-yet-probed daemon (D2), and a
+// daemon that can't be reached at all (D12). Hollow ring = `border` with no
+// `bg-*` fill so the dot renders as an outline circle.
+const LOCAL_INFO: StateInfo = {
+  label: '本地',
+  dotClass: 'border border-muted-foreground',
+  spin: false,
+};
+const PENDING_INFO: StateInfo = {
+  label: '连接中',
+  dotClass: 'border border-muted-foreground/50',
+  spin: false,
+};
+const DOWN_INFO: StateInfo = { label: '未连接', dotClass: 'bg-amber-500', spin: false };
+
+/**
+ * A snapshot is a real synced account ONLY when the device AND workspace are
+ * registered. `server_url` alone is NOT the signal: a leftover `[server].url`
+ * in skybridge_config.toml (dev cruft, or a half-finished login) leaves
+ * `server_url` set while `device_id`/`workspace_id` stay null — that workspace
+ * is still purely local (nothing is pushed), so it must read「本地」, never
+ *「已同步」. No config at all → all three null → also local.
+ */
+function isAccountSnapshot(s: SyncStatusSnapshot): boolean {
+  return s.device_id !== null && s.workspace_id !== null;
+}
+
 export function SyncStatusBar({ className = '' }: { className?: string }) {
   const snapshot = useSyncStatus((s) => s.snapshot);
+  const probeStatus = useSyncStatus((s) => s.probeStatus);
 
   // P5-d Phase 17 (W4) — saved-profile list for the quick-switch section.
   // Fetched when the popover opens (a cheap toml read); 16a reloads the whole
@@ -70,11 +103,18 @@ export function SyncStatusBar({ className = '' }: { className?: string }) {
     });
   };
 
-  // `null` = haven't heard from daemon yet. Render as idle so the first
-  // paint doesn't flash an alarm — SSE / fetch will overwrite within a
-  // few hundred ms once the channel is up.
   const state = snapshot?.state ?? 'idle';
-  const info = STATE_INFO[state];
+  // Four-branch, strict → permissive (D12): an unreachable daemon overrides any
+  // (possibly stale) snapshot; then an unregistered workspace reads「本地」, a
+  // registered account its live sync state, and no-snapshot-yet「连接中」.
+  const info =
+    probeStatus === 'unreachable'
+      ? DOWN_INFO
+      : snapshot != null
+        ? isAccountSnapshot(snapshot)
+          ? STATE_INFO[snapshot.state]
+          : LOCAL_INFO
+        : PENDING_INFO;
 
   return (
     <Popover onOpenChange={loadProfiles}>
@@ -102,7 +142,7 @@ export function SyncStatusBar({ className = '' }: { className?: string }) {
         </button>
       </PopoverTrigger>
       <PopoverContent side="right" align="end" className="w-72">
-        <SyncStatusDetails snapshot={snapshot} state={state} />
+        <SyncStatusDetails snapshot={snapshot} state={state} probeStatus={probeStatus} />
         {/* W4 quick-switch — only when the daemon has reported (account or
             local view); the cold-start (null) view stays a calm explainer. */}
         {snapshot && <ProfileSwitcher data={profiles} loading={profilesLoading} />}
@@ -114,9 +154,11 @@ export function SyncStatusBar({ className = '' }: { className?: string }) {
 function SyncStatusDetails({
   snapshot,
   state,
+  probeStatus,
 }: {
   snapshot: SyncStatusSnapshot | null;
   state: SyncState;
+  probeStatus: ProbeStatus;
 }) {
   // Manual sync (W8) — only meaningful in the account-details view below,
   // but hooks must be unconditional so they live at the top.
@@ -132,6 +174,15 @@ function SyncStatusDetails({
     if (!reply.ok) setRunError(reply.message);
   };
 
+  // D12: the daemon itself is unreachable — surface it above whatever (possibly
+  // stale) snapshot detail follows, in every branch below.
+  const banner =
+    probeStatus === 'unreachable' ? (
+      <PopoverDescription className="text-amber-600 dark:text-amber-500">
+        daemon 未响应，正在重试…
+      </PopoverDescription>
+    ) : null;
+
   // No snapshot at all → daemon hasn't reported yet (cold start or
   // sync not configured). Surface a calm explainer rather than the
   // "0 pending / null device" placeholder we'd otherwise render.
@@ -139,6 +190,7 @@ function SyncStatusDetails({
     return (
       <PopoverHeader>
         <PopoverTitle>同步状态</PopoverTitle>
+        {banner}
         <PopoverDescription>
           daemon 尚未上报同步状态。如果未配置 skybridge，可在{' '}
           <Link to="/settings?tab=sync" className="underline">
@@ -150,12 +202,15 @@ function SyncStatusDetails({
     );
   }
 
-  // W6: snapshot reported AND server_url null → local profile (not an account).
-  // Surface it plainly instead of a wall of "未配置 / 未注册" rows.
-  if (snapshot.server_url === null) {
+  // Not a registered account (no device/workspace binding) → purely local,
+  // regardless of any leftover server_url. Surface it plainly instead of a wall
+  // of "未注册" rows + a manual-sync button that would only ever error. See
+  // `isAccountSnapshot`.
+  if (!isAccountSnapshot(snapshot)) {
     return (
       <PopoverHeader>
         <PopoverTitle>本地独立工作区</PopoverTitle>
+        {banner}
         <PopoverDescription>
           笔记仅存储在本地，不会同步到其他设备。可在{' '}
           <Link to="/settings?tab=sync" className="underline">
@@ -171,6 +226,7 @@ function SyncStatusDetails({
     <div className="flex flex-col gap-3 text-xs">
       <PopoverHeader>
         <PopoverTitle className="text-sm">{STATE_INFO[state].label}</PopoverTitle>
+        {banner}
         {state === 'offline' && (
           <PopoverDescription>
             连不上同步服务器，后台每 ≤30s 自动重试，无需手动操作。

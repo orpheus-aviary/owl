@@ -2,6 +2,7 @@
 // through the configured transport). Re-exported here so the `@/lib/sse-client`
 // import path stays stable for the renderer.
 export {
+  type SseDisconnect,
   type SseFrame,
   type StreamSseOptions,
   type SubscribeSseOptions,

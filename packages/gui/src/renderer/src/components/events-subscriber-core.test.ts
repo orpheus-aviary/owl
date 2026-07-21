@@ -9,6 +9,7 @@ function makeHandlers() {
     setSyncStatus: vi.fn(),
     refreshConflicts: vi.fn().mockResolvedValue(undefined),
     bumpConflicts: vi.fn(),
+    onConnected: vi.fn(),
   };
 }
 
@@ -45,6 +46,7 @@ describe('handleDaemonEvent — open_note', () => {
     expect(handlers.openNoteById).not.toHaveBeenCalled();
     expect(handlers.navigate).not.toHaveBeenCalled();
     expect(handlers.setSyncStatus).not.toHaveBeenCalled();
+    expect(handlers.onConnected).not.toHaveBeenCalled();
   });
 
   it('warns and returns on malformed JSON', async () => {
@@ -79,6 +81,7 @@ describe('handleDaemonEvent — open_note', () => {
       setSyncStatus: vi.fn(),
       refreshConflicts: vi.fn().mockResolvedValue(undefined),
       bumpConflicts: vi.fn(),
+      onConnected: vi.fn(),
     };
 
     await expect(
@@ -181,6 +184,26 @@ describe('handleDaemonEvent — conflicts:changed (P5-c §6.19)', () => {
     };
     await handleDaemonEvent('conflicts:changed', '{}', handlers);
     expect(handlers.bumpConflicts).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('handleDaemonEvent — hello (① connection re-probe)', () => {
+  it('calls onConnected() on a hello frame (and nothing else)', async () => {
+    const handlers = makeHandlers();
+    await handleDaemonEvent('hello', '', handlers);
+    expect(handlers.onConnected).toHaveBeenCalledTimes(1);
+    expect(handlers.setSyncStatus).not.toHaveBeenCalled();
+    expect(handlers.openNoteById).not.toHaveBeenCalled();
+  });
+
+  it('ignores the hello payload (connection signal, not a business event)', async () => {
+    const handlers = makeHandlers();
+    await handleDaemonEvent('hello', 'anything-here', handlers);
+    expect(handlers.onConnected).toHaveBeenCalledTimes(1);
+  });
+
+  it('is NOT a member of EVENT_TYPES (not in the OwlEvent union)', () => {
+    expect([...EVENT_TYPES]).not.toContain('hello');
   });
 });
 

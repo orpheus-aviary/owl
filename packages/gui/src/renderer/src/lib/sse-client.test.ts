@@ -1,5 +1,12 @@
-import { describe, expect, it, vi } from 'vitest';
-import { SseHttpError, parseSseBlock, streamSse, subscribeSse } from './sse-client';
+import { configureTransport } from '@orpheus-aviary/owl-shared';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+  type SseDisconnect,
+  SseHttpError,
+  parseSseBlock,
+  streamSse,
+  subscribeSse,
+} from './sse-client';
 
 /**
  * Build a Response whose body streams the given chunks. Each chunk is
@@ -275,7 +282,7 @@ describe('subscribeSse', () => {
     vi.unstubAllGlobals();
   });
 
-  it('invokes onError and retries on a non-2xx connection', async () => {
+  it('fires onDisconnect with the error and retries on a non-2xx connection', async () => {
     const controller = new AbortController();
     let calls = 0;
     const fetchMock = vi.fn(() => {
@@ -288,18 +295,122 @@ describe('subscribeSse', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    const errors: unknown[] = [];
+    const disconnects: SseDisconnect[] = [];
     subscribeSse({
       path: '/events',
       signal: controller.signal,
       backoffMs: [0],
       onEvent: () => {},
-      onError: (e) => errors.push(e),
+      onDisconnect: (i) => disconnects.push(i),
       warn: () => {},
     });
 
-    await vi.waitFor(() => expect(errors.length).toBe(1));
-    expect(errors[0]).toBeInstanceOf(SseHttpError);
+    await vi.waitFor(() => expect(disconnects.length).toBeGreaterThanOrEqual(1));
+    expect(disconnects[0].clean).toBe(false);
+    expect(disconnects[0].error).toBeInstanceOf(SseHttpError);
     vi.unstubAllGlobals();
+  });
+});
+
+// ① — the exactly-once disconnect contract that ① (status re-probe) and ④ (web
+// 401 deactivation) both hang off. Fires once per connection lifecycle end,
+// EXCEPT on abort; carries the bearer token THIS attempt actually used.
+describe('subscribeSse onDisconnect (①)', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    configureTransport({ baseUrl: () => '', getAuthHeaders: () => ({}) });
+  });
+
+  /** Drive until the first onDisconnect, aborting there to stop reconnecting. */
+  function runUntilDisconnect(
+    fetchImpl: () => Promise<unknown>,
+    authHeaders: () => Record<string, string> = () => ({}),
+  ): Promise<SseDisconnect> {
+    configureTransport({ baseUrl: () => '', getAuthHeaders: authHeaders });
+    vi.stubGlobal('fetch', vi.fn(fetchImpl));
+    const controller = new AbortController();
+    return new Promise<SseDisconnect>((resolve) => {
+      subscribeSse({
+        path: '/events',
+        signal: controller.signal,
+        backoffMs: [0],
+        warn: () => {},
+        onEvent: () => {},
+        onDisconnect: (info) => {
+          controller.abort();
+          resolve(info);
+        },
+      });
+    });
+  }
+
+  it('clean EOF: stream ends → { clean: true, error: null }', async () => {
+    const info = await runUntilDisconnect(async () =>
+      makeStreamingResponse(['event: hello\ndata: \n\n']),
+    );
+    expect(info.clean).toBe(true);
+    expect(info.error).toBe(null);
+  });
+
+  it('no body: ok response with null body → { clean: true, error: null }', async () => {
+    const info = await runUntilDisconnect(async () => new Response(null, { status: 200 }));
+    expect(info.clean).toBe(true);
+    expect(info.error).toBe(null);
+  });
+
+  it('thrown error: non-2xx → { clean: false, error: SseHttpError }', async () => {
+    const info = await runUntilDisconnect(
+      async () => new Response('boom', { status: 500, statusText: 'Server Error' }),
+    );
+    expect(info.clean).toBe(false);
+    expect(info.error).toBeInstanceOf(SseHttpError);
+    expect((info.error as SseHttpError).status).toBe(500);
+  });
+
+  it('abort mid-connection → onDisconnect NEVER fires', async () => {
+    configureTransport({ baseUrl: () => '', getAuthHeaders: () => ({}) });
+    // A fetch that stays pending until the signal aborts, then rejects like the
+    // real platform does — so recovery hinges on `signal.aborted`, not on the
+    // error shape (a DOMException is not `instanceof Error`).
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        (_url: string, init?: { signal?: AbortSignal }) =>
+          new Promise((_resolve, reject) => {
+            init?.signal?.addEventListener(
+              'abort',
+              () => reject(new DOMException('aborted', 'AbortError')),
+              { once: true },
+            );
+          }),
+      ),
+    );
+    const controller = new AbortController();
+    const onDisconnect = vi.fn();
+    subscribeSse({
+      path: '/events',
+      signal: controller.signal,
+      backoffMs: [0],
+      warn: () => {},
+      onEvent: () => {},
+      onDisconnect,
+    });
+    await Promise.resolve(); // let the loop reach the pending fetch
+    controller.abort();
+    await new Promise((r) => setTimeout(r, 5));
+    expect(onDisconnect).not.toHaveBeenCalled();
+  });
+
+  it('captures the bearer token used for THIS attempt (strips "Bearer ")', async () => {
+    const info = await runUntilDisconnect(
+      async () => new Response(null, { status: 200 }),
+      () => ({ Authorization: 'Bearer tok-abc' }),
+    );
+    expect(info.usedToken).toBe('tok-abc');
+  });
+
+  it('usedToken is null when no Authorization header is configured', async () => {
+    const info = await runUntilDisconnect(async () => new Response(null, { status: 200 }));
+    expect(info.usedToken).toBe(null);
   });
 });

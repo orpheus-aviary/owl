@@ -20,12 +20,14 @@ import { handleDaemonEvent } from './events-subscriber-core';
  * `controller.abort()` in cleanup tears it down on unmount and on StrictMode's
  * dev-mode double-mount — no long-lived leaks either way.
  *
- * `onEvent` receives the RAW data string; `handleDaemonEvent` parses it (and
- * silently ignores unknown event names like the daemon's keep-alive 'hello').
+ * `onEvent` receives the RAW data string; `handleDaemonEvent` parses it. The
+ * daemon's keep-alive 'hello' frame is routed to a status re-probe (①).
  *
  * On mount we also fire one `GET /sync/status` to seed the status bar
  * for the cold-start case (daemon has been running before the renderer
- * opened, so no `sync:status_changed` has fired yet).
+ * opened, so no `sync:status_changed` has fired yet). ① — the same probe is
+ * re-run on every SSE (re)connect (`hello`) and every disconnect, so a
+ * `pending`/`unreachable` status self-heals as the channel recovers.
  */
 export function EventsSubscriber(): null {
   const navigate = useNavigate();
@@ -46,6 +48,7 @@ export function EventsSubscriber(): null {
       setSyncStatus,
       refreshConflicts,
       bumpConflicts,
+      onConnected: () => void fetchSyncStatus(),
     };
 
     subscribeSse({
@@ -54,10 +57,13 @@ export function EventsSubscriber(): null {
       onEvent: (event, rawData) => {
         void handleDaemonEvent(event, rawData, handlers);
       },
+      // Every connection-lifecycle end (error OR silent EOF) re-probes status,
+      // so「未连接」flips back once the daemon answers again (D12).
+      onDisconnect: () => void fetchSyncStatus(),
     });
 
     return () => controller.abort();
-  }, [navigate, setSyncStatus, refreshConflicts, bumpConflicts]);
+  }, [navigate, setSyncStatus, fetchSyncStatus, refreshConflicts, bumpConflicts]);
 
   return null;
 }

@@ -15,15 +15,21 @@ import type { SyncStatusSnapshot } from '@/lib/api';
  * unhandled rejection. The emit side already surfaces real failures
  * to the CLI; renderer-side we just want to stay silent.
  *
- * P5-c §6.30 — `EVENT_TYPES` enumerates the daemon→GUI events the renderer
- * handles, asserted against the daemon's `OwlEvent` union in the test below.
- * `EventsSubscriber` forwards every SSE frame to `handleDaemonEvent`, which
- * branches by event name (unknown names like the keep-alive 'hello' no-op).
- * Adding a new daemon event type requires:
+ * P5-c §6.30 — `EVENT_TYPES` enumerates the daemon→GUI *business* events the
+ * renderer handles, asserted against the daemon's `OwlEvent` union in the test
+ * below. `EventsSubscriber` forwards every SSE frame to `handleDaemonEvent`,
+ * which branches by event name. Adding a new daemon event type requires:
  *   1. Add a branch to `handleDaemonEvent` below.
  *   2. Append the event name to `EVENT_TYPES`.
  * The matching `OwlEvent` union lives in
  * `packages/daemon/src/events/types.ts`.
+ *
+ * ① — the keep-alive `hello` frame is a connection-lifecycle signal, NOT a
+ * business event, so it is deliberately NOT in `EVENT_TYPES` / `OwlEvent`. It
+ * gets its own branch that calls `onConnected` to re-probe daemon status: after
+ * a failed cold-start probe (`probeStatus:'unreachable'`), an SSE reconnect only
+ * emits `hello`, so this is how that state self-heals. Truly unknown names
+ * (anything else) still no-op.
  */
 export const EVENT_TYPES = ['open_note', 'sync:status_changed', 'conflicts:changed'] as const;
 export type EventName = (typeof EVENT_TYPES)[number];
@@ -36,6 +42,8 @@ export interface EventHandlers {
   refreshConflicts: () => Promise<void>;
   /** P5-c §6.19: nudges data-bus subscribers (ConflictsPage list refetch). */
   bumpConflicts: () => void;
+  /** ①: the SSE channel just (re)connected (`hello` frame) — re-probe status. */
+  onConnected: () => void;
 }
 
 export async function handleDaemonEvent(
@@ -51,6 +59,9 @@ export async function handleDaemonEvent(
   }
   if (eventName === 'conflicts:changed') {
     return handleConflictsChanged(handlers);
+  }
+  if (eventName === 'hello') {
+    handlers.onConnected();
   }
 }
 

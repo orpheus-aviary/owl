@@ -165,6 +165,21 @@ export async function streamSse(options: StreamSseOptions): Promise<void> {
 
 // ─── GET subscription (e.g. /events) — raw data, auto-reconnect ──────────
 
+/** Payload of the exactly-once `onDisconnect` notification. */
+export interface SseDisconnect {
+  /** The error that ended the connection, or `null` for a clean close (EOF / no body). */
+  readonly error: unknown;
+  /** `true` when the stream ended without throwing (EOF / no body); `false` on error. */
+  readonly clean: boolean;
+  /**
+   * The bare bearer token this connection attempt was opened with (stripped of
+   * the `Bearer ` prefix), captured at the START of each attempt so callers can
+   * tell whether a late disconnect belongs to the currently-active session.
+   * `null` when no `Authorization: Bearer …` header was configured.
+   */
+  readonly usedToken: string | null;
+}
+
 export interface SubscribeSseOptions {
   /** Path appended to the configured base URL. */
   path: string;
@@ -174,8 +189,15 @@ export interface SubscribeSseOptions {
   onEvent: (event: string, rawData: string) => void;
   /** Optional logger for malformed lines / connection errors. */
   warn?: (msg: string) => void;
-  /** Called once per failed/closed connection, before the backoff wait. */
-  onError?: (err: unknown) => void;
+  /**
+   * Called EXACTLY ONCE per connection lifecycle end, before the backoff wait —
+   * whether the attempt threw (`clean:false`) or the stream ended cleanly / had
+   * no body (`clean:true`). NOT called when torn down via `signal.abort()`.
+   * This is the single recovery seam: the old `onError` (which only fired on a
+   * thrown attempt, missing silent EOF closes) is gone. Callers use this to
+   * re-probe status or, on a 401 for the active session, deactivate.
+   */
+  onDisconnect?: (info: SseDisconnect) => void;
   /** Backoff schedule (ms) per consecutive failed attempt; reset on connect. */
   backoffMs?: readonly number[];
 }
@@ -204,7 +226,7 @@ export function subscribeSse(options: SubscribeSseOptions): void {
     if (!response.ok) {
       throw new SseHttpError(response.status, response.statusText, await safeReadText(response));
     }
-    if (!response.body) return; // nothing to read → treat as a closed connection
+    if (!response.body) return; // nothing to read → treat as a clean close
     attempt = 0; // connected — reset backoff
     await readFrames(
       response.body,
@@ -216,14 +238,24 @@ export function subscribeSse(options: SubscribeSseOptions): void {
 
   const loop = async (): Promise<void> => {
     while (!signal.aborted) {
+      // Capture the bearer token per attempt: `authHeaders()` is re-read on
+      // every reconnect (the active session can change between attempts), so a
+      // disconnect must report the token THIS attempt actually used.
+      const usedToken = bearerToken();
+      let error: unknown = null;
+      let clean = true;
       try {
         await connectOnce();
       } catch (err) {
-        if (isAbortError(err) || signal.aborted) return;
-        options.onError?.(err);
+        if (isAbortError(err) || signal.aborted) return; // torn down → no disconnect
+        error = err;
+        clean = false;
         warn(`subscribe ${options.path} error: ${String(err)}`);
       }
-      if (signal.aborted) return;
+      if (signal.aborted) return; // aborted mid-connection → no disconnect
+      // Exactly once per completed connection lifecycle, whether it threw or
+      // ended cleanly. The abort paths above return before reaching here.
+      options.onDisconnect?.({ error, clean, usedToken });
       const delay = backoff[Math.min(attempt, backoff.length - 1)] ?? 0;
       attempt++;
       await sleep(delay, signal);
@@ -231,6 +263,12 @@ export function subscribeSse(options: SubscribeSseOptions): void {
   };
 
   void loop();
+}
+
+/** The bare bearer token from the configured auth headers, or null. */
+function bearerToken(): string | null {
+  const auth = authHeaders().Authorization;
+  return typeof auth === 'string' && auth.startsWith('Bearer ') ? auth.slice(7) : null;
 }
 
 // ─── Internals ──────────────────────────────────────────────────────────

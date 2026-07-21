@@ -14,10 +14,11 @@ import { create } from 'zustand';
  *   2. SSE `sync:status_changed` events from the existing `/events`
  *      channel (see `events-subscriber-core.ts`)
  *
- * `null` means "haven't heard from daemon yet" — distinct from "daemon
- * says no sync configured" (which surfaces as a snapshot with the
- * absence of `server_url`/`workspace_id`). The status bar treats `null`
- * like idle to avoid flashing an alarm during the first paint.
+ * `snapshot === null` means "no snapshot yet" — distinct from "daemon says no
+ * sync configured" (a snapshot with `server_url === null`). Whether that null is
+ * a cold start or a dead daemon is answered by the separate `probeStatus` field
+ * (`pending` vs `unreachable`), so the bar can show「连接中」vs「未连接」instead
+ * of silently faking idle.
  *
  * P5-c G3 — minimum display duration for `syncing`. In-process skybridge
  * during e2e (or any really fast push/pull round) flips `syncing` →
@@ -31,8 +32,22 @@ import { create } from 'zustand';
  */
 export const SYNC_STATUS_MIN_DISPLAY_MS = 400;
 
+/**
+ * Reachability of the local daemon's `/sync/status`, distinct from the sync
+ * `state` inside a snapshot:
+ *   - `pending`     — no probe has resolved yet (cold start / first paint)
+ *   - `ok`          — the daemon answered (GET succeeded or an SSE frame arrived)
+ *   - `unreachable` — the daemon itself could not be reached (fetch threw)
+ *
+ * The status bar shows `unreachable` in preference to any stale snapshot so a
+ * daemon that dies mid-session no longer reads as「本地/已同步」(D12).
+ */
+export type ProbeStatus = 'pending' | 'ok' | 'unreachable';
+
 interface SyncStatusStore {
   snapshot: SyncStatusSnapshot | null;
+  /** Reachability of the daemon `/sync/status` probe — drives the down state. */
+  probeStatus: ProbeStatus;
   /** Earliest wall-clock ms when a transition away from `syncing` may apply. */
   minDisplayUntilMs: number;
   /** Handle of an in-flight deferred transition; null when no transition is pending. */
@@ -44,6 +59,12 @@ interface SyncStatusStore {
 }
 
 export const useSyncStatus = create<SyncStatusStore>((set, get) => {
+  // Single-flight guard: bootstrap, the SSE `hello`/`onDisconnect` re-probes and
+  // manual refreshes can all call `fetch()` at once. Reuse the in-flight probe
+  // instead of stacking redundant GETs. (③ upgrades this to a generation-keyed
+  // guard once session switching exists.)
+  let probeInflight: Promise<void> | null = null;
+
   function clearPending(): void {
     const { pendingTimer } = get();
     if (pendingTimer !== null) {
@@ -59,10 +80,13 @@ export const useSyncStatus = create<SyncStatusStore>((set, get) => {
 
   return {
     snapshot: null,
+    probeStatus: 'pending',
     minDisplayUntilMs: 0,
     pendingTimer: null,
     pendingSnapshot: null,
     setSnapshot: (snap) => {
+      // Receiving any snapshot (SSE frame) means the daemon is reachable.
+      set({ probeStatus: 'ok' });
       const now = Date.now();
       if (snap.state === 'syncing') {
         // Reset the min-display window every time `syncing` reasserts —
@@ -104,21 +128,32 @@ export const useSyncStatus = create<SyncStatusStore>((set, get) => {
       }, remainingMs);
       set({ pendingTimer: timer, pendingSnapshot: snap });
     },
-    fetch: async () => {
-      try {
-        const res = await getSyncStatus();
-        if (!res.data) return;
-        const { configured: _c, authenticated: _a, ...rest } = res.data;
-        applyNow({
-          ...rest,
-          state: 'idle',
-          last_error: null,
-        });
-      } catch {
-        // Daemon down / sync not configured — leave snapshot null so the
-        // status bar can show its "no daemon" fallback rather than a stale
-        // value.
-      }
+    fetch: () => {
+      // Reuse an in-flight probe so concurrent callers collapse to one GET.
+      if (probeInflight) return probeInflight;
+      const p = (async () => {
+        try {
+          const res = await getSyncStatus();
+          // The daemon answered — reachable regardless of whether a snapshot
+          // came back (an unconfigured daemon still returns 200).
+          if (res.data) {
+            const { configured: _c, authenticated: _a, ...rest } = res.data;
+            applyNow({ ...rest, state: 'idle', last_error: null });
+          }
+          set({ probeStatus: 'ok' });
+        } catch {
+          // Daemon itself is unreachable — flag it so the bar shows「未连接」
+          // instead of a stale「本地/已同步」. No longer swallowed silently.
+          set({ probeStatus: 'unreachable' });
+        }
+      })();
+      probeInflight = p;
+      void p.finally(() => {
+        // Clear by identity so a newer probe started after this one settles is
+        // never dropped.
+        if (probeInflight === p) probeInflight = null;
+      });
+      return p;
     },
   };
 });

@@ -36,12 +36,16 @@ vi.mock('@/components/ui/popover', () => {
 
 // zustand under pnpm resolves to its own `react` copy and trips the
 // React 19 dup-instance check inside vitest. Replace `useSyncStatus`
-// with a stub backed by a mutable holder so each test can set the
-// snapshot before render.
+// with a stub backed by mutable holders so each test can set the
+// snapshot + probe status before render. `probeStatus` defaults to `ok`
+// (daemon reachable) so snapshot-driven tests exercise STATE_INFO.
+type ProbeStatus = 'pending' | 'ok' | 'unreachable';
 const snapshotHolder: { value: SyncStatusSnapshot | null } = { value: null };
+const probeHolder: { value: ProbeStatus } = { value: 'ok' };
 vi.mock('@/stores/sync-status', () => ({
-  useSyncStatus: <T,>(selector: (s: { snapshot: SyncStatusSnapshot | null }) => T) =>
-    selector({ snapshot: snapshotHolder.value }),
+  useSyncStatus: <T,>(
+    selector: (s: { snapshot: SyncStatusSnapshot | null; probeStatus: ProbeStatus }) => T,
+  ) => selector({ snapshot: snapshotHolder.value, probeStatus: probeHolder.value }),
 }));
 
 import type { SyncProfilesReply } from '../../../../shared/sync-profiles-types.js';
@@ -64,6 +68,7 @@ function makeSnapshot(overrides: Partial<SyncStatusSnapshot> = {}): SyncStatusSn
 
 afterEach(() => {
   snapshotHolder.value = null;
+  probeHolder.value = 'ok';
 });
 
 describe('SyncStatusBar trigger button', () => {
@@ -110,16 +115,62 @@ describe('SyncStatusBar trigger button', () => {
     expect(screen.getByRole('button', { name: /同步状态：离线/ })).toBeTruthy();
   });
 
-  it('falls back to idle when snapshot is null', () => {
+  it('shows 连接中 (pending) when snapshot is null and probe has not resolved', () => {
     snapshotHolder.value = null;
+    probeHolder.value = 'pending';
     render(
       <MemoryRouter>
         <SyncStatusBar />
       </MemoryRouter>,
     );
-    // Cold-start fallback: paint idle so we don't flash a red dot before
-    // the SSE channel comes up.
-    expect(screen.getByRole('button', { name: /同步状态：已同步/ })).toBeTruthy();
+    // ① null no longer fakes 已同步 — cold start reads「连接中」, not an alarm.
+    expect(screen.getByRole('button', { name: /同步状态：连接中/ })).toBeTruthy();
+  });
+
+  it('shows 本地 for an unregistered workspace even when server_url is set (reported bug)', () => {
+    // The reported bug: a leftover `[server].url` in skybridge_config.toml made
+    // server_url non-null while device/workspace stayed 未注册 (unregistered) —
+    // the bar used to read「已同步」as if backed up to the cloud.
+    snapshotHolder.value = makeSnapshot({
+      state: 'idle',
+      server_url: 'http://127.0.0.1:8443',
+      device_id: null,
+      workspace_id: null,
+    });
+    render(
+      <MemoryRouter>
+        <SyncStatusBar />
+      </MemoryRouter>,
+    );
+    expect(screen.getByRole('button', { name: /同步状态：本地/ })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /同步状态：已同步/ })).toBeNull();
+  });
+
+  it('shows 本地 for a truly-local workspace (no server, no registration)', () => {
+    snapshotHolder.value = makeSnapshot({
+      state: 'idle',
+      server_url: null,
+      device_id: null,
+      workspace_id: null,
+    });
+    render(
+      <MemoryRouter>
+        <SyncStatusBar />
+      </MemoryRouter>,
+    );
+    expect(screen.getByRole('button', { name: /同步状态：本地/ })).toBeTruthy();
+  });
+
+  it('shows 未连接 when the daemon probe is unreachable, overriding a stale snapshot', () => {
+    // D12: a snapshot lingers from before the daemon died — the down state wins.
+    snapshotHolder.value = makeSnapshot({ state: 'idle', server_url: 'http://srv' });
+    probeHolder.value = 'unreachable';
+    render(
+      <MemoryRouter>
+        <SyncStatusBar />
+      </MemoryRouter>,
+    );
+    expect(screen.getByRole('button', { name: /同步状态：未连接/ })).toBeTruthy();
   });
 });
 
@@ -144,6 +195,18 @@ describe('SyncStatusBar popover content', () => {
     );
     const popover = screen.getByTestId('popover-content');
     expect(within(popover).getByText(/自动重试/)).toBeTruthy();
+  });
+
+  it('shows the daemon-未响应 banner in the popover when unreachable (D12)', () => {
+    snapshotHolder.value = makeSnapshot({ state: 'idle', server_url: 'http://srv' });
+    probeHolder.value = 'unreachable';
+    render(
+      <MemoryRouter>
+        <SyncStatusBar />
+      </MemoryRouter>,
+    );
+    const popover = screen.getByTestId('popover-content');
+    expect(within(popover).getByText(/daemon 未响应/)).toBeTruthy();
   });
 
   it('renders the cold-start explainer when snapshot is null', () => {
@@ -286,9 +349,9 @@ describe('formatRelativeTime', () => {
   });
 });
 
-describe('SyncStatusBar — W6 local profile (server_url null)', () => {
-  it('popover shows 本地独立工作区 when the snapshot is local', () => {
-    snapshotHolder.value = makeSnapshot({ server_url: null });
+describe('SyncStatusBar — W6 local profile (unregistered)', () => {
+  it('popover shows 本地独立工作区 when the snapshot is unregistered', () => {
+    snapshotHolder.value = makeSnapshot({ device_id: null, workspace_id: null });
     render(
       <MemoryRouter>
         <SyncStatusBar />
@@ -300,7 +363,7 @@ describe('SyncStatusBar — W6 local profile (server_url null)', () => {
     expect(within(content).queryByText('服务器')).toBeNull();
   });
 
-  it('popover shows the account detail grid when server_url is set', () => {
+  it('popover shows the account detail grid for a registered account', () => {
     snapshotHolder.value = makeSnapshot({ server_url: 'http://srv' });
     render(
       <MemoryRouter>
@@ -343,8 +406,8 @@ describe('SyncStatusBar — W8 manual sync action', () => {
     expect(button.disabled).toBe(true);
   });
 
-  it('local profile (server_url null) shows no 手动同步 button', () => {
-    snapshotHolder.value = makeSnapshot({ server_url: null });
+  it('unregistered profile shows no 手动同步 button (would only ever error)', () => {
+    snapshotHolder.value = makeSnapshot({ device_id: null, workspace_id: null });
     render(
       <MemoryRouter>
         <SyncStatusBar />

@@ -1,6 +1,9 @@
-import type { SyncStatusSnapshot } from '@/lib/api';
+import { getSyncStatus } from '@/lib/api';
+import type { SyncStatusResult, SyncStatusSnapshot } from '@/lib/api';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SYNC_STATUS_MIN_DISPLAY_MS, useSyncStatus } from './sync-status';
+
+vi.mock('@/lib/api', () => ({ getSyncStatus: vi.fn() }));
 
 function snap(
   state: SyncStatusSnapshot['state'],
@@ -23,10 +26,29 @@ function snap(
 function resetStore(): void {
   useSyncStatus.setState({
     snapshot: null,
+    probeStatus: 'pending',
     minDisplayUntilMs: 0,
     pendingTimer: null,
     pendingSnapshot: null,
   });
+}
+
+function okResult(over: Partial<SyncStatusResult> = {}) {
+  return {
+    success: true as const,
+    data: {
+      configured: true,
+      authenticated: true,
+      server_url: 'https://skybridge.example',
+      device_id: 'dev-1',
+      workspace_id: 'ws-1',
+      pending_count: 0,
+      pulled_seq: 0,
+      pushed_seq: 0,
+      last_sync_at: null,
+      ...over,
+    },
+  };
 }
 
 describe('useSyncStatus minimum-display timing (P5-c G3)', () => {
@@ -115,5 +137,68 @@ describe('useSyncStatus minimum-display timing (P5-c G3)', () => {
     setSnapshot(snap('idle'));
     expect(useSyncStatus.getState().snapshot?.state).toBe('idle');
     expect(useSyncStatus.getState().pendingTimer).toBe(null);
+  });
+});
+
+describe('useSyncStatus probe status (①)', () => {
+  const mockGet = vi.mocked(getSyncStatus);
+
+  beforeEach(() => {
+    mockGet.mockReset();
+    resetStore();
+  });
+
+  it('fetch success → probeStatus ok + snapshot applied (state overlaid as idle)', async () => {
+    mockGet.mockResolvedValue(okResult({ server_url: 'https://srv' }));
+    await useSyncStatus.getState().fetch();
+    expect(useSyncStatus.getState().probeStatus).toBe('ok');
+    expect(useSyncStatus.getState().snapshot?.server_url).toBe('https://srv');
+    expect(useSyncStatus.getState().snapshot?.state).toBe('idle');
+  });
+
+  it('fetch throw (daemon down) → probeStatus unreachable, snapshot left null', async () => {
+    mockGet.mockRejectedValue(new Error('ECONNREFUSED'));
+    await useSyncStatus.getState().fetch();
+    expect(useSyncStatus.getState().probeStatus).toBe('unreachable');
+    expect(useSyncStatus.getState().snapshot).toBe(null);
+  });
+
+  it('fetch that reaches an unconfigured daemon (no data) is still ok', async () => {
+    // A 200 with no snapshot body still means the daemon is reachable.
+    mockGet.mockResolvedValue({ success: true });
+    await useSyncStatus.getState().fetch();
+    expect(useSyncStatus.getState().probeStatus).toBe('ok');
+    expect(useSyncStatus.getState().snapshot).toBe(null);
+  });
+
+  it('setSnapshot (SSE frame arriving) implies probeStatus ok', () => {
+    useSyncStatus.setState({ probeStatus: 'unreachable' });
+    useSyncStatus.getState().setSnapshot(snap('idle'));
+    expect(useSyncStatus.getState().probeStatus).toBe('ok');
+  });
+
+  it('concurrent fetch() calls collapse to a single in-flight GET (single-flight)', async () => {
+    let resolveGet: (v: ReturnType<typeof okResult>) => void = () => {};
+    mockGet.mockImplementation(
+      () =>
+        new Promise((r) => {
+          resolveGet = r;
+        }),
+    );
+
+    const p1 = useSyncStatus.getState().fetch();
+    const p2 = useSyncStatus.getState().fetch();
+    // Both callers share the one in-flight promise; only one GET was issued.
+    expect(p1).toBe(p2);
+    expect(mockGet).toHaveBeenCalledTimes(1);
+
+    resolveGet(okResult());
+    await Promise.all([p1, p2]);
+    expect(mockGet).toHaveBeenCalledTimes(1);
+
+    // After it settles the guard clears — a fresh fetch issues a new GET.
+    mockGet.mockResolvedValue(okResult());
+    await useSyncStatus.getState().fetch();
+    expect(mockGet).toHaveBeenCalledTimes(2);
   });
 });
