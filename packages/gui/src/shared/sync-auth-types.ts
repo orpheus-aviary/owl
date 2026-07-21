@@ -10,4 +10,10 @@ export interface LoginAndOpenSessionInput {
   serverUrl: string;
   email: string;
   password: string;
+  /**
+   * ④ web「记住我」— opt the session token into `sessionStorage` persistence so a
+   * refresh rehydrates instead of forcing re-login. Web-only; the desktop main
+   * process ignores it (its local session isn't browser-persisted).
+   */
+  remember?: boolean;
 }

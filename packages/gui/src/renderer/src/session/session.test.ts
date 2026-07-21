@@ -16,12 +16,27 @@ vi.mock('@/lib/api', async (importOriginal) => {
 });
 
 import * as api from '@/lib/api';
+import { type WebSession, clearWebSession, getWebSession } from '@/platform/web-session';
 import { useNoteStore } from '@/stores/note-store';
 import { useSessionEpoch } from '@/stores/session-epoch';
-import { activateSession, invalidateSession } from './session-actions';
+import { activateSession, activateWebSession, invalidateSession } from './session-actions';
 
 const listNotes = vi.mocked(api.listNotes);
 const getConfig = vi.mocked(api.getConfig);
+
+const WEB_TOKEN_KEY = 'owl.web.token';
+const WEB_SESSION: WebSession = {
+  token: 'wtok',
+  identity: {
+    profile_id: 'p1',
+    user_id: 'u1',
+    email: 'a@b.c',
+    server_url: 'http://daemon',
+    device_id: 'dev-1',
+    workspace_id: 'ws-1',
+  },
+  expiresAt: 1_800_000_000_000,
+};
 
 function noteRow(id: string) {
   return { id, content: `# ${id}` } as unknown as NonNullable<
@@ -97,6 +112,37 @@ describe('activateSession', () => {
     // The stale (gen 1) bootstrap's endBootstrap must NOT flip gen 2 to active.
     expect(useSessionEpoch.getState().epoch).toBe(2);
     expect(useSessionEpoch.getState().phase).toBe('bootstrapping');
+  });
+});
+
+describe('activateWebSession (④)', () => {
+  beforeEach(() => {
+    clearWebSession();
+    sessionStorage.clear();
+  });
+
+  it('publishes the bearer BEFORE bootstrap, resets + refills, persists on remember', async () => {
+    useNoteStore.setState({ notes: [noteRow('old')], total: 1 });
+    listNotes.mockResolvedValue({ success: true, data: [noteRow('fresh')], total: 1 });
+
+    const p = activateWebSession(WEB_SESSION, { persist: true });
+    // Synchronously after begin → reset → publish: overlay up AND the session is
+    // already published, so bootstrap's fetches carry the token.
+    expect(useSessionEpoch.getState().epoch).toBe(1);
+    expect(useSessionEpoch.getState().phase).toBe('bootstrapping');
+    expect(getWebSession()?.token).toBe('wtok');
+    expect(sessionStorage.getItem(WEB_TOKEN_KEY)).toBe('wtok');
+
+    await p;
+    expect(getConfig).toHaveBeenCalledTimes(1);
+    expect(useNoteStore.getState().notes).toEqual([noteRow('fresh')]);
+    expect(useSessionEpoch.getState().phase).toBe('active');
+  });
+
+  it('does not persist the token when remember is off', async () => {
+    await activateWebSession(WEB_SESSION, { persist: false });
+    expect(getWebSession()?.token).toBe('wtok');
+    expect(sessionStorage.getItem(WEB_TOKEN_KEY)).toBeNull();
   });
 });
 

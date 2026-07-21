@@ -1,3 +1,4 @@
+import { type WebSession, setWebSession } from '@/platform/web-session';
 import { resetAllStores } from '@/stores/reset';
 import { useSessionEpoch } from '@/stores/session-epoch';
 import { bootstrapSession } from './bootstrap';
@@ -45,5 +46,34 @@ export async function activateSession(): Promise<void> {
   const gen = useSessionEpoch.getState().beginBootstrap();
   resetAllStores();
   resetRouteToHome();
+  await bootstrapSession(gen);
+}
+
+/**
+ * ④ web session UX — the SINGLE activation entry for the web host, shared by
+ * login and token rehydration. Same shape as `activateSession` but with one
+ * extra, ordering-critical step: it publishes the bearer BETWEEN the store reset
+ * and the bootstrap, so `bootstrapSession`'s fetches already carry the new
+ * token. Going through here (rather than a bare `setWebSession`) is what
+ * guarantees the begin → reset → publish → bootstrap order — a direct
+ * `setWebSession` from the adapter would bootstrap under the old/empty epoch or
+ * skip the reset entirely.
+ *
+ * `persist` threads「记住我」through: login passes the checkbox value, rehydration
+ * passes `true` (the token was already persisted — keep it).
+ *
+ * Unlike `activateSession`, this does NOT reset the route: web activation covers
+ * rehydration-on-refresh, where the same account is reloading its CURRENT view
+ * (e.g. `#/note/x`) — forcing it home would drop the deep link. A logout / 401
+ * already routes home via `invalidateSession`, so a subsequent login starts
+ * there anyway.
+ */
+export async function activateWebSession(
+  session: WebSession,
+  opts: { persist: boolean },
+): Promise<void> {
+  const gen = useSessionEpoch.getState().beginBootstrap();
+  resetAllStores();
+  setWebSession(session, { persist: opts.persist }); // publish bearer BEFORE bootstrap
   await bootstrapSession(gen);
 }

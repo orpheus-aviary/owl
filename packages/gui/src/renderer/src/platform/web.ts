@@ -5,10 +5,11 @@
 // here too). Profile management + IPC-push subscriptions stay absent — a
 // browser session maps to exactly one cloud daemon = one account.
 
+import { activateWebSession, invalidateSession } from '@/session/session-actions';
 import type { SyncStatusResult } from '@orpheus-aviary/owl-shared';
 import { ApiError, request } from '@orpheus-aviary/owl-shared';
 import type { PlatformAdapter, SyncCapability } from './types';
-import { clearWebSession, getWebSession, setWebSession } from './web-session';
+import { clearWebSession, getWebSession } from './web-session';
 
 /** Daemon `/auth/login` success payload. */
 interface LoginData {
@@ -52,7 +53,14 @@ const webSync: SyncCapability = {
       });
       const d = res.data;
       if (!d) return { ok: false, message: '登录响应异常' };
-      setWebSession({ token: d.session_token, identity: d.identity, expiresAt: d.expires_at });
+      // ④: activate through the single web entry (begin → reset → publish bearer
+      // → bootstrap), NOT a bare setWebSession — so a re-login after a logout
+      // fully re-bootstraps the (freshly-reset) stores. `remember` opts the token
+      // into sessionStorage persistence (default off).
+      await activateWebSession(
+        { token: d.session_token, identity: d.identity, expiresAt: d.expires_at },
+        { persist: input.remember ?? false },
+      );
       return { ok: true, data: undefined };
     } catch (err) {
       return { ok: false, message: errMessage(err) };
@@ -66,7 +74,10 @@ const webSync: SyncCapability = {
       // Even if the remote revoke fails (network / already-expired), drop the
       // local session so the gate returns to the login screen.
     }
+    // ④: clear the (possibly persisted) token AND invalidate the session
+    // generation so every store resets — the auth gate then shows login.
     clearWebSession();
+    invalidateSession();
     return { ok: true, data: undefined };
   },
 

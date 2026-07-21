@@ -7,11 +7,22 @@ vi.mock('@orpheus-aviary/owl-shared', async (importOriginal) => {
   return { ...actual, request: vi.fn() };
 });
 
+// ④: login/logout delegate session lifecycle to session-actions. Stub them so
+// this file tests the adapter's contract (right session shape + persist flag),
+// not the whole bootstrap machinery (covered in session.test.ts).
+vi.mock('@/session/session-actions', () => ({
+  activateWebSession: vi.fn(async () => {}),
+  invalidateSession: vi.fn(),
+}));
+
+import { activateWebSession, invalidateSession } from '@/session/session-actions';
 import { ApiError, request } from '@orpheus-aviary/owl-shared';
 import { webAdapter } from './web';
 import { type WebSession, clearWebSession, getWebSession, setWebSession } from './web-session';
 
 const mockRequest = vi.mocked(request);
+const mockActivate = vi.mocked(activateWebSession);
+const mockInvalidate = vi.mocked(invalidateSession);
 
 const SESSION: WebSession = {
   token: 'tok-1',
@@ -43,9 +54,11 @@ describe('webAdapter.sync — HTTP session ops', () => {
   beforeEach(() => {
     clearWebSession();
     mockRequest.mockReset();
+    mockActivate.mockClear();
+    mockInvalidate.mockClear();
   });
 
-  it('login stores the in-memory session on success', async () => {
+  it('login activates a fresh web session on success (default: no persist)', async () => {
     mockRequest.mockResolvedValueOnce({
       success: true,
       data: {
@@ -56,7 +69,11 @@ describe('webAdapter.sync — HTTP session ops', () => {
     });
     const reply = await webAdapter.sync.login({ serverUrl: '', email: 'a@b.c', password: 'pw' });
     expect(reply).toEqual({ ok: true, data: undefined });
-    expect(getWebSession()?.token).toBe('tok-xyz');
+    // Delegates to the single web activation entry, NOT a bare setWebSession.
+    expect(mockActivate).toHaveBeenCalledWith(
+      { token: 'tok-xyz', identity: SESSION.identity, expiresAt: 999 },
+      { persist: false },
+    );
     // serverUrl is dropped; only email/password go up.
     expect(mockRequest).toHaveBeenCalledWith('POST', '/auth/login', {
       email: 'a@b.c',
@@ -64,21 +81,31 @@ describe('webAdapter.sync — HTTP session ops', () => {
     });
   });
 
-  it('login surfaces the daemon message and leaves no session on 401', async () => {
+  it('login threads「记住我」into the persist flag', async () => {
+    mockRequest.mockResolvedValueOnce({
+      success: true,
+      data: { session_token: 'tok-xyz', expires_at: 999, identity: SESSION.identity },
+    });
+    await webAdapter.sync.login({ serverUrl: '', email: 'a@b.c', password: 'pw', remember: true });
+    expect(mockActivate).toHaveBeenCalledWith(expect.anything(), { persist: true });
+  });
+
+  it('login surfaces the daemon message and activates nothing on 401', async () => {
     mockRequest.mockRejectedValueOnce(
       new ApiError(401, 'INVALID_CREDENTIALS', 'invalid email or password'),
     );
     const reply = await webAdapter.sync.login({ serverUrl: '', email: 'a@b.c', password: 'bad' });
     expect(reply).toEqual({ ok: false, message: 'invalid email or password' });
-    expect(getWebSession()).toBeNull();
+    expect(mockActivate).not.toHaveBeenCalled();
   });
 
-  it('logout clears the session even when the remote revoke fails', async () => {
+  it('logout clears + invalidates the session even when the remote revoke fails', async () => {
     setWebSession(SESSION);
     mockRequest.mockRejectedValueOnce(new ApiError(500, 'X', 'boom'));
     const reply = await webAdapter.sync.logout();
     expect(reply).toEqual({ ok: true, data: undefined });
-    expect(getWebSession()).toBeNull();
+    expect(getWebSession()).toBeNull(); // clearWebSession (real) ran
+    expect(mockInvalidate).toHaveBeenCalledTimes(1);
   });
 
   it('status maps the in-memory identity + the daemon snapshot', async () => {
