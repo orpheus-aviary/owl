@@ -19,6 +19,7 @@
  */
 import { extractTitle } from '@/components/NoteListItem';
 import * as api from '@/lib/api';
+import { currentGen, isStale } from '@/stores/session-epoch';
 
 // ─── Remark plugin ───────────────────────────────────────
 
@@ -142,9 +143,12 @@ function cacheSet(id: string, meta: NoteMeta): void {
   }
 }
 
-/** Test-only. Both caches are module singletons so tests must reset between
- *  cases to avoid order-dependent pollution. */
-export function _resetNoteIdCachesForTest(): void {
+/**
+ * ③: clear both module-singleton caches on a session switch (`resetAllStores`).
+ * Also used by tests, which must reset between cases to avoid order-dependent
+ * pollution.
+ */
+export function resetNoteIdCaches(): void {
   cache.clear();
   pending.clear();
 }
@@ -162,33 +166,41 @@ export async function fetchNoteMeta(id: string): Promise<NoteMeta> {
   if (hit !== undefined) return hit;
   const existing = pending.get(id);
   if (existing) return existing;
-  const promise = runFetch(id);
+  // ③: delete pending by promise IDENTITY, not just by id — a session switch
+  // resets `pending`, and a fresh generation may enqueue a new promise for the
+  // same id. Deleting unconditionally would drop the new generation's entry.
+  const promise = runFetch(id).finally(() => {
+    if (pending.get(id) === promise) pending.delete(id);
+  });
   pending.set(id, promise);
   return promise;
 }
 
 async function runFetch(id: string): Promise<NoteMeta> {
+  // ③: the module-level `cache` is session-scoped. Capture the gen so a fetch
+  // that resolves after a session switch never writes an old account's title
+  // into the new session's cache (the returned meta is harmless — its only
+  // caller is the now-unmounted pill).
+  const gen = currentGen();
   try {
     const res = await api.getNote(id);
     const note = res.data;
     if (!note) {
       const m: NoteMeta = { status: 'missing' };
-      cacheSet(id, m);
+      if (!isStale(gen)) cacheSet(id, m);
       return m;
     }
     const title = extractTitle(note.content);
     const m: NoteMeta =
       note.trashLevel > 0 ? { status: 'trashed', title } : { status: 'ok', title };
-    cacheSet(id, m);
+    if (!isStale(gen)) cacheSet(id, m);
     return m;
   } catch (err) {
     if (err instanceof api.ApiError && err.status === 404) {
       const m: NoteMeta = { status: 'missing' };
-      cacheSet(id, m);
+      if (!isStale(gen)) cacheSet(id, m);
       return m;
     }
     throw err;
-  } finally {
-    pending.delete(id);
   }
 }

@@ -6,6 +6,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import * as api from '@/lib/api';
 import type { Note } from '@/lib/api';
 import { useDataBus } from '@/stores/data-bus';
+import { currentGen, isStale } from '@/stores/session-epoch';
 import { RotateCcw, Search, Trash2, X } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
@@ -179,10 +180,14 @@ export function TrashPage() {
     }
   }, [selectedIds.size, notes]);
 
-  // Single-note operations
+  // Single-note operations. ③ (附录 A): guard every post-await write — a
+  // profile switch mid-op must not bump the data-bus for / refetch into the new
+  // session (local `setSelectedIds`/`fetchNotes` are dropped by the remount).
   const handleRestore = useCallback(
     async (id: string) => {
+      const gen = currentGen();
       await api.restoreNote(id);
+      if (isStale(gen)) return;
       setSelectedIds((prev) => {
         const next = new Set(prev);
         next.delete(id);
@@ -196,6 +201,7 @@ export function TrashPage() {
 
   const handleDelete = useCallback(
     async (id: string) => {
+      const gen = currentGen();
       if (tab === 1) {
         // Move to Tab 2 (increment trash level)
         await api.deleteNote(id);
@@ -203,6 +209,7 @@ export function TrashPage() {
         // Permanent delete
         await api.permanentDeleteNote(id);
       }
+      if (isStale(gen)) return;
       setSelectedIds((prev) => {
         const next = new Set(prev);
         next.delete(id);
@@ -216,7 +223,9 @@ export function TrashPage() {
   // Batch operations
   const handleBatchRestore = useCallback(async () => {
     if (selectedIds.size === 0) return;
+    const gen = currentGen();
     await api.batchRestoreNotes([...selectedIds]);
+    if (isStale(gen)) return;
     setSelectedIds(new Set());
     fetchNotes();
     useDataBus.getState().bumpNotes();
@@ -224,11 +233,13 @@ export function TrashPage() {
 
   const handleBatchDelete = useCallback(async () => {
     if (selectedIds.size === 0) return;
+    const gen = currentGen();
     if (tab === 1) {
       await api.batchDeleteNotes([...selectedIds]);
     } else {
       await api.batchPermanentDeleteNotes([...selectedIds]);
     }
+    if (isStale(gen)) return;
     setSelectedIds(new Set());
     fetchNotes();
   }, [selectedIds, tab, fetchNotes]);

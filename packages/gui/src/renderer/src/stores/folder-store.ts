@@ -3,6 +3,7 @@ import * as api from '@/lib/api';
 import { LAYOUT_KEYS } from '@/lib/layout-keys';
 import { create } from 'zustand';
 import { useDataBus } from './data-bus';
+import { currentGen, isStale } from './session-epoch';
 
 export interface FolderNode extends Folder {
   children: FolderNode[];
@@ -31,6 +32,9 @@ interface FolderState {
   togglePanel: () => void;
   toggleExpanded: (id: string) => void;
   expand: (id: string) => void;
+  /** ③: drop account-scoped state. `panelOpen` is a device UI pref (localStorage)
+   *  and stays untouched across session switches. */
+  reset: () => void;
 }
 
 /**
@@ -102,24 +106,29 @@ export const useFolderStore = create<FolderState>((set, get) => ({
   error: null,
 
   fetch: async () => {
+    const gen = currentGen();
     set({ loading: true, error: null });
     try {
       const res = await api.listFolders();
+      if (isStale(gen)) return;
       set({ folders: res.data ?? [] });
     } catch (err) {
+      if (isStale(gen)) return;
       set({ error: (err as Error).message });
     } finally {
-      set({ loading: false });
+      if (!isStale(gen)) set({ loading: false });
     }
   },
 
   fetchPanelNotes: async () => {
+    const gen = currentGen();
     try {
       // P3.4-a: FolderPanel displays per-folder order. Use the position sort
       // so DnD reordering shows up immediately; pin group does NOT apply here
       // (pin status is property-only in the panel — sorting by pinned_at
       // would move notes out of their folder-scoped position).
       const res = await api.listNotes({ limit: 10000, sort_by: 'position' });
+      if (isStale(gen)) return;
       set({ panelNotes: res.data ?? [] });
     } catch {
       // ignore — panel notes are non-critical
@@ -127,41 +136,53 @@ export const useFolderStore = create<FolderState>((set, get) => ({
   },
 
   create: async (name, parentId) => {
+    const gen = currentGen();
     try {
       const res = await api.createFolder({ name, parent_id: parentId });
+      if (isStale(gen)) return null;
       if (parentId) get().expand(parentId);
       useDataBus.getState().bumpFolders();
       return res.data ?? null;
     } catch (err) {
+      if (isStale(gen)) return null;
       set({ error: (err as Error).message });
       return null;
     }
   },
 
   rename: async (id, name) => {
+    const gen = currentGen();
     try {
       await api.updateFolder(id, { name });
+      if (isStale(gen)) return;
       useDataBus.getState().bumpFolders();
     } catch (err) {
+      if (isStale(gen)) return;
       set({ error: (err as Error).message });
     }
   },
 
   move: async (id, parentId) => {
+    const gen = currentGen();
     try {
       await api.updateFolder(id, { parent_id: parentId });
+      if (isStale(gen)) return;
       if (parentId) get().expand(parentId);
       useDataBus.getState().bumpFolders();
     } catch (err) {
+      if (isStale(gen)) return;
       set({ error: (err as Error).message });
     }
   },
 
   reorder: async (items) => {
+    const gen = currentGen();
     try {
       await api.reorderFolders(items);
+      if (isStale(gen)) return;
       useDataBus.getState().bumpFolders();
     } catch (err) {
+      if (isStale(gen)) return;
       set({ error: (err as Error).message });
       // Bump anyway to reconcile after a failed optimistic update —
       // the subscriber refetches the canonical server-side list.
@@ -170,8 +191,10 @@ export const useFolderStore = create<FolderState>((set, get) => ({
   },
 
   remove: async (id) => {
+    const gen = currentGen();
     try {
       await api.deleteFolder(id);
+      if (isStale(gen)) return;
       // Drop the deleted id from expanded set so it doesn't leak across reloads.
       const next = new Set(get().expanded);
       next.delete(id);
@@ -181,6 +204,7 @@ export const useFolderStore = create<FolderState>((set, get) => ({
       useDataBus.getState().bumpFolders();
       useDataBus.getState().bumpNotes();
     } catch (err) {
+      if (isStale(gen)) return;
       set({ error: (err as Error).message });
     }
   },
@@ -208,6 +232,15 @@ export const useFolderStore = create<FolderState>((set, get) => ({
     next.add(id);
     set({ expanded: next });
   },
+
+  reset: () =>
+    set({
+      folders: [],
+      panelNotes: [],
+      expanded: new Set<string>(),
+      loading: false,
+      error: null,
+    }),
 }));
 
 // Auto-refetch on data-bus signals. noteVersion → panelNotes (for inline

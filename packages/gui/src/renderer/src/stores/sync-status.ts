@@ -1,5 +1,6 @@
 import { type SyncStatusSnapshot, getSyncStatus } from '@/lib/api';
 import { create } from 'zustand';
+import { currentGen, isStale } from './session-epoch';
 
 /**
  * P5-b §6.3 — renderer-side mirror of daemon's `SyncStatusSnapshot`.
@@ -56,14 +57,17 @@ interface SyncStatusStore {
   pendingSnapshot: SyncStatusSnapshot | null;
   setSnapshot: (snap: SyncStatusSnapshot) => void;
   fetch: () => Promise<void>;
+  /** ③: back to the initial per-session shape + drop timers / in-flight probe. */
+  reset: () => void;
 }
 
 export const useSyncStatus = create<SyncStatusStore>((set, get) => {
-  // Single-flight guard: bootstrap, the SSE `hello`/`onDisconnect` re-probes and
-  // manual refreshes can all call `fetch()` at once. Reuse the in-flight probe
-  // instead of stacking redundant GETs. (③ upgrades this to a generation-keyed
-  // guard once session switching exists.)
-  let probeInflight: Promise<void> | null = null;
+  // Single-flight guard, generation-partitioned (③): bootstrap, the SSE
+  // `hello`/`onDisconnect` re-probes and manual refreshes can all call `fetch()`
+  // at once. Reuse the in-flight probe ONLY when it belongs to the current
+  // session — a probe started before a switch must never be handed to the new
+  // session's caller (nor allowed to write its result back).
+  let probeInflight: { gen: number; promise: Promise<void> } | null = null;
 
   function clearPending(): void {
     const { pendingTimer } = get();
@@ -129,11 +133,14 @@ export const useSyncStatus = create<SyncStatusStore>((set, get) => {
       set({ pendingTimer: timer, pendingSnapshot: snap });
     },
     fetch: () => {
-      // Reuse an in-flight probe so concurrent callers collapse to one GET.
-      if (probeInflight) return probeInflight;
+      const gen = currentGen();
+      // Reuse a same-generation in-flight probe so concurrent callers collapse
+      // to one GET. A probe from an older session is neither reused nor awaited.
+      if (probeInflight && probeInflight.gen === gen) return probeInflight.promise;
       const p = (async () => {
         try {
           const res = await getSyncStatus();
+          if (isStale(gen)) return; // session switched mid-probe → drop the result
           // The daemon answered — reachable regardless of whether a snapshot
           // came back (an unconfigured daemon still returns 200).
           if (res.data) {
@@ -142,18 +149,25 @@ export const useSyncStatus = create<SyncStatusStore>((set, get) => {
           }
           set({ probeStatus: 'ok' });
         } catch {
+          if (isStale(gen)) return;
           // Daemon itself is unreachable — flag it so the bar shows「未连接」
           // instead of a stale「本地/已同步」. No longer swallowed silently.
           set({ probeStatus: 'unreachable' });
         }
       })();
-      probeInflight = p;
+      probeInflight = { gen, promise: p };
       void p.finally(() => {
         // Clear by identity so a newer probe started after this one settles is
         // never dropped.
-        if (probeInflight === p) probeInflight = null;
+        if (probeInflight?.promise === p) probeInflight = null;
       });
       return p;
+    },
+
+    reset: () => {
+      clearPending();
+      probeInflight = null;
+      set({ snapshot: null, probeStatus: 'pending', minDisplayUntilMs: 0 });
     },
   };
 });

@@ -18,6 +18,7 @@ import { type SortKey, useBrowserStore } from '@/stores/browser-store';
 import { useDataBus } from '@/stores/data-bus';
 import { openNoteById } from '@/stores/editor-store';
 import { useFolderStore } from '@/stores/folder-store';
+import { currentGen, isStale } from '@/stores/session-epoch';
 import { ArrowDownAZ, FolderOpen, Pin, PinOff, Search, Trash2, X } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -122,8 +123,10 @@ export function BrowserPage() {
   );
 
   const handleTogglePin = useCallback(async (noteId: string, pinned: boolean) => {
+    const gen = currentGen();
     try {
       await api.pinNote(noteId, pinned);
+      if (isStale(gen)) return;
       useDataBus.getState().bumpNotes();
     } catch (err) {
       console.error('pin toggle failed', err);
@@ -134,9 +137,15 @@ export function BrowserPage() {
     (noteId: string, tag: NoteTag, newValue: string) => {
       const note = notes.find((n) => n.id === noteId);
       if (!note) return;
+      // ③ (附录 A): don't refetch into the next session if a switch lands
+      // between the tag edit and its completion.
+      const gen = currentGen();
       api
         .editTagOnNote(note, tag.id, newValue)
-        .then(() => fetchNotes())
+        .then(() => {
+          if (isStale(gen)) return;
+          fetchNotes();
+        })
         .catch(() => {});
     },
     [notes, fetchNotes],

@@ -9,6 +9,7 @@ import { type NearestAlarm, type TimeRange, filterAndSortReminders } from '@/lib
 import { sortTags } from '@/lib/tag-sort';
 import { openNoteById } from '@/stores/editor-store';
 import { useReminderStore } from '@/stores/reminder-store';
+import { currentGen, isStale } from '@/stores/session-epoch';
 import { Bell } from 'lucide-react';
 import { useCallback, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -80,7 +81,9 @@ export function RemindersPage() {
 
   const handleEditTag = useCallback(
     async (note: Note, tag: NoteTag, newValue: string) => {
+      const gen = currentGen();
       await api.editTagOnNote(note, tag.id, newValue);
+      if (isStale(gen)) return;
       fetchReminders();
     },
     [fetchReminders],

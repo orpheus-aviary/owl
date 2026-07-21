@@ -16,6 +16,7 @@
 
 import { type ConflictRecord, getConflictCount, listConflicts } from '@/lib/api';
 import { create } from 'zustand';
+import { currentGen, isStale } from './session-epoch';
 
 interface ConflictsStore {
   /** Unresolved conflict count, refreshed on event + cold-start fetch. */
@@ -30,6 +31,8 @@ interface ConflictsStore {
   refresh: () => Promise<void>;
   /** Fetch /conflicts list and update `list`. Used by ConflictsPage. */
   refreshList: (limit?: number) => Promise<void>;
+  /** ③: back to the initial per-session shape. */
+  reset: () => void;
 }
 
 export const useConflictsStore = create<ConflictsStore>((set) => ({
@@ -38,24 +41,31 @@ export const useConflictsStore = create<ConflictsStore>((set) => ({
   loading: false,
   error: null,
   refresh: async () => {
+    const gen = currentGen();
     try {
       const res = await getConflictCount();
+      if (isStale(gen)) return;
       set({ count: res.data?.count ?? 0, error: null });
     } catch (err) {
+      if (isStale(gen)) return;
       set({ error: err instanceof Error ? err.message : String(err) });
     }
   },
   refreshList: async (limit?: number) => {
+    const gen = currentGen();
     set({ loading: true });
     try {
       const res = await listConflicts(limit);
+      if (isStale(gen)) return;
       const rows = res.data?.conflicts ?? [];
       set({ list: rows, count: rows.length, loading: false, error: null });
     } catch (err) {
+      if (isStale(gen)) return;
       set({
         loading: false,
         error: err instanceof Error ? err.message : String(err),
       });
     }
   },
+  reset: () => set({ count: 0, list: [], loading: false, error: null }),
 }));

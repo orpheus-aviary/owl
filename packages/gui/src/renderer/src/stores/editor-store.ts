@@ -23,6 +23,7 @@ import type {
   VersionConflict,
   VersionConflictDecision,
 } from './editor-tabs';
+import { currentGen, isStale } from './session-epoch';
 
 // Re-export the editor data types + the pure conflict detector so the ~15
 // existing consumers keep importing them from '@/stores/editor-store'.
@@ -97,6 +98,9 @@ interface EditorState {
   cycleMode: () => void;
   setMode: (mode: EditorMode) => void;
   toggleLineWrap: () => void;
+  /** ③: drop all open tabs / dirty state / pending conflict prompts. `mode`
+   *  is re-hydrated from the new session's config by `bootstrapSession`. */
+  reset: () => void;
 }
 
 export const useEditorStore = create<EditorState>((set, get) => ({
@@ -292,6 +296,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   },
 
   saveNote: async (noteId: string) => {
+    const gen = currentGen();
     const tab = get().tabs.find((t) => t.noteId === noteId);
     if (!tab) return true;
     // Nothing to persist — dirty / draft / pending-AI are the only save
@@ -303,7 +308,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       const rawTags = serializeTags(tab.tags);
 
       // Brand-new draft → POST /notes (no CAS baseline yet).
-      if (tab.isDraft) return await saveDraft(set, tab, rawTags);
+      if (tab.isDraft) return await saveDraft(set, tab, rawTags, gen);
 
       // Existing note → PATCH /notes/:id with the full current state. Covers
       // both an ordinary user edit and an AI-staged update (same wire call);
@@ -314,16 +319,13 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         folder_id: tab.folderId,
         ...cas,
       });
+      if (isStale(gen)) return false; // session switched mid-save → don't touch new session
       const savedTags = res.data?.tags ?? tab.tags;
       get().markSaved(tab.noteId, tab.content, savedTags, res.data?.updatedAt);
       useDataBus.getState().bumpNotes();
       return true;
     } catch (err) {
-      // Web optimistic concurrency: a 409 VERSION_MISMATCH surfaces the remote
-      // copy as a conflict dialog instead of silently dropping the save.
-      const conflict = await versionConflictFromError(err, noteId, remoteClient);
-      if (conflict) set({ versionConflict: conflict });
-      return false;
+      return handleSaveFailure(set, err, noteId, remoteClient, gen);
     }
   },
 
@@ -574,6 +576,16 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   toggleLineWrap: () => {
     set((state) => ({ lineWrap: !state.lineWrap }));
   },
+
+  reset: () =>
+    set({
+      tabs: [],
+      activeTabId: null,
+      mode: 'edit',
+      lineWrap: true,
+      conflictPrompt: null,
+      versionConflict: null,
+    }),
 }));
 
 /**
@@ -620,16 +632,36 @@ type ConfigUpdater<T> = (state: T) => Partial<T>;
  * for the real one. Returns false when the create yields no note; throws on
  * transport failure (the caller's try/catch maps that to save-failed).
  */
+/**
+ * Map a failed save (draft POST or note PATCH) to the version-conflict dialog.
+ * Web optimistic concurrency: a 409 VERSION_MISMATCH surfaces the remote copy
+ * as a conflict instead of silently dropping the save. ③-guarded: a session
+ * switch mid-failure drops the dialog write. Always returns false.
+ */
+async function handleSaveFailure(
+  set: (update: ConfigUpdater<EditorState> | Partial<EditorState>) => void,
+  err: unknown,
+  noteId: string,
+  remoteClient: boolean,
+  gen: number,
+): Promise<boolean> {
+  const conflict = await versionConflictFromError(err, noteId, remoteClient);
+  if (!isStale(gen) && conflict) set({ versionConflict: conflict });
+  return false;
+}
+
 async function saveDraft(
   set: (update: ConfigUpdater<EditorState> | Partial<EditorState>) => void,
   tab: TabState,
   rawTags: string[],
+  gen: number,
 ): Promise<boolean> {
   const res = await api.createNote({
     content: tab.content,
     tags: rawTags,
     folder_id: tab.folderId ?? undefined,
   });
+  if (isStale(gen)) return false; // session switched mid-create → don't cross accounts
   if (!res.data) return false;
   replaceTabAfterCreate(set, tab.noteId, res.data);
   useDataBus.getState().bumpNotes();
@@ -641,9 +673,14 @@ export function useActiveTab(): TabState | null {
   return useEditorStore((s) => s.tabs.find((t) => t.noteId === s.activeTabId) ?? null);
 }
 
-// Open note by ID (fetches from API then opens)
+// Open note by ID (fetches from API then opens). ③ guards the write: this is
+// reachable from an SSE `open_note` frame as well as direct callers, so a
+// session switch between the GET and the openNote must not splice an old
+// account's note into the new session's editor.
 export async function openNoteById(noteId: string): Promise<void> {
+  const gen = currentGen();
   const res = await api.getNote(noteId);
+  if (isStale(gen)) return;
   if (res.data) {
     useEditorStore.getState().openNote(res.data);
   }

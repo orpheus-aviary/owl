@@ -2,6 +2,7 @@ import * as api from '@/lib/api';
 import type { OwlConfig, ShortcutsConfig } from '@/lib/api';
 import { getPlatform } from '@/platform';
 import { create } from 'zustand';
+import { currentGen, isStale } from './session-epoch';
 
 // Fallback defaults — mirror @owl/core DEFAULT_CONFIG so that pre-fetch UI
 // (shortcut matching, font styling) has sensible values before the first
@@ -115,6 +116,8 @@ interface ConfigState {
   patchBrowser: (delta: Partial<OwlConfig['browser']>) => Promise<boolean>;
   patchAi: (delta: Partial<OwlConfig['ai']>) => Promise<boolean>;
   patchLog: (delta: Partial<OwlConfig['log']>) => Promise<boolean>;
+  /** ③: back to fallback defaults (bootstrap re-fetches the new session's config). */
+  reset: () => void;
 }
 
 function applyConfig(set: (update: Partial<ConfigState>) => void, config: OwlConfig): void {
@@ -133,6 +136,32 @@ function applyConfig(set: (update: Partial<ConfigState>) => void, config: OwlCon
   });
 }
 
+/**
+ * ③ generation-guarded PATCH /config for the sections with no extra
+ * side-effect (everything but shortcuts, which also pushes the global hotkey
+ * to main). Captures the session gen up front and drops the applyConfig
+ * write-back if the session switched mid-request.
+ */
+async function runSimplePatch(
+  set: (update: Partial<ConfigState>) => void,
+  build: () => Promise<{ data?: OwlConfig }>,
+): Promise<boolean> {
+  const gen = currentGen();
+  try {
+    const res = await build();
+    if (isStale(gen)) return false;
+    if (res.data) {
+      applyConfig(set, res.data);
+      return true;
+    }
+    return false;
+  } catch (err) {
+    if (isStale(gen)) return false;
+    set({ error: err instanceof Error ? err.message : String(err) });
+    return false;
+  }
+}
+
 export const useConfigStore = create<ConfigState>((set, get) => ({
   config: null,
   shortcuts: DEFAULT_SHORTCUTS,
@@ -148,21 +177,26 @@ export const useConfigStore = create<ConfigState>((set, get) => ({
   error: null,
 
   fetch: async () => {
+    const gen = currentGen();
     set({ loading: true, error: null });
     try {
       const res = await api.getConfig();
+      if (isStale(gen)) return;
       if (res.data) {
         applyConfig(set, res.data);
       }
       set({ loading: false });
     } catch (err) {
+      if (isStale(gen)) return;
       set({ loading: false, error: err instanceof Error ? err.message : String(err) });
     }
   },
 
   patchShortcuts: async (delta) => {
+    const gen = currentGen();
     try {
       const res = await api.patchConfig({ shortcuts: { ...get().shortcuts, ...delta } });
+      if (isStale(gen)) return false;
       if (res.data) {
         applyConfig(set, res.data);
         if (delta.global_invoke !== undefined) {
@@ -173,14 +207,17 @@ export const useConfigStore = create<ConfigState>((set, get) => ({
       }
       return false;
     } catch (err) {
+      if (isStale(gen)) return false;
       set({ error: err instanceof Error ? err.message : String(err) });
       return false;
     }
   },
 
   resetShortcuts: async () => {
+    const gen = currentGen();
     try {
       const res = await api.patchConfig({ shortcuts: DEFAULT_SHORTCUTS });
+      if (isStale(gen)) return false;
       if (res.data) {
         applyConfig(set, res.data);
         await syncGlobalShortcutWithMain(DEFAULT_SHORTCUTS.global_invoke);
@@ -188,121 +225,44 @@ export const useConfigStore = create<ConfigState>((set, get) => ({
       }
       return false;
     } catch (err) {
+      if (isStale(gen)) return false;
       set({ error: err instanceof Error ? err.message : String(err) });
       return false;
     }
   },
 
-  patchFont: async (delta) => {
-    try {
-      const res = await api.patchConfig({ font: { ...get().font, ...delta } });
-      if (res.data) {
-        applyConfig(set, res.data);
-        return true;
-      }
-      return false;
-    } catch (err) {
-      set({ error: err instanceof Error ? err.message : String(err) });
-      return false;
-    }
-  },
+  patchFont: (delta) =>
+    runSimplePatch(set, () => api.patchConfig({ font: { ...get().font, ...delta } })),
+  patchWindow: (delta) =>
+    runSimplePatch(set, () => api.patchConfig({ window: { ...get().window, ...delta } })),
+  patchLlm: (delta) =>
+    runSimplePatch(set, () => api.patchConfig({ llm: { ...get().llm, ...delta } })),
+  patchTrash: (delta) =>
+    runSimplePatch(set, () => api.patchConfig({ trash: { ...get().trash, ...delta } })),
+  patchEditor: (delta) =>
+    runSimplePatch(set, () => api.patchConfig({ editor: { ...get().editor, ...delta } })),
+  patchBrowser: (delta) =>
+    runSimplePatch(set, () => api.patchConfig({ browser: { ...get().browser, ...delta } })),
+  patchAi: (delta) => runSimplePatch(set, () => api.patchConfig({ ai: { ...get().ai, ...delta } })),
+  patchLog: (delta) =>
+    runSimplePatch(set, () => api.patchConfig({ log: { ...get().log, ...delta } })),
 
-  patchWindow: async (delta) => {
-    try {
-      const res = await api.patchConfig({ window: { ...get().window, ...delta } });
-      if (res.data) {
-        applyConfig(set, res.data);
-        return true;
-      }
-      return false;
-    } catch (err) {
-      set({ error: err instanceof Error ? err.message : String(err) });
-      return false;
-    }
-  },
-
-  patchLlm: async (delta) => {
-    try {
-      const res = await api.patchConfig({ llm: { ...get().llm, ...delta } });
-      if (res.data) {
-        applyConfig(set, res.data);
-        return true;
-      }
-      return false;
-    } catch (err) {
-      set({ error: err instanceof Error ? err.message : String(err) });
-      return false;
-    }
-  },
-
-  patchTrash: async (delta) => {
-    try {
-      const res = await api.patchConfig({ trash: { ...get().trash, ...delta } });
-      if (res.data) {
-        applyConfig(set, res.data);
-        return true;
-      }
-      return false;
-    } catch (err) {
-      set({ error: err instanceof Error ? err.message : String(err) });
-      return false;
-    }
-  },
-
-  patchEditor: async (delta) => {
-    try {
-      const res = await api.patchConfig({ editor: { ...get().editor, ...delta } });
-      if (res.data) {
-        applyConfig(set, res.data);
-        return true;
-      }
-      return false;
-    } catch (err) {
-      set({ error: err instanceof Error ? err.message : String(err) });
-      return false;
-    }
-  },
-
-  patchBrowser: async (delta) => {
-    try {
-      const res = await api.patchConfig({ browser: { ...get().browser, ...delta } });
-      if (res.data) {
-        applyConfig(set, res.data);
-        return true;
-      }
-      return false;
-    } catch (err) {
-      set({ error: err instanceof Error ? err.message : String(err) });
-      return false;
-    }
-  },
-
-  patchAi: async (delta) => {
-    try {
-      const res = await api.patchConfig({ ai: { ...get().ai, ...delta } });
-      if (res.data) {
-        applyConfig(set, res.data);
-        return true;
-      }
-      return false;
-    } catch (err) {
-      set({ error: err instanceof Error ? err.message : String(err) });
-      return false;
-    }
-  },
-
-  patchLog: async (delta) => {
-    try {
-      const res = await api.patchConfig({ log: { ...get().log, ...delta } });
-      if (res.data) {
-        applyConfig(set, res.data);
-        return true;
-      }
-      return false;
-    } catch (err) {
-      set({ error: err instanceof Error ? err.message : String(err) });
-      return false;
-    }
+  reset: () => {
+    applyFontToRoot(DEFAULT_FONT);
+    set({
+      config: null,
+      shortcuts: DEFAULT_SHORTCUTS,
+      font: DEFAULT_FONT,
+      window: DEFAULT_WINDOW,
+      llm: DEFAULT_LLM,
+      trash: DEFAULT_TRASH,
+      editor: DEFAULT_EDITOR,
+      browser: DEFAULT_BROWSER,
+      ai: DEFAULT_AI,
+      log: DEFAULT_LOG,
+      loading: false,
+      error: null,
+    });
   },
 }));
 

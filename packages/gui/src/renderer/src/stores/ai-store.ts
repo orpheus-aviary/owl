@@ -6,6 +6,7 @@ import { type NoteAppliedNotice, dispatchAgentEvent } from './ai-dispatcher';
 import type { ChatMessage, ChatToolCall, ConversationMeta, StreamingState } from './ai-store-types';
 import { useDataBus } from './data-bus';
 import { useEditorStore } from './editor-store';
+import { currentGen, isStale } from './session-epoch';
 
 export type {
   ChatRole,
@@ -54,6 +55,10 @@ interface AiState {
   loadConversation: (id: string) => Promise<void>;
   sendMessage: (id: string, text: string) => Promise<void>;
   abortStreaming: (id: string) => void;
+  /** ③: abort every in-flight stream (session teardown). */
+  abortAllStreams: () => void;
+  /** ③: abort streams + drop all conversation state for a session switch. */
+  reset: () => void;
   /**
    * Delete a conversation. Ephemeral (never persisted) ids only clear
    * local state; persisted ids also DELETE the daemon row (CASCADE clears
@@ -132,8 +137,10 @@ export const useAiStore = create<AiState>((set, get) => ({
   },
 
   loadConversations: async () => {
+    const gen = currentGen();
     try {
       const res = await api.listAiConversations();
+      if (isStale(gen)) return;
       const conversations: ConversationMeta[] = (res.data?.conversations ?? []).map((c) => ({
         id: c.id,
         title: c.title,
@@ -151,8 +158,10 @@ export const useAiStore = create<AiState>((set, get) => ({
     // Already hydrated (either from a previous load or a live send)?
     // Skip the refetch — the live messages are the authoritative copy.
     if (get().messagesByConversation[id]?.length) return;
+    const gen = currentGen();
     try {
       const res = await api.getAiConversation(id);
+      if (isStale(gen)) return;
       const historyMessages: AiHistoryMessage[] = res.data?.messages ?? [];
       const messages = hydrateDaemonMessages(historyMessages);
       set((state) => ({
@@ -183,6 +192,25 @@ export const useAiStore = create<AiState>((set, get) => ({
     stream.abortController?.abort();
   },
 
+  abortAllStreams: () => {
+    for (const s of Object.values(get().streamingByConversation)) {
+      s.abortController?.abort();
+    }
+  },
+
+  reset: () => {
+    get().abortAllStreams();
+    set({
+      conversations: [],
+      conversationsLoaded: false,
+      messagesByConversation: {},
+      streamingByConversation: {},
+      activeConversationId: null,
+      noteAppliedNotices: [],
+      scrollByConversation: {},
+    });
+  },
+
   dismissNoteAppliedNotice: (noticeId) => {
     set((state) => ({
       noteAppliedNotices: state.noteAppliedNotices.filter((n) => n.id !== noticeId),
@@ -194,6 +222,7 @@ export const useAiStore = create<AiState>((set, get) => ({
   },
 
   approveDraft: async (conversationId, messageId, draftLocalId) => {
+    const gen = currentGen();
     const draft = findDraft(get(), conversationId, messageId, draftLocalId);
     if (!draft || draft.approved || draft.approving) return;
     patchDraft(set, conversationId, messageId, draftLocalId, () => ({
@@ -202,6 +231,7 @@ export const useAiStore = create<AiState>((set, get) => ({
     }));
     try {
       await applyDraftViaApi(draft);
+      if (isStale(gen)) return;
       patchDraft(set, conversationId, messageId, draftLocalId, () => ({
         approved: true,
         approving: false,
@@ -210,6 +240,7 @@ export const useAiStore = create<AiState>((set, get) => ({
       addNoteAppliedToast(set, draft);
       useDataBus.getState().bumpNotes();
     } catch (err) {
+      if (isStale(gen)) return;
       const message = err instanceof Error ? err.message : String(err);
       patchDraft(set, conversationId, messageId, draftLocalId, () => ({
         approving: false,
@@ -226,6 +257,7 @@ export const useAiStore = create<AiState>((set, get) => ({
   },
 
   deleteConversation: async (id) => {
+    const gen = currentGen();
     const state = get();
     const stream = state.streamingByConversation[id];
     stream?.abortController?.abort();
@@ -239,6 +271,7 @@ export const useAiStore = create<AiState>((set, get) => ({
       }
     }
 
+    if (isStale(gen)) return; // session switched mid-delete → new session untouched
     set((s) => {
       const { [id]: _msgs, ...restMessages } = s.messagesByConversation;
       const { [id]: _stream, ...restStreaming } = s.streamingByConversation;
@@ -255,6 +288,7 @@ export const useAiStore = create<AiState>((set, get) => ({
   },
 
   sendMessage: async (conversationId, text) => {
+    const gen = currentGen();
     const trimmed = text.trim();
     if (!trimmed) return;
     const stream = get().streamingByConversation[conversationId];
@@ -308,6 +342,7 @@ export const useAiStore = create<AiState>((set, get) => ({
         body: { message: trimmed, conversation_id: conversationId },
         signal: controller.signal,
         onEvent: (event, data) => {
+          if (isStale(gen)) return; // session switched mid-stream → stop applying frames
           set((state) => {
             const prevMessages = state.messagesByConversation[conversationId] ?? [];
             const next = dispatchAgentEvent({
@@ -332,28 +367,33 @@ export const useAiStore = create<AiState>((set, get) => ({
         },
       });
     } catch (err) {
+      if (isStale(gen)) return;
       const message = formatStreamError(err);
       patchAssistantMessage(set, conversationId, assistantMsg.id, (m) => ({
         ...m,
         error: message,
       }));
     } finally {
-      set((state) => ({
-        streamingByConversation: {
-          ...state.streamingByConversation,
-          [conversationId]: emptyStreaming,
-        },
-        messagesByConversation: {
-          ...state.messagesByConversation,
-          [conversationId]: (state.messagesByConversation[conversationId] ?? []).map((m) =>
-            m.id === assistantMsg.id ? { ...m, isStreaming: false } : m,
-          ),
-        },
-      }));
-      // Refresh the sidebar — the daemon created a new row on first send
-      // (ephemeral → persisted) or bumped updated_at on a subsequent send,
-      // either way the sidebar order may have changed.
-      void get().loadConversations();
+      // The abort on session switch lands here too (`:356` runs after abort);
+      // guard so a torn-down session never rewrites the new session's stores.
+      if (!isStale(gen)) {
+        set((state) => ({
+          streamingByConversation: {
+            ...state.streamingByConversation,
+            [conversationId]: emptyStreaming,
+          },
+          messagesByConversation: {
+            ...state.messagesByConversation,
+            [conversationId]: (state.messagesByConversation[conversationId] ?? []).map((m) =>
+              m.id === assistantMsg.id ? { ...m, isStreaming: false } : m,
+            ),
+          },
+        }));
+        // Refresh the sidebar — the daemon created a new row on first send
+        // (ephemeral → persisted) or bumped updated_at on a subsequent send,
+        // either way the sidebar order may have changed.
+        void get().loadConversations();
+      }
     }
   },
 }));

@@ -2,6 +2,7 @@ import type { Note } from '@/lib/api';
 import * as api from '@/lib/api';
 import { create } from 'zustand';
 import { useDataBus } from './data-bus';
+import { currentGen, isStale } from './session-epoch';
 
 export type SortKey = 'updated_desc' | 'updated_asc' | 'created_desc' | 'created_asc';
 
@@ -21,7 +22,23 @@ interface BrowserState {
   setFolderId: (id: string | undefined) => void;
   fetchNotes: () => Promise<void>;
   resetFilters: () => void;
+  /** ③: back to the initial per-session shape (distinct from `resetFilters`,
+   *  which keeps the store alive and refetches). */
+  reset: () => void;
 }
+
+const initialState = (): Pick<
+  BrowserState,
+  'query' | 'activeTags' | 'sortKey' | 'folderId' | 'notes' | 'total' | 'loading'
+> => ({
+  query: '',
+  activeTags: [],
+  sortKey: 'updated_desc',
+  folderId: undefined,
+  notes: [],
+  total: 0,
+  loading: false,
+});
 
 function parseSortKey(key: SortKey): {
   sort_by: 'updated' | 'created';
@@ -32,13 +49,7 @@ function parseSortKey(key: SortKey): {
 }
 
 export const useBrowserStore = create<BrowserState>((set, get) => ({
-  query: '',
-  activeTags: [],
-  sortKey: 'updated_desc',
-  folderId: undefined,
-  notes: [],
-  total: 0,
-  loading: false,
+  ...initialState(),
 
   setQuery: (q: string) => {
     set({ query: q });
@@ -70,6 +81,7 @@ export const useBrowserStore = create<BrowserState>((set, get) => ({
   },
 
   fetchNotes: async () => {
+    const gen = currentGen();
     const { query, activeTags, sortKey, folderId } = get();
     set({ loading: true });
     try {
@@ -86,9 +98,10 @@ export const useBrowserStore = create<BrowserState>((set, get) => ({
         pinned_first: true,
         limit: 100,
       });
+      if (isStale(gen)) return;
       set({ notes: res.data ?? [], total: res.total ?? 0 });
     } finally {
-      set({ loading: false });
+      if (!isStale(gen)) set({ loading: false });
     }
   },
 
@@ -96,6 +109,8 @@ export const useBrowserStore = create<BrowserState>((set, get) => ({
     set({ query: '', activeTags: [], sortKey: 'updated_desc', folderId: undefined });
     get().fetchNotes();
   },
+
+  reset: () => set(initialState()),
 }));
 
 // Refetch when notes change anywhere in the app — keeps the browse page

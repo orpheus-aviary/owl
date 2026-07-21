@@ -12,12 +12,7 @@ vi.mock('@/lib/api', async () => {
 });
 
 import * as api from '@/lib/api';
-import {
-  _resetNoteIdCachesForTest,
-  fetchNoteMeta,
-  noteMetaCacheGet,
-  remarkNoteRefs,
-} from './note-id-refs';
+import { fetchNoteMeta, noteMetaCacheGet, remarkNoteRefs, resetNoteIdCaches } from './note-id-refs';
 
 interface Node {
   type: string;
@@ -27,11 +22,11 @@ interface Node {
 }
 
 beforeEach(() => {
-  _resetNoteIdCachesForTest();
+  resetNoteIdCaches();
   vi.clearAllMocks();
 });
 afterEach(() => {
-  _resetNoteIdCachesForTest();
+  resetNoteIdCaches();
 });
 
 const ID1 = '11111111-2222-3333-4444-555555555555';

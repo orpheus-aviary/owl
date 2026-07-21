@@ -11,6 +11,7 @@ import * as api from '@/lib/api';
 import { SPECIAL_NOTE_ID_SET } from '@/lib/special-notes';
 import { useDataBus } from '@/stores/data-bus';
 import { useEditorStore } from '@/stores/editor-store';
+import { currentGen, isStale } from '@/stores/session-epoch';
 import { useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { create } from 'zustand';
@@ -50,7 +51,9 @@ export const usePendingDeleteStore = create<PendingDeleteState>((set) => ({
  *  data-bus so every list (note-store, browser-store, folder-panel notes,
  *  trash-page) refreshes through their bus subscriptions. */
 async function performDelete(noteId: string): Promise<void> {
+  const gen = currentGen();
   await api.deleteNote(noteId);
+  if (isStale(gen)) return; // session switched mid-delete → don't touch new session
   const editor = useEditorStore.getState();
   if (editor.tabs.some((t) => t.noteId === noteId)) {
     editor.closeTab(noteId);

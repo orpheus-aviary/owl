@@ -2,6 +2,7 @@ import type { Note } from '@/lib/api';
 import * as api from '@/lib/api';
 import type { TimeRange } from '@/lib/reminder-utils';
 import { create } from 'zustand';
+import { currentGen, isStale } from './session-epoch';
 
 interface ReminderState {
   timeRange: TimeRange;
@@ -10,9 +11,11 @@ interface ReminderState {
 
   setTimeRange: (range: TimeRange) => void;
   fetchReminders: () => Promise<void>;
+  /** ③: back to the initial per-session shape. */
+  reset: () => void;
 }
 
-export const useReminderStore = create<ReminderState>((set, get) => ({
+export const useReminderStore = create<ReminderState>((set) => ({
   timeRange: 'all',
   notes: [],
   loading: false,
@@ -22,12 +25,16 @@ export const useReminderStore = create<ReminderState>((set, get) => ({
   },
 
   fetchReminders: async () => {
+    const gen = currentGen();
     set({ loading: true });
     try {
       const res = await api.listAlarmNotes();
+      if (isStale(gen)) return;
       set({ notes: res.data ?? [] });
     } finally {
-      set({ loading: false });
+      if (!isStale(gen)) set({ loading: false });
     }
   },
+
+  reset: () => set({ timeRange: 'all', notes: [], loading: false }),
 }));
