@@ -27,6 +27,7 @@ import {
   isDescendant,
   useFolderStore,
 } from '@/stores/folder-store';
+import { currentGen, isStale } from '@/stores/session-epoch';
 import { useDndContext, useDraggable, useDroppable } from '@dnd-kit/core';
 import {
   ChevronDown,
@@ -74,7 +75,6 @@ export function FolderPanel() {
     expanded,
     loading,
     error,
-    fetch,
     fetchPanelNotes,
     toggleExpanded,
     expand,
@@ -88,10 +88,9 @@ export function FolderPanel() {
   const navigate = useNavigate();
   const requestDelete = useRequestDeleteNote();
 
-  useEffect(() => {
-    void fetch();
-    void fetchPanelNotes();
-  }, [fetch, fetchPanelNotes]);
+  // ③: no mount fetch — the folder tree + panel notes are loaded by
+  // `bootstrapSession` at cold start and kept current via data-bus. Panel
+  // renders from the store.
 
   const tree = useMemo(() => buildFolderTree(folders), [folders]);
   const allExpanded = folders.length > 0 && expanded.size >= folders.length;
@@ -653,8 +652,10 @@ function FolderNoteRow({
   });
 
   const handleTogglePin = async () => {
+    const gen = currentGen();
     try {
       await api.pinNote(note.id, !pinned);
+      if (isStale(gen)) return;
       useDataBus.getState().bumpNotes();
     } catch (err) {
       console.error('pin toggle failed', err);

@@ -17,13 +17,13 @@ import { type DragData, isDragData, isDropTarget } from '@/lib/dnd-types';
 import { LAYOUT_KEYS } from '@/lib/layout-keys';
 import { matchesShortcut } from '@/lib/shortcuts';
 import { getPlatform } from '@/platform';
-import { useBrowserStore } from '@/stores/browser-store';
+import { activateSession } from '@/session/session-actions';
 import { useConfigStore } from '@/stores/config-store';
-import { useConflictsStore } from '@/stores/conflicts-store';
 import { useDataBus } from '@/stores/data-bus';
 import { useEditorStore } from '@/stores/editor-store';
 import { isDescendant, useFolderStore } from '@/stores/folder-store';
 import { useNoteStore } from '@/stores/note-store';
+import { currentGen, isStale } from '@/stores/session-epoch';
 import {
   DndContext,
   type DragEndEvent,
@@ -193,49 +193,62 @@ function buildReorderList(
   return [...scopeIds.slice(0, clamped), draggedId, ...scopeIds.slice(clamped)];
 }
 
+/**
+ * Move a note into `targetFolderId` (when `doMove`) then reorder it into place.
+ * NULL position would combine with the freshly-bumped updated_at to land the
+ * note at the TOP of the NULL group, not the bottom — so we always reorder
+ * explicitly. ③ (附录 A): `gen`-guarded after every await so a profile switch
+ * mid-drop can't fetch panel notes / reorder against the NEW profile or write
+ * an old note id into the new library.
+ */
+async function moveNoteAndReorder(
+  gen: number,
+  noteId: string,
+  targetFolderId: string | null,
+  insertIndex: number | undefined,
+  doMove: boolean,
+): Promise<void> {
+  if (doMove) {
+    const moved = await moveNoteToFolder(noteId, targetFolderId);
+    if (isStale(gen)) return;
+    // Pass the post-move updatedAt so a web tab rebases its CAS baseline (the
+    // move bumped updated_at; the reorder below only touches position).
+    useEditorStore.getState().syncTabFolderId(noteId, targetFolderId, moved.data?.updatedAt);
+    // Refresh panelNotes so buildReorderList sees the note in its new scope.
+    await useFolderStore.getState().fetchPanelNotes();
+    if (isStale(gen)) return;
+  }
+  const ordered = buildReorderList(targetFolderId, noteId, insertIndex);
+  await api.reorderNotes(targetFolderId, ordered);
+  if (isStale(gen)) return;
+  useDataBus.getState().bumpNotes();
+}
+
 async function handleNoteDrop(
   drag: Extract<DragData, { kind: 'note' }>,
   drop: import('@/lib/dnd-types').DropTarget,
 ): Promise<void> {
+  const gen = currentGen();
   try {
     if (drop.kind === 'folder-node') {
-      // Move to folder + land at tail of that folder. NULL position would
-      // combine with a freshly-bumped updated_at to put the note at the TOP
-      // of the NULL group, not the bottom — so we reorder explicitly.
-      const moved = await moveNoteToFolder(drag.noteId, drop.folderId);
-      // Pass the post-move updatedAt so a web tab rebases its CAS baseline
-      // (the move bumped updated_at; reorder below only touches position).
-      useEditorStore.getState().syncTabFolderId(drag.noteId, drop.folderId, moved.data?.updatedAt);
-      await useFolderStore.getState().fetchPanelNotes();
-      const ordered = buildReorderList(drop.folderId, drag.noteId);
-      await api.reorderNotes(drop.folderId, ordered);
-      useDataBus.getState().bumpNotes();
+      await moveNoteAndReorder(gen, drag.noteId, drop.folderId, undefined, true);
       return;
     }
     if (drop.kind === 'root-blank') {
-      const moved = await moveNoteToFolder(drag.noteId, null);
-      useEditorStore.getState().syncTabFolderId(drag.noteId, null, moved.data?.updatedAt);
-      await useFolderStore.getState().fetchPanelNotes();
-      const ordered = buildReorderList(null, drag.noteId);
-      await api.reorderNotes(null, ordered);
-      useDataBus.getState().bumpNotes();
+      await moveNoteAndReorder(gen, drag.noteId, null, undefined, true);
       return;
     }
     if (drop.kind === 'note-gap') {
-      // Source folder of the dragged note — derived from panelNotes.
+      // Move only when crossing folders; a same-folder gap drop just reorders.
       const src = useFolderStore.getState().panelNotes.find((n) => n.id === drag.noteId);
       const srcFolderId = src?.folderId ?? null;
-      if (srcFolderId !== drop.folderId) {
-        const moved = await moveNoteToFolder(drag.noteId, drop.folderId);
-        useEditorStore
-          .getState()
-          .syncTabFolderId(drag.noteId, drop.folderId, moved.data?.updatedAt);
-        // Refresh panelNotes so buildReorderList sees the note in its new scope.
-        await useFolderStore.getState().fetchPanelNotes();
-      }
-      const ordered = buildReorderList(drop.folderId, drag.noteId, drop.index);
-      await api.reorderNotes(drop.folderId, ordered);
-      useDataBus.getState().bumpNotes();
+      await moveNoteAndReorder(
+        gen,
+        drag.noteId,
+        drop.folderId,
+        drop.index,
+        srcFolderId !== drop.folderId,
+      );
       return;
     }
     // folder-gap — notes can't drop here
@@ -245,37 +258,20 @@ async function handleNoteDrop(
 }
 
 export function MainApp() {
-  // Load config once on mount — subsequent changes are pushed by PATCH /config.
-  // After the initial fetch, hydrate session-level defaults (editor mode +
-  // browser sort) from config. These one-shot writes only apply to the current
-  // session; users can still change them live without the settings overriding.
-  useEffect(() => {
-    void useConfigStore
-      .getState()
-      .fetch()
-      .then(() => {
-        const { editor, browser } = useConfigStore.getState();
-        useEditorStore.getState().setMode(editor.default_mode);
-        const sortKey = `${browser.default_sort_field}_${browser.default_sort_direction}` as const;
-        useBrowserStore.getState().setSortKey(sortKey);
-      });
-  }, []);
+  // ③: cold-start fetches (config + hydration, conflicts, notes, folder tree /
+  // panel, sync status) now live in `bootstrapSession`, owned by
+  // `SessionCoordinator` — the single awaitable entry the BootstrapOverlay
+  // waits on. MainApp no longer fetches on mount; it renders from the stores
+  // bootstrap fills and refreshes via data-bus.
 
-  // P5-c §6.33: cold-start fetch of conflict count. SSE `conflicts:changed`
-  // only fires on *new* conflicts; the sidebar 红点 needs an absolute value
-  // when the daemon has been running before this renderer attached.
-  useEffect(() => {
-    void useConflictsStore.getState().refresh();
-  }, []);
-
-  // P5-d Phase 16 (B7, design §5.4.4): a profile switch (login / logout)
-  // committed in main. Do a controlled full reload so no editor tab / AI
-  // cache / conflict list / sync timer from the previous profile survives
-  // into the new one. Defer one macrotask so the triggering sync:login/logout
-  // IPC reply has fully settled before the document tears down.
+  // A profile switch (login / logout) committed in main. ③: replace the old
+  // `location.reload()` with in-app session isolation — reset every store,
+  // remount the epoch-keyed session root (new SSE under the new profile), and
+  // re-bootstrap. Defer one macrotask so the triggering sync:login/logout IPC
+  // reply has fully settled before the swap runs.
   useEffect(() => {
     return getPlatform().sync.onProfileSwitched?.(() => {
-      setTimeout(() => window.location.reload(), 0);
+      setTimeout(() => void activateSession(), 0);
     });
   }, []);
 

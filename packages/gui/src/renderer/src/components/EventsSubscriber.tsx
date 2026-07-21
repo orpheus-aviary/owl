@@ -4,6 +4,7 @@ import { subscribeSse } from '../lib/sse-client';
 import { useConflictsStore } from '../stores/conflicts-store';
 import { useDataBus } from '../stores/data-bus';
 import { openNoteById } from '../stores/editor-store';
+import { currentGen, isStale } from '../stores/session-epoch';
 import { useSyncStatus } from '../stores/sync-status';
 import { handleDaemonEvent } from './events-subscriber-core';
 
@@ -41,25 +42,52 @@ export function EventsSubscriber(): null {
   }, [fetchSyncStatus]);
 
   useEffect(() => {
+    // ③ (P1-4): capture the session generation this subscription belongs to.
+    // Between an epoch bump and this effect's cleanup/abort there is a window
+    // where an already-dispatched SSE frame (open_note → navigate,
+    // sync:status_changed → setSyncStatus, conflicts:changed → refresh+bump)
+    // could still run — tearing down the stream alone doesn't stop queued
+    // frames. Every handler bails when the session has moved on, so a stale
+    // subscription can never write into the new session.
+    const gen = currentGen();
     const controller = new AbortController();
     const handlers = {
-      openNoteById,
-      navigate: (path: string) => navigate(path),
-      setSyncStatus,
-      refreshConflicts,
-      bumpConflicts,
-      onConnected: () => void fetchSyncStatus(),
+      openNoteById, // captures its own gen internally around the GET
+      navigate: (path: string) => {
+        if (isStale(gen)) return;
+        navigate(path);
+      },
+      setSyncStatus: (snap: Parameters<typeof setSyncStatus>[0]) => {
+        if (isStale(gen)) return;
+        setSyncStatus(snap);
+      },
+      refreshConflicts: async () => {
+        if (isStale(gen)) return;
+        await refreshConflicts();
+      },
+      bumpConflicts: () => {
+        if (isStale(gen)) return;
+        bumpConflicts();
+      },
+      onConnected: () => {
+        if (isStale(gen)) return;
+        void fetchSyncStatus();
+      },
     };
 
     subscribeSse({
       path: '/events',
       signal: controller.signal,
       onEvent: (event, rawData) => {
+        if (isStale(gen)) return;
         void handleDaemonEvent(event, rawData, handlers);
       },
       // Every connection-lifecycle end (error OR silent EOF) re-probes status,
       // so「未连接」flips back once the daemon answers again (D12).
-      onDisconnect: () => void fetchSyncStatus(),
+      onDisconnect: () => {
+        if (isStale(gen)) return;
+        void fetchSyncStatus();
+      },
     });
 
     return () => controller.abort();

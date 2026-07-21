@@ -12,6 +12,7 @@ import * as api from '@/lib/api';
 import type { Note } from '@/lib/api';
 import { useDataBus } from '@/stores/data-bus';
 import { useNoteStore } from '@/stores/note-store';
+import { currentGen, isStale } from '@/stores/session-epoch';
 import { Pin, PinOff, Plus, Search, Trash2 } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { NoteListItem } from './NoteListItem';
@@ -46,14 +47,18 @@ interface NoteListProps {
 }
 
 export function NoteList({ activeNoteId, onSelectNote }: NoteListProps) {
-  const { notes, query, loading, fetchNotes, setQuery, createNote } = useNoteStore();
+  const { notes, query, loading, setQuery, createNote } = useNoteStore();
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const listContainerRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    fetchNotes();
-  }, [fetchNotes]);
+  // ③: no mount fetch — the note list is loaded by `bootstrapSession` at cold
+  // start and kept current via data-bus; the list renders from the store.
+
+  // ③ (附录 A): clear the search debounce on unmount so a pending
+  // `setQuery`→`fetchNotes` can't fire into the NEXT session (the keyed session
+  // root unmounts this on a profile switch, running this cleanup).
+  useEffect(() => () => clearTimeout(debounceRef.current), []);
 
   const handleSearch = useCallback(
     (value: string) => {
@@ -78,8 +83,10 @@ export function NoteList({ activeNoteId, onSelectNote }: NoteListProps) {
   );
 
   const handleTogglePin = useCallback(async (noteId: string, pinned: boolean) => {
+    const gen = currentGen();
     try {
       await api.pinNote(noteId, pinned);
+      if (isStale(gen)) return;
       useDataBus.getState().bumpNotes();
     } catch (err) {
       console.error('pin toggle failed', err);
