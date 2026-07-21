@@ -196,13 +196,20 @@ ensure-node-abi:
         # 132), which silently re-breaks Node 24 (ABI 137) every time
         # `pnpm install` runs. 2026-05-25 manual M-checklist hit this 4× in
         # one session, hence this guard.
-        SRC_DIR=node_modules/.pnpm/better-sqlite3@*/node_modules/better-sqlite3
-        (cd $SRC_DIR && pnpm run build-release)
-        # Mirror the freshly built binary to the hoisted top-level copy
-        # (pnpm install ships an independent .node there that doesn't get
-        # rebuilt by the inner script).
-        cp -p node_modules/.pnpm/better-sqlite3@*/node_modules/better-sqlite3/build/Release/better_sqlite3.node \
-            node_modules/better-sqlite3/build/Release/better_sqlite3.node
+        #
+        # Locate better-sqlite3's source: the pnpm-virtual store copy when it
+        # exists, else the hoisted top-level copy (node-linker=hoisted leaves NO
+        # .pnpm/better-sqlite3@* dir, so the old glob failed → this fallback).
+        SRC_DIR=$(ls -d node_modules/.pnpm/better-sqlite3@*/node_modules/better-sqlite3 2>/dev/null | head -1 || true)
+        [ -z "$SRC_DIR" ] && SRC_DIR=node_modules/better-sqlite3
+        (cd "$SRC_DIR" && pnpm run build-release)
+        # Mirror the freshly built binary to the hoisted top-level copy (pnpm
+        # install ships an independent .node there that the inner build doesn't
+        # touch). No-op when SRC_DIR already IS the hoisted copy (hoisted layout).
+        HOISTED=node_modules/better-sqlite3/build/Release/better_sqlite3.node
+        if [ "$SRC_DIR" != node_modules/better-sqlite3 ] && [ -f "$SRC_DIR/build/Release/better_sqlite3.node" ]; then
+            cp -p "$SRC_DIR/build/Release/better_sqlite3.node" "$HOISTED"
+        fi
     fi
 
 # Guarantee the current better-sqlite3 binding is Electron-loadable. Prepended
@@ -257,6 +264,15 @@ dev-daemon: ensure-node-abi
 [group('dev')]
 dev-web: build-shared
     pnpm --filter @owl/web run dev
+
+# ④ — persistent web-cloud rig for MANUAL browser testing of web session UX.
+# One Node process hosts an in-process skybridge + the owl cloud daemon serving
+# apps/web/dist same-origin at 127.0.0.1:47020 (owner owner@x.test). Fresh /tmp
+# nest each run; Ctrl-C stops both. See scripts/dev-web-cloud.mjs.
+[group('dev')]
+dev-web-cloud: ensure-node-abi build-shared build-core build-daemon
+    pnpm --filter @owl/web run build
+    OWL_NEST_DIR="$(mktemp -d /tmp/owl-web-rig-nest.XXXXXX)" node scripts/dev-web-cloud.mjs
 
 # Stop the running daemon process.
 [group('dev')]
