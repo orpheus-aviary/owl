@@ -499,8 +499,11 @@ describe('ProfileSwitcher — W4 quick switch list', () => {
       </MemoryRouter>,
     );
     fireEvent.click(screen.getByRole('button', { name: /pid-B@test/ }));
-    expect(switchMock).toHaveBeenCalledWith('pid-B');
+    // ③: onSwitch now awaits the unsaved-tabs guard (resolves immediately when
+    // there are no dirty tabs) before calling switchProfile, so the call lands
+    // one microtask later — assert after it settles.
     await waitFor(() => expect(switchMock).toHaveBeenCalledTimes(1));
+    expect(switchMock).toHaveBeenCalledWith('pid-B');
   });
 
   it('ghost (db_missing) and legacy (no refresh) rows are greyed with a Settings link, not buttons', () => {

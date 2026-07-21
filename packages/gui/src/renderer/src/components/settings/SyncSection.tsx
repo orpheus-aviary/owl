@@ -1,5 +1,6 @@
 import { Button } from '@/components/ui/button';
 import { getPlatform } from '@/platform';
+import { useSwitchGuard } from '@/stores/switch-guard';
 import { Loader2 } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
@@ -77,6 +78,9 @@ export function SyncSection() {
 
   const handleLogin = async (values: LoginFormValues) => {
     setLoginError(null);
+    // ③: logging into an account switches profiles (discards the current
+    // profile's dirty tabs) — gate on unsaved work first.
+    if (!(await useSwitchGuard.getState().request())) return;
     setSubmitting(true);
     const reply = await getPlatform().sync.login(values);
     setSubmitting(false);
@@ -101,6 +105,9 @@ export function SyncSection() {
 
   const handleLogout = async () => {
     setConfirmingLogout(false);
+    // ③: logout switches back to the local profile (discards account dirty
+    // tabs) — gate on unsaved work first.
+    if (!(await useSwitchGuard.getState().request())) return;
     setError(null);
     setSubmitting(true);
     const reply = await getPlatform().sync.logout();

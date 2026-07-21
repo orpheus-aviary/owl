@@ -3,6 +3,7 @@ import { DeleteConfirmDialog } from '@/components/DeleteConfirmDialog';
 import { EventsSubscriber } from '@/components/EventsSubscriber';
 import { FolderPanel } from '@/components/FolderPanel';
 import { extractTitle } from '@/components/NoteListItem';
+import { SwitchUnsavedDialog } from '@/components/SwitchUnsavedDialog';
 import { UnsavedTabsDialog } from '@/components/UnsavedTabsDialog';
 import { ConflictDialog } from '@/components/ai/ConflictDialog';
 import { NoteAppliedToast } from '@/components/ai/NoteAppliedToast';
@@ -420,6 +421,7 @@ export function MainApp() {
       <ConflictDialog />
       <VersionConflictDialog />
       <UnsavedTabsDialog />
+      <SwitchUnsavedDialog />
       <ClaimAccountDialog />
     </HashRouter>
   );

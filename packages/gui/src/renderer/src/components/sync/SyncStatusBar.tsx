@@ -10,6 +10,7 @@ import {
 } from '@/components/ui/popover';
 import type { SyncState, SyncStatusSnapshot } from '@/lib/api';
 import { getPlatform } from '@/platform';
+import { useSwitchGuard } from '@/stores/switch-guard';
 import { type ProbeStatus, useSyncStatus } from '@/stores/sync-status';
 import { Check, Loader2, Plus } from 'lucide-react';
 import { useState } from 'react';
@@ -321,6 +322,8 @@ export function ProfileSwitcher({
     // Optional Electron-local capability — the web host has no profile switch.
     const switchFn = getPlatform().sync.switchProfile;
     if (!switchFn) return;
+    // ③: quick-switch discards the current profile's dirty tabs — gate first.
+    if (!(await useSwitchGuard.getState().request())) return;
     setSwitchingId(id);
     setError(null);
     const reply = await switchFn(id);
