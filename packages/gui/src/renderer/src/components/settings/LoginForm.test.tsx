@@ -49,6 +49,40 @@ describe('LoginForm', () => {
       serverUrl: 'http://srv',
       email: 'b@test',
       password: 'pw2',
+      remember: false,
+    });
+  });
+
+  it('shows 记住我 only with showRemember, and submits remember:true when checked', () => {
+    const onSubmit = vi.fn();
+    const { rerender } = render(
+      <LoginForm
+        initialServerUrl="http://srv"
+        submitting={false}
+        error={null}
+        onSubmit={vi.fn()}
+      />,
+    );
+    // Off by default (desktop add-account view).
+    expect(screen.queryByRole('checkbox')).toBeNull();
+
+    rerender(
+      <LoginForm
+        initialServerUrl="http://srv"
+        submitting={false}
+        error={null}
+        onSubmit={onSubmit}
+        showRemember
+      />,
+    );
+    fill('b@test', 'pw');
+    fireEvent.click(screen.getByRole('checkbox'));
+    fireEvent.click(screen.getByRole('button', { name: '登录' }));
+    expect(onSubmit).toHaveBeenCalledWith({
+      serverUrl: 'http://srv',
+      email: 'b@test',
+      password: 'pw',
+      remember: true,
     });
   });
 

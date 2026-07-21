@@ -103,6 +103,7 @@ describe('SyncSection — unauth → login → auth flow', () => {
         serverUrl: 'http://srv',
         email: 'a@test',
         password: 'pw',
+        remember: false,
       });
     });
     await waitFor(() => {
@@ -300,6 +301,7 @@ describe('SyncSection — multi-account add', () => {
         serverUrl: 'http://srv',
         email: 'b@test',
         password: 'pw2',
+        remember: false,
       });
     });
   });

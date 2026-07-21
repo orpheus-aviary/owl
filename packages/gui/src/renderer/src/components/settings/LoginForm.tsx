@@ -2,17 +2,16 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Loader2 } from 'lucide-react';
 import { useState } from 'react';
+import type { LoginAndOpenSessionInput } from '../../../../shared/sync-auth-types.js';
 import { SettingRow } from './SettingRow';
 
 // Skybridge server's actual default port is 8443
 // (`skybridge/packages/server/src/config.ts`).
 export const DEFAULT_SERVER_URL = 'http://127.0.0.1:8443';
 
-export interface LoginFormValues {
-  serverUrl: string;
-  email: string;
-  password: string;
-}
+// The form's output IS the login input (④: aliasing — not a hand-kept twin —
+// so `remember` and any future field flow through automatically).
+export type LoginFormValues = LoginAndOpenSessionInput;
 
 /**
  * P5-d (multi-account add) — the skybridge login form, shared by the unauth
@@ -32,6 +31,7 @@ export function LoginForm({
   onSubmit,
   onCancel,
   hideServerUrl,
+  showRemember,
 }: {
   initialServerUrl: string;
   submitting: boolean;
@@ -44,15 +44,21 @@ export function LoginForm({
    * still passed through to onSubmit for shape parity, just not user-editable.
    */
   hideServerUrl?: boolean;
+  /**
+   * ④ — show the「记住我」checkbox (web host only). Desktop leaves it off: its
+   * local session isn't browser-persisted, so `remember` would be meaningless.
+   */
+  showRemember?: boolean;
 }) {
   const [serverUrl, setServerUrl] = useState(initialServerUrl);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [remember, setRemember] = useState(false);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!serverUrl.trim() || !email.trim() || !password) return;
-    onSubmit({ serverUrl: serverUrl.trim(), email: email.trim(), password });
+    onSubmit({ serverUrl: serverUrl.trim(), email: email.trim(), password, remember });
   };
 
   return (
@@ -93,6 +99,17 @@ export function LoginForm({
           required
         />
       </SettingRow>
+      {showRemember && (
+        <label className="flex cursor-pointer select-none items-center gap-2 px-4 py-3 text-sm text-muted-foreground">
+          <input
+            type="checkbox"
+            className="size-4 accent-primary"
+            checked={remember}
+            onChange={(e) => setRemember(e.target.checked)}
+          />
+          记住我（在此浏览器保持登录，刷新不必重登）
+        </label>
+      )}
       {error && <div className="px-4 py-2 text-sm text-destructive bg-destructive/10">{error}</div>}
       <div className="px-4 py-3 flex justify-end gap-2">
         {onCancel && (

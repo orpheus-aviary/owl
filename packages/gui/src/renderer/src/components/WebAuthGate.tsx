@@ -45,6 +45,7 @@ function WebLoginScreen() {
         <LoginForm
           initialServerUrl={window.location.origin}
           hideServerUrl
+          showRemember
           submitting={submitting}
           error={error}
           onSubmit={onSubmit}
