@@ -114,6 +114,27 @@ export interface VersionConflict {
 
 export type VersionConflictDecision = 'overwrite' | 'load-remote' | 'dismiss';
 
+/**
+ * Discriminated result of the whole save family (`saveNote` / `saveActiveNote`
+ * / `saveDraft` / `requestSaveOrConflict` / `resolveVersionConflict` /
+ * `resolveConflict`). The note-navigation guard (§4.1) reads `status` to tell a
+ * real failure from a user-parked conflict from a no-op — a plain boolean
+ * couldn't distinguish "409 dialog is up" from "save failed" from "dismissed":
+ *   - `saved`     — persisted. `noteId` is the CURRENT id (a draft's real id
+ *                   after create, otherwise the tab id).
+ *   - `noop`      — nothing to persist, or resolved to a clean baseline → safe
+ *                   to navigate away.
+ *   - `conflict`  — a conflict dialog (AI `ConflictDialog` or web
+ *                   `VersionConflictDialog`) is now showing; navigation pauses.
+ *   - `failed`    — a real transport / daemon failure.
+ *   - `cancelled` — the user kept their local edits (`dismiss`), or the session
+ *                   switched mid-save → do not navigate, do not claim success.
+ * `ok` is `true` for `saved` / `noop` only, so callers gate with `if (r.ok)`.
+ */
+export type SaveResult =
+  | { status: 'saved' | 'noop'; ok: true; noteId: string | null }
+  | { status: 'conflict' | 'failed' | 'cancelled'; ok: false; noteId: string | null };
+
 /** Subset of the SSE `draft_ready` payload needed to seed a new draft tab. */
 export interface AiDraftInput {
   note_id: string; // draft_<uuid>

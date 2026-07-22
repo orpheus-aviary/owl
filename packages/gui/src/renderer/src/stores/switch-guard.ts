@@ -72,7 +72,7 @@ export const useSwitchGuard = create<SwitchGuardState>((set) => {
       // Re-read each attempt so a retry only re-saves what's still dirty.
       const unsaved = editor.getUnsavedTabs();
       const results = await Promise.all(unsaved.map((t) => editor.saveNote(t.noteId)));
-      if (results.some((ok) => !ok)) {
+      if (results.some((r) => !r.ok)) {
         // A save failed (daemon down, or a web 409 surfaced its own dialog).
         // Keep the prompt open so the user can retry or fall back to 放弃.
         set({ saving: false, saveFailed: true });

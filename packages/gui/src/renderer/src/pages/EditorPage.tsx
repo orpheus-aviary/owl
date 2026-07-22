@@ -37,8 +37,10 @@ export function EditorPage() {
     if (!noteId) return;
 
     if (action === 'save') {
-      const ok = await useEditorStore.getState().saveNote(noteId);
-      if (ok) useEditorStore.getState().closeTab(noteId);
+      const result = await useEditorStore.getState().saveNote(noteId);
+      // Close the CURRENT id — a draft's id changed to its real id on create,
+      // so closing the original `noteId` would leave the saved tab dangling.
+      if (result.ok) useEditorStore.getState().closeTab(result.noteId ?? noteId);
     } else if (action === 'discard') {
       useEditorStore.getState().closeTab(noteId);
     }

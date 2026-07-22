@@ -89,15 +89,14 @@ export function UnsavedTabsDialog() {
     const tab = state.queue[state.index];
     if (!tab) return;
     setState({ phase: 'saving', queue: state.queue, index: state.index });
-    const ok = await requestSaveOrConflict(tab.noteId);
-    if (ok) {
+    const result = await requestSaveOrConflict(tab.noteId);
+    if (result.ok) {
       advance({ phase: 'prompting', queue: state.queue, index: state.index });
       return;
     }
-    // `ok === false` with conflictPrompt set → AI conflict. Hand off to
-    // ConflictDialog: close this modal, cancel the quit, let the user
-    // resolve the conflict and retry Cmd+Q manually.
-    if (useEditorStore.getState().conflictPrompt !== null) {
+    // `conflict` → a ConflictDialog is now showing. Hand off: close this modal,
+    // cancel the quit, let the user resolve it and retry Cmd+Q manually.
+    if (result.status === 'conflict') {
       respond(false);
       return;
     }

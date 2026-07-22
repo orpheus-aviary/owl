@@ -1,7 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { TabState } from './editor-store';
+import type { SaveResult, TabState } from './editor-store';
 import { useEditorStore } from './editor-store';
 import { useSwitchGuard } from './switch-guard';
+
+const saved = (id: string): SaveResult => ({ status: 'saved', ok: true, noteId: id });
+const failed = (id: string): SaveResult => ({ status: 'failed', ok: false, noteId: id });
 
 function dirtyTab(noteId: string): TabState {
   return {
@@ -57,7 +60,7 @@ describe('switch-guard', () => {
   });
 
   it('保存全部并切换 (saveAll) → saves every dirty tab, then resolves true', async () => {
-    const saveNote = vi.fn(async () => true);
+    const saveNote = vi.fn(async (id: string) => saved(id));
     useEditorStore.setState({ tabs: [dirtyTab('a'), dirtyTab('b')], saveNote });
     const p = useSwitchGuard.getState().request();
     await useSwitchGuard.getState().saveAll();
@@ -68,7 +71,7 @@ describe('switch-guard', () => {
   });
 
   it('saveAll with a failing save → keeps prompt open, flags saveFailed, does not resolve', async () => {
-    const saveNote = vi.fn(async (id: string) => id !== 'b'); // 'b' fails
+    const saveNote = vi.fn(async (id: string) => (id === 'b' ? failed(id) : saved(id))); // 'b' fails
     useEditorStore.setState({ tabs: [dirtyTab('a'), dirtyTab('b')], saveNote });
     let settled = false;
     void useSwitchGuard

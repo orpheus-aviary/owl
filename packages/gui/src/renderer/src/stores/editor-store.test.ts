@@ -576,8 +576,10 @@ describe('saveNote — web optimistic concurrency (B2)', () => {
     useEditorStore.getState().openNote(makeNoteAt('n1', 'hello', BASE));
     useEditorStore.getState().updateContent('n1', 'hello world');
 
-    const ok = await useEditorStore.getState().saveNote('n1');
-    expect(ok).toBe(true);
+    const result = await useEditorStore.getState().saveNote('n1');
+    expect(result.ok).toBe(true);
+    expect(result.status).toBe('saved');
+    expect(result.noteId).toBe('n1');
     expect(patchSpy).toHaveBeenCalledTimes(1);
     expect(lastPatchData(patchSpy)?.expected_updated_at).toBe(new Date(BASE).getTime());
     // Baseline advances to the version the server just wrote.
@@ -609,8 +611,9 @@ describe('saveNote — web optimistic concurrency (B2)', () => {
     useEditorStore.getState().openNote(makeNoteAt('n1', 'base', BASE));
     useEditorStore.getState().updateContent('n1', 'local edit');
 
-    const ok = await useEditorStore.getState().saveNote('n1');
-    expect(ok).toBe(false);
+    const result = await useEditorStore.getState().saveNote('n1');
+    expect(result.ok).toBe(false);
+    expect(result.status).toBe('conflict');
     expect(getSpy).toHaveBeenCalledWith('n1');
     const vc = useEditorStore.getState().versionConflict;
     expect(vc?.tabId).toBe('n1');
@@ -629,8 +632,9 @@ describe('saveNote — web optimistic concurrency (B2)', () => {
     useEditorStore.getState().openNote(makeNoteAt('n1', 'base', BASE));
     useEditorStore.getState().updateContent('n1', 'local edit');
 
-    const ok = await useEditorStore.getState().saveNote('n1');
-    expect(ok).toBe(false);
+    const result = await useEditorStore.getState().saveNote('n1');
+    expect(result.ok).toBe(false);
+    expect(result.status).toBe('failed');
     expect(useEditorStore.getState().versionConflict).toBeNull();
   });
 
@@ -643,8 +647,9 @@ describe('saveNote — web optimistic concurrency (B2)', () => {
     useEditorStore.getState().openNote(makeNoteAt('n1', 'base', BASE));
     useEditorStore.getState().updateContent('n1', 'local edit');
 
-    const ok = await useEditorStore.getState().saveNote('n1');
-    expect(ok).toBe(false);
+    const result = await useEditorStore.getState().saveNote('n1');
+    expect(result.ok).toBe(false);
+    expect(result.status).toBe('failed');
     expect(useEditorStore.getState().versionConflict).toBeNull();
     // No remote re-fetch — only the PATCH was attempted.
     expect(getSpy).not.toHaveBeenCalled();
@@ -686,8 +691,9 @@ describe('resolveVersionConflict (B2)', () => {
     const remote = makeNoteAt('n1', 'remote', REMOTE_ISO);
     useEditorStore.setState({ versionConflict: { tabId: 'n1', remote } });
 
-    const ok = await useEditorStore.getState().resolveVersionConflict('overwrite');
-    expect(ok).toBe(true);
+    const result = await useEditorStore.getState().resolveVersionConflict('overwrite');
+    expect(result.ok).toBe(true);
+    expect(result.status).toBe('saved');
     expect(useEditorStore.getState().versionConflict).toBeNull();
     // Re-save used the freshly-fetched remote version as the baseline.
     expect(lastPatchData(patchSpy)?.expected_updated_at).toBe(new Date(REMOTE_ISO).getTime());

@@ -19,6 +19,7 @@ import type {
   ConflictPrompt,
   EditorMode,
   PendingAiUpdate,
+  SaveResult,
   TabState,
   VersionConflict,
   VersionConflictDecision,
@@ -34,6 +35,7 @@ export type {
   EditorMode,
   PendingAiUpdate,
   PendingUpdateConflict,
+  SaveResult,
   TabState,
   VersionConflict,
   VersionConflictDecision,
@@ -63,10 +65,10 @@ interface EditorState {
    */
   syncTabFolderId: (noteId: string, folderId: string | null, updatedAt?: string) => void;
   markSaved: (noteId: string, content: string, tags: NoteTag[], updatedAt?: string) => void;
-  saveNote: (noteId: string) => Promise<boolean>;
+  saveNote: (noteId: string) => Promise<SaveResult>;
   /** Apply a version-conflict decision (web 409 dialog), clearing the prompt. */
-  resolveVersionConflict: (decision: VersionConflictDecision) => Promise<boolean>;
-  saveActiveNote: () => Promise<boolean>;
+  resolveVersionConflict: (decision: VersionConflictDecision) => Promise<SaveResult>;
+  saveActiveNote: () => Promise<SaveResult>;
   /** Open a brand-new AI draft (`create` / `create_reminder`) as an unsaved tab. */
   openAiDraft: (draft: AiDraftInput) => void;
   /** Apply an AI `update` draft to an already-open tab, staging it for save. */
@@ -85,9 +87,9 @@ interface EditorState {
    * to `saveNote`. Editor Cmd+S routes through this, raw callers still
    * use `saveNote` for the fast path.
    */
-  requestSaveOrConflict: (noteId: string) => Promise<boolean>;
+  requestSaveOrConflict: (noteId: string) => Promise<SaveResult>;
   /** Apply a conflict-prompt decision, clear the prompt, then save. */
-  resolveConflict: (decision: ConflictDecision) => Promise<boolean>;
+  resolveConflict: (decision: ConflictDecision) => Promise<SaveResult>;
   /**
    * Mirror of `saveNote`'s guard clause at L340: a tab is "unsaved" when
    * any of dirty / isDraft / pendingAiUpdate is truthy. The quit-time
@@ -295,13 +297,13 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     }));
   },
 
-  saveNote: async (noteId: string) => {
+  saveNote: async (noteId: string): Promise<SaveResult> => {
     const gen = currentGen();
     const tab = get().tabs.find((t) => t.noteId === noteId);
-    if (!tab) return true;
+    if (!tab) return { status: 'noop', ok: true, noteId: null };
     // Nothing to persist — dirty / draft / pending-AI are the only save
     // triggers (a pending AI update can leave a tab non-dirty yet save-worthy).
-    if (!isUnsaved(tab)) return true;
+    if (!isUnsaved(tab)) return { status: 'noop', ok: true, noteId: tab.noteId };
     const remoteClient = getPlatform().remoteClient;
     const cas = casBaseline(tab, remoteClient);
     try {
@@ -319,31 +321,33 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         folder_id: tab.folderId,
         ...cas,
       });
-      if (isStale(gen)) return false; // session switched mid-save → don't touch new session
+      // Session switched mid-save → don't touch new session, don't navigate.
+      if (isStale(gen)) return { status: 'cancelled', ok: false, noteId: null };
       const savedTags = res.data?.tags ?? tab.tags;
       get().markSaved(tab.noteId, tab.content, savedTags, res.data?.updatedAt);
       useDataBus.getState().bumpNotes();
-      return true;
+      return { status: 'saved', ok: true, noteId: tab.noteId };
     } catch (err) {
       return handleSaveFailure(set, err, noteId, remoteClient, gen);
     }
   },
 
-  saveActiveNote: async () => {
+  saveActiveNote: async (): Promise<SaveResult> => {
     const { activeTabId } = get();
-    if (!activeTabId) return true;
+    if (!activeTabId) return { status: 'noop', ok: true, noteId: null };
     return get().saveNote(activeTabId);
   },
 
-  resolveVersionConflict: async (decision) => {
+  resolveVersionConflict: async (decision): Promise<SaveResult> => {
     const conflict = get().versionConflict;
-    if (!conflict) return true;
+    if (!conflict) return { status: 'noop', ok: true, noteId: null };
     const { tabId, remote } = conflict;
 
     if (decision === 'dismiss') {
       // Keep local edits + the stale baseline; the user stays in the editor.
+      // `cancelled` (not success): the note-nav guard must NOT navigate away.
       set({ versionConflict: null });
-      return true;
+      return { status: 'cancelled', ok: false, noteId: tabId };
     }
 
     if (decision === 'load-remote') {
@@ -369,7 +373,8 @@ export const useEditorStore = create<EditorState>((set, get) => ({
             : t,
         ),
       }));
-      return true;
+      // Loaded the server copy as a clean baseline — safe to navigate away.
+      return { status: 'noop', ok: true, noteId: tabId };
     }
 
     // 'overwrite' — keep the local edits but rebase the baseline onto the
@@ -388,21 +393,23 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   hasUnsavedTabs: () => get().tabs.some(isUnsaved),
   getUnsavedTabs: () => get().tabs.filter(isUnsaved),
 
-  requestSaveOrConflict: async (noteId) => {
+  requestSaveOrConflict: async (noteId): Promise<SaveResult> => {
     const tab = get().tabs.find((t) => t.noteId === noteId);
-    if (!tab) return true;
+    if (!tab) return { status: 'noop', ok: true, noteId: null };
     // Fast path: nothing AI-staged to reconcile.
     if (!tab.pendingAiUpdate) return get().saveNote(noteId);
     const conflict = detectPendingUpdateConflict(tab, tab.pendingAiUpdate);
     const hasConflict = conflict.contentChanged || conflict.tagsChanged || conflict.folderChanged;
     if (!hasConflict) return get().saveNote(noteId);
+    // Divergence — raise the AI ConflictDialog and pause; the guard must not
+    // navigate until the user resolves it.
     set({ conflictPrompt: { tabId: noteId, pending: tab.pendingAiUpdate, conflict } });
-    return false;
+    return { status: 'conflict', ok: false, noteId };
   },
 
-  resolveConflict: async (decision) => {
+  resolveConflict: async (decision): Promise<SaveResult> => {
     const prompt = get().conflictPrompt;
-    if (!prompt) return true;
+    if (!prompt) return { status: 'noop', ok: true, noteId: null };
     const { tabId, pending } = prompt;
     if (decision === 'accept-ai') {
       // Overwrite tab state with AI payload and strip the pre-stage
@@ -633,10 +640,11 @@ type ConfigUpdater<T> = (state: T) => Partial<T>;
  * transport failure (the caller's try/catch maps that to save-failed).
  */
 /**
- * Map a failed save (draft POST or note PATCH) to the version-conflict dialog.
- * Web optimistic concurrency: a 409 VERSION_MISMATCH surfaces the remote copy
- * as a conflict instead of silently dropping the save. ③-guarded: a session
- * switch mid-failure drops the dialog write. Always returns false.
+ * Map a failed save (draft POST or note PATCH) to a `SaveResult`. Web
+ * optimistic concurrency: a 409 VERSION_MISMATCH surfaces the remote copy as a
+ * `conflict` (VersionConflictDialog) instead of silently dropping the save;
+ * anything else is a plain `failed`. ③-guarded: a session switch mid-failure
+ * yields `cancelled` and drops the dialog write.
  */
 async function handleSaveFailure(
   set: (update: ConfigUpdater<EditorState> | Partial<EditorState>) => void,
@@ -644,10 +652,14 @@ async function handleSaveFailure(
   noteId: string,
   remoteClient: boolean,
   gen: number,
-): Promise<boolean> {
+): Promise<SaveResult> {
   const conflict = await versionConflictFromError(err, noteId, remoteClient);
-  if (!isStale(gen) && conflict) set({ versionConflict: conflict });
-  return false;
+  if (isStale(gen)) return { status: 'cancelled', ok: false, noteId: null };
+  if (conflict) {
+    set({ versionConflict: conflict });
+    return { status: 'conflict', ok: false, noteId };
+  }
+  return { status: 'failed', ok: false, noteId };
 }
 
 async function saveDraft(
@@ -655,17 +667,19 @@ async function saveDraft(
   tab: TabState,
   rawTags: string[],
   gen: number,
-): Promise<boolean> {
+): Promise<SaveResult> {
   const res = await api.createNote({
     content: tab.content,
     tags: rawTags,
     folder_id: tab.folderId ?? undefined,
   });
-  if (isStale(gen)) return false; // session switched mid-create → don't cross accounts
-  if (!res.data) return false;
+  // Session switched mid-create → don't cross accounts, don't navigate.
+  if (isStale(gen)) return { status: 'cancelled', ok: false, noteId: null };
+  if (!res.data) return { status: 'failed', ok: false, noteId: tab.noteId };
   replaceTabAfterCreate(set, tab.noteId, res.data);
   useDataBus.getState().bumpNotes();
-  return true;
+  // `noteId` is the freshly-minted real id (the draft id is now dead).
+  return { status: 'saved', ok: true, noteId: res.data.id };
 }
 
 // Selector for active tab
