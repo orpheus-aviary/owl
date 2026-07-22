@@ -1,8 +1,15 @@
 import type { Note } from '@/lib/api';
 import * as api from '@/lib/api';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { useEditorStore } from './editor-store';
+import {
+  forgetDraftAlias,
+  loadNoteById,
+  registerDraftAlias,
+  resolveDraftAlias,
+  useEditorStore,
+} from './editor-store';
 import type { PendingAiUpdate } from './editor-store';
+import { useSessionEpoch } from './session-epoch';
 
 // Optimistic-concurrency (CAS) is gated on `getPlatform().remoteClient`. Mock
 // the platform module so each test can flip web (true) vs desktop (false).
@@ -757,5 +764,89 @@ describe('versionConflict lifecycle (B2)', () => {
     });
     useEditorStore.getState().closeTab('n1');
     expect(useEditorStore.getState().versionConflict?.tabId).toBe('n2');
+  });
+});
+
+describe('loadNoteById (§4.1.2 — pure load, no store write)', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    useEditorStore.setState({ tabs: [], activeTabId: null });
+  });
+
+  it('found → returns the note without opening a tab', async () => {
+    const note = makeNote('n1', 'hello');
+    vi.spyOn(api, 'getNote').mockResolvedValue({ success: true, data: note });
+    const result = await loadNoteById('n1');
+    expect(result).toEqual({ status: 'found', note });
+    // The whole point: it never writes the store.
+    expect(useEditorStore.getState().tabs).toEqual([]);
+  });
+
+  it('404 → not-found', async () => {
+    vi.spyOn(api, 'getNote').mockRejectedValue(new api.ApiError(404, 'NOT_FOUND', 'gone'));
+    expect(await loadNoteById('missing')).toEqual({ status: 'not-found' });
+  });
+
+  it('session switched mid-fetch → stale', async () => {
+    vi.spyOn(api, 'getNote').mockImplementation(async () => {
+      // Advance the epoch while the fetch is in flight.
+      useSessionEpoch.getState().beginInvalidate();
+      return { success: true, data: makeNote('n1', 'x') };
+    });
+    expect(await loadNoteById('n1')).toEqual({ status: 'stale' });
+  });
+
+  it('a 200 without data is a protocol error → throws (not not-found)', async () => {
+    vi.spyOn(api, 'getNote').mockResolvedValue({ success: true, data: undefined });
+    await expect(loadNoteById('n1')).rejects.toThrow(/200 without data/);
+  });
+
+  it('a 401 rethrows (→ load-failed, not not-found)', async () => {
+    vi.spyOn(api, 'getNote').mockRejectedValue(new api.ApiError(401, 'UNAUTHORIZED', 'nope'));
+    await expect(loadNoteById('n1')).rejects.toBeInstanceOf(api.ApiError);
+  });
+});
+
+describe('mobileMode (§4.2)', () => {
+  beforeEach(() => {
+    useEditorStore.getState().reset();
+  });
+
+  it('defaults to edit and is written independently of the persisted mode', () => {
+    expect(useEditorStore.getState().mobileMode).toBe('edit');
+    useEditorStore.getState().setMode('split'); // desktop mode
+    useEditorStore.getState().setMobileMode('preview');
+    expect(useEditorStore.getState().mobileMode).toBe('preview');
+    // setMobileMode must NEVER touch the persisted desktop mode.
+    expect(useEditorStore.getState().mode).toBe('split');
+  });
+
+  it('reset restores mobileMode to edit', () => {
+    useEditorStore.getState().setMobileMode('preview');
+    useEditorStore.getState().reset();
+    expect(useEditorStore.getState().mobileMode).toBe('edit');
+  });
+});
+
+describe('draft→real alias (§4.1.6 b)', () => {
+  beforeEach(() => {
+    useEditorStore.getState().reset(); // clears the alias table
+  });
+
+  it('register → resolve, forget removes it', () => {
+    registerDraftAlias('draft_abc', 'real1');
+    expect(resolveDraftAlias('draft_abc')).toBe('real1');
+    forgetDraftAlias('draft_abc');
+    expect(resolveDraftAlias('draft_abc')).toBeUndefined();
+  });
+
+  it('unknown id resolves to undefined', () => {
+    expect(resolveDraftAlias('draft_nope')).toBeUndefined();
+  });
+
+  it('reset (session switch) clears the whole table', () => {
+    registerDraftAlias('draft_abc', 'real1');
+    useEditorStore.getState().reset();
+    expect(resolveDraftAlias('draft_abc')).toBeUndefined();
   });
 });

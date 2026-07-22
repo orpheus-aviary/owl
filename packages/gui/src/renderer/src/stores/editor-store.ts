@@ -18,6 +18,7 @@ import type {
   ConflictDecision,
   ConflictPrompt,
   EditorMode,
+  LoadNoteResult,
   PendingAiUpdate,
   SaveResult,
   TabState,
@@ -33,6 +34,7 @@ export type {
   ConflictDecision,
   ConflictPrompt,
   EditorMode,
+  LoadNoteResult,
   PendingAiUpdate,
   PendingUpdateConflict,
   SaveResult,
@@ -40,12 +42,19 @@ export type {
   VersionConflict,
   VersionConflictDecision,
 } from './editor-tabs';
+
+/** Mobile-only edit⇄preview toggle (§4.2). Independent of the persisted desktop
+ *  `mode` (which also has `split`); resets to `edit` per session. */
+export type MobileMode = 'edit' | 'preview';
 export { detectPendingUpdateConflict } from './editor-tabs';
 
 interface EditorState {
   tabs: TabState[];
   activeTabId: string | null;
   mode: EditorMode;
+  /** Mobile-only edit⇄preview toggle. Never persisted; `edit` each session.
+   *  Desktop reads `mode`; mobile reads `mobileMode` (see EditorPanel §4.2). */
+  mobileMode: MobileMode;
   lineWrap: boolean;
   /** Populated by `requestSaveOrConflict`; consumed by `<ConflictDialog>`. */
   conflictPrompt: ConflictPrompt | null;
@@ -99,6 +108,9 @@ interface EditorState {
   getUnsavedTabs: () => TabState[];
   cycleMode: () => void;
   setMode: (mode: EditorMode) => void;
+  /** Mobile edit⇄preview toggle. Writes ONLY `mobileMode`, never the persisted
+   *  desktop `mode` (§4.2 — no split→preview mapping to worry about). */
+  setMobileMode: (mode: MobileMode) => void;
   toggleLineWrap: () => void;
   /** ③: drop all open tabs / dirty state / pending conflict prompts. `mode`
    *  is re-hydrated from the new session's config by `bootstrapSession`. */
@@ -109,6 +121,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   tabs: [],
   activeTabId: null,
   mode: 'edit',
+  mobileMode: 'edit',
   lineWrap: true,
   conflictPrompt: null,
   versionConflict: null,
@@ -580,20 +593,59 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     set({ mode });
   },
 
+  setMobileMode: (mobileMode: MobileMode) => {
+    set({ mobileMode });
+  },
+
   toggleLineWrap: () => {
     set((state) => ({ lineWrap: !state.lineWrap }));
   },
 
-  reset: () =>
+  reset: () => {
+    // ③/§4.1.7: also drop the mobile mode and the draft→real alias table so a
+    // session switch can't carry them into the new account.
+    clearDraftAliases();
     set({
       tabs: [],
       activeTabId: null,
       mode: 'edit',
+      mobileMode: 'edit',
       lineWrap: true,
       conflictPrompt: null,
       versionConflict: null,
-    }),
+    });
+  },
 }));
+
+// ─── draft → real id alias (§4.1.6 b) ──────────────────────
+//
+// When a draft tab saves, its placeholder `draft_<uuid>` id becomes the real
+// note id. A mobile URL that still points at the draft (a stale `/note/draft_*`
+// left in history, or forward navigation after the canonical replace) resolves
+// through this table so EditorPage can canonical-`replace` to the real id. The
+// table lives for the session only and is wiped by `reset()` (via
+// `resetAllStores`), so it never leaks across accounts and can't grow unbounded.
+const draftAliases = new Map<string, string>();
+
+/** Register a draft→real mapping after a successful create. */
+export function registerDraftAlias(draftId: string, realId: string): void {
+  draftAliases.set(draftId, realId);
+}
+
+/** Resolve a possibly-stale draft id to its real id, or undefined if unknown. */
+export function resolveDraftAlias(draftId: string): string | undefined {
+  return draftAliases.get(draftId);
+}
+
+/** Drop a single alias — EditorPage calls this right after it canonical-replaces
+ *  the URL, since the mapping is then single-use. */
+export function forgetDraftAlias(draftId: string): void {
+  draftAliases.delete(draftId);
+}
+
+function clearDraftAliases(): void {
+  draftAliases.clear();
+}
 
 /**
  * After saving a draft tab, swap its placeholder `draft_xxx` id for the
@@ -677,6 +729,8 @@ async function saveDraft(
   if (isStale(gen)) return { status: 'cancelled', ok: false, noteId: null };
   if (!res.data) return { status: 'failed', ok: false, noteId: tab.noteId };
   replaceTabAfterCreate(set, tab.noteId, res.data);
+  // Remember draft→real so a stale `/note/draft_*` URL can canonical-replace.
+  registerDraftAlias(tab.noteId, res.data.id);
   useDataBus.getState().bumpNotes();
   // `noteId` is the freshly-minted real id (the draft id is now dead).
   return { status: 'saved', ok: true, noteId: res.data.id };
@@ -697,5 +751,30 @@ export async function openNoteById(noteId: string): Promise<void> {
   if (isStale(gen)) return;
   if (res.data) {
     useEditorStore.getState().openNote(res.data);
+  }
+}
+
+/**
+ * Pure loader for the mobile master-detail resolver (§4.1.2): fetches a note
+ * and returns a discriminated result WITHOUT writing the store, so the caller
+ * controls exactly how (and whether) the tab opens. Contrast `openNoteById`,
+ * which opens straight into the editor.
+ *
+ * `stale` when the session switched across the fetch. `not-found` ONLY for a
+ * 404. A 200 that somehow lacks `data`, a 401, or any network error is a
+ * protocol/transport failure → rethrown so the caller shows「加载失败·重试」
+ * instead of the「不存在」empty state.
+ */
+export async function loadNoteById(noteId: string): Promise<LoadNoteResult> {
+  const gen = currentGen();
+  try {
+    const res = await api.getNote(noteId);
+    if (isStale(gen)) return { status: 'stale' };
+    if (!res.data) throw new Error(`getNote(${noteId}): 200 without data`);
+    return { status: 'found', note: res.data };
+  } catch (err) {
+    if (isStale(gen)) return { status: 'stale' };
+    if (err instanceof api.ApiError && err.status === 404) return { status: 'not-found' };
+    throw err;
   }
 }

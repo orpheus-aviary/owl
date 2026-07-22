@@ -135,6 +135,21 @@ export type SaveResult =
   | { status: 'saved' | 'noop'; ok: true; noteId: string | null }
   | { status: 'conflict' | 'failed' | 'cancelled'; ok: false; noteId: string | null };
 
+/**
+ * Result of `loadNoteById` — a pure fetch that never writes the store (unlike
+ * `openNoteById`). The mobile master-detail resolver (§4.1.2) branches on it:
+ *   - `found`     — render the note.
+ *   - `not-found` — ONLY a 404 → the note is gone → show the empty state.
+ *   - `stale`     — the session switched during the fetch → discard silently.
+ * A 401 / network error / a 200 missing `data` (protocol error) is NOT modelled
+ * here: `loadNoteById` rethrows those so the caller shows「加载失败·重试」rather
+ * than mislabelling them as「不存在」.
+ */
+export type LoadNoteResult =
+  | { status: 'found'; note: Note }
+  | { status: 'not-found' }
+  | { status: 'stale' };
+
 /** Subset of the SSE `draft_ready` payload needed to seed a new draft tab. */
 export interface AiDraftInput {
   note_id: string; // draft_<uuid>
