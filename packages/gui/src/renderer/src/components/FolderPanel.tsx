@@ -15,12 +15,12 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { useOpenNote } from '@/hooks/useOpenNote';
 import type { Note } from '@/lib/api';
 import * as api from '@/lib/api';
 import type { DragData, DropTarget } from '@/lib/dnd-types';
 import { cn } from '@/lib/utils';
 import { useDataBus } from '@/stores/data-bus';
-import { openNoteById } from '@/stores/editor-store';
 import {
   type FolderNode,
   buildFolderTree,
@@ -43,7 +43,6 @@ import {
   PinOff,
 } from 'lucide-react';
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 
 /** What the renderer is currently editing in a tree row (new / rename). */
 type EditingState =
@@ -51,8 +50,17 @@ type EditingState =
   | { kind: 'create'; parentId: string | null }
   | { kind: 'rename'; folderId: string };
 
+/**
+ * `sidebar` = the desktop 64px-anchored panel (select-then-double-click to
+ * open, whole-row drag). `drawer` = the mobile folder drawer (single-tap to
+ * open + close the drawer, taller touch rows, drag suppressed for now so a tap
+ * isn't hijacked — a dedicated handle lands in the touch-polish step).
+ */
+type FolderPanelVariant = 'sidebar' | 'drawer';
+
 /** Shared props threaded through the recursive FolderRow tree. */
 interface RowHandlers {
+  variant: FolderPanelVariant;
   expanded: Set<string>;
   editing: EditingState;
   notesByFolder: Map<string, Note[]>;
@@ -68,7 +76,14 @@ interface RowHandlers {
   onDeleteNote: (id: string) => void;
 }
 
-export function FolderPanel() {
+export function FolderPanel({
+  variant = 'sidebar',
+  onAfterOpen,
+}: {
+  variant?: FolderPanelVariant;
+  /** Called after a note successfully opens — the drawer uses it to close. */
+  onAfterOpen?: () => void;
+} = {}) {
   const {
     folders,
     panelNotes,
@@ -85,7 +100,7 @@ export function FolderPanel() {
   const setExpandedState = useFolderStore.setState;
   const [editing, setEditing] = useState<EditingState>({ kind: 'none' });
   const [selectedNoteId, setSelectedNoteId] = useState<string | null>(null);
-  const navigate = useNavigate();
+  const openNote = useOpenNote();
   const requestDelete = useRequestDeleteNote();
 
   // ③: no mount fetch — the folder tree + panel notes are loaded by
@@ -152,8 +167,11 @@ export function FolderPanel() {
   };
 
   const handleOpenNote = (noteId: string) => {
-    openNoteById(noteId);
-    navigate('/');
+    // Desktop useOpenNote = openNoteById + navigate('/') (unchanged); drawer
+    // additionally closes itself once the open commits.
+    void openNote({ noteId }).then((outcome) => {
+      if (outcome === 'opened') onAfterOpen?.();
+    });
   };
 
   const handleDeleteNote = async (noteId: string) => {
@@ -162,6 +180,7 @@ export function FolderPanel() {
   };
 
   const handlers: RowHandlers = {
+    variant,
     expanded,
     editing,
     notesByFolder,
@@ -239,6 +258,7 @@ export function FolderPanel() {
         {/* Unfiled notes section — virtual folder at bottom showing folder_id=null notes */}
         {rootNotes.length > 0 && (
           <UnfiledSection
+            variant={variant}
             notes={rootNotes}
             isOpen={unfiledOpen}
             onToggle={() => setUnfiledOpen((v) => !v)}
@@ -359,6 +379,7 @@ function RootBlankDrop() {
 // ─── Unfiled notes section ─────────────────────────────
 
 function UnfiledSection({
+  variant,
   notes,
   isOpen,
   onToggle,
@@ -367,6 +388,7 @@ function UnfiledSection({
   onOpenNote,
   onDeleteNote,
 }: {
+  variant: FolderPanelVariant;
   notes: Note[];
   isOpen: boolean;
   onToggle: () => void;
@@ -411,6 +433,7 @@ function UnfiledSection({
             <Fragment key={note.id}>
               <DroppableNoteGap id={`note-gap:unfiled:${i}`} folderId={null} index={i} />
               <FolderNoteRow
+                variant={variant}
                 note={note}
                 depth={1}
                 isSelected={selectedNoteId === note.id}
@@ -434,6 +457,12 @@ function UnfiledSection({
 }
 
 // ─── Recursive row ─────────────────────────────────────
+
+/** Expand/collapse chevron — nothing for a leaf folder. */
+function RowToggleIcon({ hasChildren, isOpen }: { hasChildren: boolean; isOpen: boolean }) {
+  if (!hasChildren) return null;
+  return isOpen ? <ChevronDown className="size-3" /> : <ChevronRight className="size-3" />;
+}
 
 function FolderRow({ node, depth, ...h }: { node: FolderNode; depth: number } & RowHandlers) {
   const isRenaming = h.editing.kind === 'rename' && h.editing.folderId === node.id;
@@ -470,6 +499,11 @@ function FolderRow({ node, depth, ...h }: { node: FolderNode; depth: number } & 
     setNodeDropRef(el);
   };
 
+  const isDrawer = h.variant === 'drawer';
+  // Drawer: suppress whole-row drag (tap = toggle/open, not drag) and grow the
+  // row to a touch target. Sidebar keeps the desktop drag-anywhere behavior.
+  const rowDragProps = isDrawer ? {} : { ...listeners, ...attributes };
+
   // Rename takes over the row so the input stretches across the full width.
   if (isRenaming) {
     return (
@@ -490,11 +524,11 @@ function FolderRow({ node, depth, ...h }: { node: FolderNode; depth: number } & 
         <ContextMenuTrigger asChild>
           <div
             ref={setRowRef}
-            {...listeners}
-            {...attributes}
+            {...rowDragProps}
             onDoubleClick={() => hasChildren && h.onToggle(node.id)}
             className={cn(
-              'group flex items-center gap-1 pr-1 h-6 rounded-sm',
+              'group flex items-center gap-1 pr-1 rounded-sm',
+              isDrawer ? 'h-11' : 'h-6',
               isDragging && 'opacity-40',
               showNodeHover
                 ? 'bg-sidebar-primary/25 outline outline-2 outline-sidebar-primary'
@@ -508,16 +542,12 @@ function FolderRow({ node, depth, ...h }: { node: FolderNode; depth: number } & 
               onClick={() => h.onToggle(node.id)}
               aria-label={isOpen ? '折叠' : '展开'}
             >
-              {hasChildren ? (
-                isOpen ? (
-                  <ChevronDown className="size-3" />
-                ) : (
-                  <ChevronRight className="size-3" />
-                )
-              ) : null}
+              <RowToggleIcon hasChildren={hasChildren} isOpen={isOpen} />
             </button>
             <Folder className="size-3.5 shrink-0 text-muted-foreground" />
-            <span className="flex-1 truncate text-xs">{node.name}</span>
+            <span className={cn('flex-1 truncate', isDrawer ? 'text-sm' : 'text-xs')}>
+              {node.name}
+            </span>
 
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -605,6 +635,7 @@ function ChildrenBlock({
         <Fragment key={note.id}>
           <DroppableNoteGap id={`note-gap:${node.id}:${i}`} folderId={node.id} index={i} />
           <FolderNoteRow
+            variant={h.variant}
             note={note}
             depth={depth + 1}
             isSelected={h.selectedNoteId === note.id}
@@ -628,6 +659,7 @@ function ChildrenBlock({
 // ─── Note row inside folder tree ──────────────────────
 
 function FolderNoteRow({
+  variant,
   note,
   depth,
   isSelected,
@@ -635,6 +667,7 @@ function FolderNoteRow({
   onOpen,
   onDelete,
 }: {
+  variant: FolderPanelVariant;
   note: Note;
   depth: number;
   isSelected: boolean;
@@ -645,11 +678,16 @@ function FolderNoteRow({
   const title = extractTitle(note.content);
   const indent = depth * 12 + 4;
   const pinned = note.pinnedAt != null;
+  const isDrawer = variant === 'drawer';
   const dragData: DragData = { kind: 'note', noteId: note.id };
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: `panel-note:${note.id}`,
     data: dragData,
   });
+  // Drawer: single tap opens (no select→double-tap), and we DON'T spread drag
+  // listeners so a tap isn't captured as a long-press drag (§5; a dedicated
+  // handle comes with the touch-polish step). Sidebar keeps the desktop feel.
+  const dragProps = isDrawer ? {} : { ...listeners, ...attributes };
 
   const handleTogglePin = async () => {
     const gen = currentGen();
@@ -667,12 +705,12 @@ function FolderNoteRow({
       <ContextMenuTrigger asChild>
         <div
           ref={setNodeRef}
-          {...listeners}
-          {...attributes}
-          onClick={() => onSelect(note.id)}
+          {...dragProps}
+          onClick={() => (isDrawer ? onOpen(note.id) : onSelect(note.id))}
           onDoubleClick={() => onOpen(note.id)}
           className={cn(
-            'group flex items-center gap-1 pr-1 h-6 rounded-sm cursor-default',
+            'group flex items-center gap-1 pr-1 rounded-sm cursor-default',
+            isDrawer ? 'h-11' : 'h-6',
             isDragging && 'opacity-40',
             isSelected ? 'bg-accent' : 'hover:bg-sidebar-accent/60',
           )}
@@ -681,7 +719,7 @@ function FolderNoteRow({
           {/* Spacer matching the chevron column */}
           <div className="size-4 shrink-0" />
           <FileText className="size-3.5 shrink-0 text-muted-foreground" />
-          <span className="flex-1 truncate text-xs">{title}</span>
+          <span className={cn('flex-1 truncate', isDrawer ? 'text-sm' : 'text-xs')}>{title}</span>
           {/* Pin indicator — property only, does NOT affect sort or bg in the panel (P3.4-a §1.1). */}
           {pinned && <Pin className="size-3 shrink-0 text-primary rotate-45" aria-label="已置顶" />}
         </div>

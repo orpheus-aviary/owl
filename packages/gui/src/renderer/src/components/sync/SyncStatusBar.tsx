@@ -9,6 +9,7 @@ import {
   PopoverTrigger,
 } from '@/components/ui/popover';
 import type { SyncState, SyncStatusSnapshot } from '@/lib/api';
+import { cn } from '@/lib/utils';
 import { getPlatform } from '@/platform';
 import { useSwitchGuard } from '@/stores/switch-guard';
 import { type ProbeStatus, useSyncStatus } from '@/stores/sync-status';
@@ -83,9 +84,18 @@ function isAccountSnapshot(s: SyncStatusSnapshot): boolean {
   return s.device_id !== null && s.workspace_id !== null;
 }
 
-export function SyncStatusBar({ className = '' }: { className?: string }) {
+export function SyncStatusBar({
+  className = '',
+  variant = 'sidebar',
+}: {
+  className?: string;
+  /** `sidebar` = the 64px vertical nav item; `drawer` = a full-width row pinned
+   *  to the mobile folder-drawer footer, opening its popover upward. */
+  variant?: 'sidebar' | 'drawer';
+}) {
   const snapshot = useSyncStatus((s) => s.snapshot);
   const probeStatus = useSyncStatus((s) => s.probeStatus);
+  const isDrawer = variant === 'drawer';
 
   // P5-d Phase 17 (W4) — saved-profile list for the quick-switch section.
   // Fetched when the popover opens (a cheap toml read); 16a reloads the whole
@@ -122,14 +132,17 @@ export function SyncStatusBar({ className = '' }: { className?: string }) {
       <PopoverTrigger asChild>
         <button
           type="button"
-          // `w-full` so the button stretches to the sidebar's 64px column
-          // (without it the button shrinks to content width and the dot
-          // appears off-centre relative to the surrounding NavLinks).
-          // The fixed-size icon slot keeps the layout stable across
-          // dot/spinner transitions — same 16px box as `<item.icon size-4>`
-          // in `MainApp.tsx`, so the label baseline lines up with the rest
-          // of the sidebar.
-          className={`flex flex-col items-center justify-center gap-0.5 h-14 w-full text-[10px] text-muted-foreground hover:text-sidebar-foreground hover:bg-sidebar-accent/50 transition-colors ${className}`}
+          // sidebar: `w-full` column so the button fills the 64px nav and the
+          // dot stays centred (a content-width button would drift off-centre).
+          // drawer: a full-width horizontal row for the drawer footer, tall
+          // enough to be a touch target.
+          className={cn(
+            'w-full text-muted-foreground hover:text-sidebar-foreground hover:bg-sidebar-accent/50 transition-colors',
+            isDrawer
+              ? 'flex flex-row items-center gap-2 h-12 px-3 text-sm border-t border-border'
+              : 'flex flex-col items-center justify-center gap-0.5 h-14 text-[10px]',
+            className,
+          )}
           aria-label={`同步状态：${info.label}`}
         >
           <span className="flex size-4 items-center justify-center">
@@ -142,7 +155,7 @@ export function SyncStatusBar({ className = '' }: { className?: string }) {
           <span>{info.label}</span>
         </button>
       </PopoverTrigger>
-      <PopoverContent side="right" align="end" className="w-72">
+      <PopoverContent side={isDrawer ? 'top' : 'right'} align="end" className="w-72">
         <SyncStatusDetails snapshot={snapshot} state={state} probeStatus={probeStatus} />
         {/* W4 quick-switch — only when the daemon has reported (account or
             local view); the cold-start (null) view stays a calm explainer. */}
