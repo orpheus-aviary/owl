@@ -58,7 +58,11 @@ export const useConflictsStore = create<ConflictsStore>((set) => ({
       const res = await listConflicts(limit);
       if (isStale(gen)) return;
       const rows = res.data?.conflicts ?? [];
-      set({ list: rows, count: rows.length, loading: false, error: null });
+      // AC4: `count` is owned solely by `refresh()` (GET /conflicts/count).
+      // `list` is capped at `limit` (default 50), so setting count=rows.length
+      // here would under-report the sidebar 红点 whenever there are >limit
+      // unresolved conflicts. List and count stay on separate refresh paths.
+      set({ list: rows, loading: false, error: null });
     } catch (err) {
       if (isStale(gen)) return;
       set({

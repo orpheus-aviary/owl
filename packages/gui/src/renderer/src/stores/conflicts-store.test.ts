@@ -62,11 +62,13 @@ describe('useConflictsStore (P5-c §6.19 / §6.33)', () => {
     expect(useConflictsStore.getState().count).toBe(0);
   });
 
-  it('refreshList() populates list + count and toggles loading', async () => {
+  it('refreshList() populates list + toggles loading (does NOT touch count)', async () => {
     vi.mocked(listConflicts).mockResolvedValue({
       success: true,
       data: { conflicts: [row('cr-a', 'note-a'), row('cr-b', 'note-b')] },
     });
+    // Seed a count that only refresh() should own — refreshList must leave it.
+    useConflictsStore.setState({ count: 99 });
     const before = useConflictsStore.getState().loading;
     expect(before).toBe(false);
 
@@ -76,7 +78,9 @@ describe('useConflictsStore (P5-c §6.19 / §6.33)', () => {
 
     expect(useConflictsStore.getState().loading).toBe(false);
     expect(useConflictsStore.getState().list.length).toBe(2);
-    expect(useConflictsStore.getState().count).toBe(2);
+    // AC4: count is owned by refresh(); refreshList (capped at limit) must not
+    // clobber it, or the sidebar 红点 under-reports when there are >limit rows.
+    expect(useConflictsStore.getState().count).toBe(99);
     expect(vi.mocked(listConflicts)).toHaveBeenCalledWith(50);
   });
 
