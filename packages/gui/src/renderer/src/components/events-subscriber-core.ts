@@ -35,8 +35,13 @@ export const EVENT_TYPES = ['open_note', 'sync:status_changed', 'conflicts:chang
 export type EventName = (typeof EVENT_TYPES)[number];
 
 export interface EventHandlers {
-  openNoteById: (id: string) => Promise<void>;
-  navigate: (path: string) => void;
+  /**
+   * Open a note from an `open_note` frame. Injected by `EventsSubscriber` as
+   * `useOpenNote()` — desktop opens the tab + navigates to the editor, mobile
+   * routes to `/note/:id`. Kept structurally typed (`{ noteId }`) so this pure
+   * module stays free of the router/guard imports the hook pulls in.
+   */
+  openNote: (intent: { noteId: string }) => Promise<unknown>;
   setSyncStatus: (snapshot: SyncStatusSnapshot) => void;
   /** P5-c §6.19: pulled when daemon signals `conflicts:changed`. */
   refreshConflicts: () => Promise<void>;
@@ -79,8 +84,7 @@ async function handleOpenNote(rawData: string, handlers: EventHandlers): Promise
   }
 
   try {
-    await handlers.openNoteById(data.note_id);
-    handlers.navigate('/');
+    await handlers.openNote({ noteId: data.note_id });
   } catch (err) {
     console.warn('[events] open_note handler failed:', err);
   }

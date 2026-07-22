@@ -1,9 +1,10 @@
+import { useOpenNote } from '@/hooks/useOpenNote';
 import { useAiStore } from '@/stores/ai-store';
 import type { NoteAppliedNotice } from '@/stores/ai-store';
 import { useEditorStore } from '@/stores/editor-store';
+import type { PrepareResult } from '@/stores/note-nav-guard';
 import { CheckCircle2, X } from 'lucide-react';
 import { useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
 
 const AUTO_DISMISS_MS = 5000;
 const PREVIEW_MAX = 60;
@@ -32,7 +33,7 @@ export function NoteAppliedToast() {
 
 function ToastCard({ notice }: { notice: NoteAppliedNotice }) {
   const dismiss = useAiStore((s) => s.dismissNoteAppliedNotice);
-  const navigate = useNavigate();
+  const openNote = useOpenNote();
 
   useEffect(() => {
     const timer = setTimeout(() => dismiss(notice.id), AUTO_DISMISS_MS);
@@ -42,32 +43,37 @@ function ToastCard({ notice }: { notice: NoteAppliedNotice }) {
   const preview = truncate(notice.appendedText);
 
   const openInEditor = () => {
-    const editor = useEditorStore.getState();
-    const openTab = editor.tabs.find((t) => t.noteId === notice.noteId);
-    if (openTab) {
-      editor.setActiveTab(notice.noteId);
-    } else {
-      // Fabricate a minimal tab seed from the SSE payload — the editor
-      // page will read this and render straight away without an extra
-      // round-trip to the daemon.
-      editor.openNote({
-        id: notice.noteId,
-        content: notice.latestContent,
-        tags: [],
-        folderId: null,
-        trashLevel: 0,
-        createdAt: '',
-        updatedAt: '',
-        trashedAt: null,
-        autoDeleteAt: null,
-        deviceId: null,
-        contentHash: null,
-        pinnedAt: null,
-        position: null,
-      });
-    }
-    navigate('/');
-    dismiss(notice.id);
+    // Fabricate the tab from the SSE payload inside `prepare` so no extra
+    // round-trip is needed (mirrors the pre-contract behavior). On mobile the
+    // guard then routes to /note/:id and EditorPage reuses this seeded tab.
+    void openNote({
+      noteId: notice.noteId,
+      prepare: (): PrepareResult => {
+        const editor = useEditorStore.getState();
+        if (editor.tabs.some((t) => t.noteId === notice.noteId)) {
+          editor.setActiveTab(notice.noteId);
+        } else {
+          editor.openNote({
+            id: notice.noteId,
+            content: notice.latestContent,
+            tags: [],
+            folderId: null,
+            trashLevel: 0,
+            createdAt: '',
+            updatedAt: '',
+            trashedAt: null,
+            autoDeleteAt: null,
+            deviceId: null,
+            contentHash: null,
+            pinnedAt: null,
+            position: null,
+          });
+        }
+        return 'ok';
+      },
+    }).then((outcome) => {
+      if (outcome === 'opened') dismiss(notice.id);
+    });
   };
 
   return (

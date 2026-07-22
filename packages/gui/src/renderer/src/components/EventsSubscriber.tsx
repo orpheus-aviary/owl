@@ -1,11 +1,10 @@
-import { useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useEffect, useRef } from 'react';
+import { useOpenNote } from '../hooks/useOpenNote';
 import { SseHttpError, subscribeSse } from '../lib/sse-client';
 import { clearWebSession, getWebSession } from '../platform/web-session';
 import { invalidateSession } from '../session/session-actions';
 import { useConflictsStore } from '../stores/conflicts-store';
 import { useDataBus } from '../stores/data-bus';
-import { openNoteById } from '../stores/editor-store';
 import { currentGen, isStale } from '../stores/session-epoch';
 import { useSyncStatus } from '../stores/sync-status';
 import { handleDaemonEvent } from './events-subscriber-core';
@@ -33,11 +32,17 @@ import { handleDaemonEvent } from './events-subscriber-core';
  * `pending`/`unreachable` status self-heals as the channel recovers.
  */
 export function EventsSubscriber(): null {
-  const navigate = useNavigate();
+  const openNote = useOpenNote();
   const setSyncStatus = useSyncStatus((s) => s.setSnapshot);
   const fetchSyncStatus = useSyncStatus((s) => s.fetch);
   const refreshConflicts = useConflictsStore((s) => s.refresh);
   const bumpConflicts = useDataBus((s) => s.bumpConflicts);
+
+  // Hold the opener in a ref so the SSE subscription effect never lists it as a
+  // dependency — on mobile its identity changes when the viewport crosses the
+  // breakpoint, and we don't want that to tear down + reconnect the stream.
+  const openNoteRef = useRef(openNote);
+  openNoteRef.current = openNote;
 
   useEffect(() => {
     void fetchSyncStatus();
@@ -54,10 +59,12 @@ export function EventsSubscriber(): null {
     const gen = currentGen();
     const controller = new AbortController();
     const handlers = {
-      openNoteById, // captures its own gen internally around the GET
-      navigate: (path: string) => {
-        if (isStale(gen)) return;
-        navigate(path);
+      // useOpenNote already gen-guards its own async work; the extra check here
+      // drops a frame that was queued in this (now-stale) session before it even
+      // starts opening. Desktop opens + navigates('/'); mobile routes to /note/:id.
+      openNote: (intent: { noteId: string }) => {
+        if (isStale(gen)) return Promise.resolve();
+        return openNoteRef.current(intent);
       },
       setSyncStatus: (snap: Parameters<typeof setSyncStatus>[0]) => {
         if (isStale(gen)) return;
@@ -108,7 +115,7 @@ export function EventsSubscriber(): null {
     });
 
     return () => controller.abort();
-  }, [navigate, setSyncStatus, fetchSyncStatus, refreshConflicts, bumpConflicts]);
+  }, [setSyncStatus, fetchSyncStatus, refreshConflicts, bumpConflicts]);
 
   return null;
 }

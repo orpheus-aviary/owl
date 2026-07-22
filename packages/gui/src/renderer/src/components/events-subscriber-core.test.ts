@@ -4,8 +4,7 @@ import { EVENT_TYPES, handleDaemonEvent } from './events-subscriber-core';
 
 function makeHandlers() {
   return {
-    openNoteById: vi.fn().mockResolvedValue(undefined),
-    navigate: vi.fn(),
+    openNote: vi.fn().mockResolvedValue('opened'),
     setSyncStatus: vi.fn(),
     refreshConflicts: vi.fn().mockResolvedValue(undefined),
     bumpConflicts: vi.fn(),
@@ -29,22 +28,20 @@ function makeSnapshot(overrides: Partial<SyncStatusSnapshot> = {}): SyncStatusSn
 }
 
 describe('handleDaemonEvent — open_note', () => {
-  it('opens the note and navigates to / on a well-formed open_note', async () => {
+  it('opens the note via the injected opener on a well-formed open_note', async () => {
     const handlers = makeHandlers();
     await handleDaemonEvent(
       'open_note',
       JSON.stringify({ type: 'open_note', note_id: 'abc' }),
       handlers,
     );
-    expect(handlers.openNoteById).toHaveBeenCalledWith('abc');
-    expect(handlers.navigate).toHaveBeenCalledWith('/');
+    expect(handlers.openNote).toHaveBeenCalledWith({ noteId: 'abc' });
   });
 
   it('ignores unknown event names', async () => {
     const handlers = makeHandlers();
     await handleDaemonEvent('config_changed', JSON.stringify({ note_id: 'abc' }), handlers);
-    expect(handlers.openNoteById).not.toHaveBeenCalled();
-    expect(handlers.navigate).not.toHaveBeenCalled();
+    expect(handlers.openNote).not.toHaveBeenCalled();
     expect(handlers.setSyncStatus).not.toHaveBeenCalled();
     expect(handlers.onConnected).not.toHaveBeenCalled();
   });
@@ -53,8 +50,7 @@ describe('handleDaemonEvent — open_note', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const handlers = makeHandlers();
     await handleDaemonEvent('open_note', '{not json', handlers);
-    expect(handlers.openNoteById).not.toHaveBeenCalled();
-    expect(handlers.navigate).not.toHaveBeenCalled();
+    expect(handlers.openNote).not.toHaveBeenCalled();
     expect(warn).toHaveBeenCalled();
     warn.mockRestore();
   });
@@ -67,21 +63,16 @@ describe('handleDaemonEvent — open_note', () => {
     await handleDaemonEvent('open_note', JSON.stringify({ note_id: 42 }), handlers);
     await handleDaemonEvent('open_note', JSON.stringify({ note_id: '' }), handlers);
 
-    expect(handlers.openNoteById).not.toHaveBeenCalled();
-    expect(handlers.navigate).not.toHaveBeenCalled();
+    expect(handlers.openNote).not.toHaveBeenCalled();
     expect(warn).toHaveBeenCalled();
     warn.mockRestore();
   });
 
-  it('swallows openNoteById rejections with a warn (no unhandled rejection)', async () => {
+  it('swallows opener rejections with a warn (no unhandled rejection)', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const handlers = {
-      openNoteById: vi.fn().mockRejectedValue(new Error('boom')),
-      navigate: vi.fn(),
-      setSyncStatus: vi.fn(),
-      refreshConflicts: vi.fn().mockResolvedValue(undefined),
-      bumpConflicts: vi.fn(),
-      onConnected: vi.fn(),
+      ...makeHandlers(),
+      openNote: vi.fn().mockRejectedValue(new Error('boom')),
     };
 
     await expect(
@@ -92,10 +83,7 @@ describe('handleDaemonEvent — open_note', () => {
       ),
     ).resolves.toBeUndefined();
 
-    expect(handlers.openNoteById).toHaveBeenCalled();
-    // navigate not called when the fetch failed — avoids flashing an
-    // empty editor tab when the note can't be loaded.
-    expect(handlers.navigate).not.toHaveBeenCalled();
+    expect(handlers.openNote).toHaveBeenCalled();
     expect(warn).toHaveBeenCalled();
     warn.mockRestore();
   });
@@ -193,7 +181,7 @@ describe('handleDaemonEvent — hello (① connection re-probe)', () => {
     await handleDaemonEvent('hello', '', handlers);
     expect(handlers.onConnected).toHaveBeenCalledTimes(1);
     expect(handlers.setSyncStatus).not.toHaveBeenCalled();
-    expect(handlers.openNoteById).not.toHaveBeenCalled();
+    expect(handlers.openNote).not.toHaveBeenCalled();
   });
 
   it('ignores the hello payload (connection signal, not a business event)', async () => {

@@ -1,10 +1,11 @@
 import { MarkdownPreview } from '@/components/MarkdownPreview';
+import { useOpenNote } from '@/hooks/useOpenNote';
 import type { ChatMessage, DraftReadyCard as DraftReadyData } from '@/stores/ai-store';
 import { useAiStore } from '@/stores/ai-store';
-import { useEditorStore } from '@/stores/editor-store';
+import { loadNoteById, useEditorStore } from '@/stores/editor-store';
+import type { PrepareResult } from '@/stores/note-nav-guard';
 import { AlertCircle, Brain, ChevronDown, ChevronRight } from 'lucide-react';
 import { useCallback, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { DraftReadyCard } from './DraftReadyCard';
 import { PreviewReadyCard } from './PreviewReadyCard';
 import { ToolCallBlock } from './ToolCallBlock';
@@ -15,50 +16,75 @@ interface MessageBubbleProps {
 }
 
 /**
- * Hand an AI draft off to the editor:
- *   - create / create_reminder → seed a brand-new draft tab (`draft_<uuid>`
- *     id; saved via Cmd+S). No server call here.
- *   - update → stage the payload on the already-open tab so Cmd+S flows
- *     through the AI-staged update path (PATCH /notes/:id). If the tab
- *     isn't open yet we open it first via `openNoteById` so the user
- *     has something to interact with.
- *   Then mark the card's `opened` flag and navigate to the editor.
+ * Stage an AI `update` draft, then report whether the target is ready to open:
+ *   - tab already open → stage in place (`stageAiUpdate`).
+ *   - not open → `loadNoteById`, and only on `found` open the note FIRST then
+ *     stage (staging into an unopened tab is a silent no-op). `not-found` /
+ *     `stale` propagate so the guard doesn't navigate to a gone note.
+ * Self-checks `isCurrent()` after the fetch so a superseded open bails cleanly.
+ */
+function buildUpdatePrepare(draft: DraftReadyData) {
+  return async ({ isCurrent }: { isCurrent: () => boolean }): Promise<PrepareResult> => {
+    const editor = useEditorStore.getState();
+    const stage = () => {
+      editor.stageAiUpdate(draft.note_id, {
+        action: 'update',
+        content: draft.content,
+        tags: draft.tags,
+        folder_id: draft.folder_id,
+        original_content: draft.original_content,
+        original_tags: draft.original_tags,
+        original_folder_id: draft.original_folder_id,
+      });
+      editor.setActiveTab(draft.note_id);
+    };
+    if (editor.tabs.some((t) => t.noteId === draft.note_id)) {
+      stage();
+      return 'ok';
+    }
+    const r = await loadNoteById(draft.note_id);
+    if (!isCurrent()) return 'stale';
+    if (r.status !== 'found') return r.status;
+    editor.openNote(r.note); // ★ open the loaded note BEFORE staging onto it
+    stage();
+    return 'ok';
+  };
+}
+
+/**
+ * Hand an AI draft off to the editor via the note-open contract (§4.1.5a):
+ *   - create / create_reminder → seed a brand-new draft tab (`draft_<uuid>`).
+ *   - update → stage the payload (see `buildUpdatePrepare`).
+ * `prepare` runs inside the opener (guarded on mobile, plain on desktop). Only a
+ * committed navigation (`outcome === 'opened'`) marks the card consumed.
  */
 function useOpenDraft(conversationId: string, messageId: string) {
   const markDraftOpened = useAiStore((s) => s.markDraftOpened);
-  const navigate = useNavigate();
+  const openNote = useOpenNote();
   return useCallback(
     async (draft: DraftReadyData) => {
-      const editor = useEditorStore.getState();
+      let prepare: (ctx: { isCurrent: () => boolean }) => PrepareResult | Promise<PrepareResult>;
       if (draft.action === 'update') {
-        const alreadyOpen = editor.tabs.some((t) => t.noteId === draft.note_id);
-        if (!alreadyOpen) {
-          const { openNoteById } = await import('@/stores/editor-store');
-          await openNoteById(draft.note_id);
-        }
-        editor.stageAiUpdate(draft.note_id, {
-          action: 'update',
-          content: draft.content,
-          tags: draft.tags,
-          folder_id: draft.folder_id,
-          original_content: draft.original_content,
-          original_tags: draft.original_tags,
-          original_folder_id: draft.original_folder_id,
-        });
-        editor.setActiveTab(draft.note_id);
+        prepare = buildUpdatePrepare(draft);
       } else {
-        editor.openAiDraft({
-          note_id: draft.note_id,
-          content: draft.content,
-          tags: draft.tags,
-          folder_id: draft.folder_id,
-          action: draft.action,
-        });
+        // Capture the narrowed action here — inside the closure TS widens
+        // `draft.action` back to the full union.
+        const action = draft.action;
+        prepare = (): PrepareResult => {
+          useEditorStore.getState().openAiDraft({
+            note_id: draft.note_id,
+            content: draft.content,
+            tags: draft.tags,
+            folder_id: draft.folder_id,
+            action,
+          });
+          return 'ok';
+        };
       }
-      markDraftOpened(conversationId, messageId, draft.localId);
-      navigate('/');
+      const outcome = await openNote({ noteId: draft.note_id, prepare });
+      if (outcome === 'opened') markDraftOpened(conversationId, messageId, draft.localId);
     },
-    [conversationId, messageId, markDraftOpened, navigate],
+    [conversationId, messageId, markDraftOpened, openNote],
   );
 }
 
