@@ -6,6 +6,7 @@ import { useConfigStore } from './config-store';
 import { useConflictsStore } from './conflicts-store';
 import { useEditorStore } from './editor-store';
 import { useFolderStore } from './folder-store';
+import { useNoteNavGuard } from './note-nav-guard';
 import { useNoteStore } from './note-store';
 import { useReminderStore } from './reminder-store';
 import { resetAllStores } from './reset';
@@ -103,5 +104,23 @@ describe('resetAllStores', () => {
     useFolderStore.setState({ panelOpen: true });
     resetAllStores();
     expect(useFolderStore.getState().panelOpen).toBe(true);
+  });
+
+  it('cancels a pending note-open and clears its prompt (§4.1.7)', async () => {
+    // A dirty active tab makes the guard pause on its save/discard prompt.
+    useEditorStore.setState({
+      tabs: [
+        { noteId: 'n1', title: 'X', dirty: true, isDraft: false, pendingAiUpdate: null } as never,
+      ],
+      activeTabId: 'n1',
+    });
+    const nav = { navigate: () => {}, path: () => '/', search: () => '', state: () => undefined };
+    const open = useNoteNavGuard.getState().open({ noteId: 'n2' }, nav);
+    expect(useNoteNavGuard.getState().prompt).not.toBeNull();
+
+    resetAllStores();
+
+    expect(await open).toBe('cancelled');
+    expect(useNoteNavGuard.getState().prompt).toBeNull();
   });
 });

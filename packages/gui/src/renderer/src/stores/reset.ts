@@ -6,6 +6,7 @@ import { useConfigStore } from './config-store';
 import { useConflictsStore } from './conflicts-store';
 import { useEditorStore } from './editor-store';
 import { useFolderStore } from './folder-store';
+import { useNoteNavGuard } from './note-nav-guard';
 import { useNoteStore } from './note-store';
 import { useReminderStore } from './reminder-store';
 import { useSyncStatus } from './sync-status';
@@ -43,5 +44,10 @@ export function resetAllStores(): void {
   useBrowserStore.getState().reset();
   useAiStore.getState().reset();
   useEditorStore.getState().reset();
+  // ⑤: bump navSeq so any in-flight/pending note open is invalidated and its
+  // Promise settles `cancelled` — a stale prepare must never stage / navigate
+  // into the new session. Runs AFTER editor reset (which clears the tabs its
+  // pending open referenced).
+  useNoteNavGuard.getState().reset();
   usePendingDeleteStore.getState().reset();
 }
