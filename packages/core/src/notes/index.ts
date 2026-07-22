@@ -61,6 +61,14 @@ export interface UpdateNoteInput {
  */
 export interface UpdateNoteOptions {
   expectedUpdatedAt?: number;
+  /**
+   * When `true`, refuse to update a note already at `trash_level >= 1` and
+   * throw `AlreadyTrashedError` instead. Default `false` preserves the
+   * legacy behavior (updateNote never inspected trash_level). Used by W7
+   * conflict resolution so 用本地覆盖/合并 doesn't silently resurrect trashed
+   * content.
+   */
+  rejectIfTrashed?: boolean;
 }
 
 export interface DeleteNoteOptions {
@@ -422,6 +430,10 @@ export function updateNote(
       if (current !== opts.expectedUpdatedAt) {
         throw new VersionMismatchError(id, opts.expectedUpdatedAt, current);
       }
+    }
+
+    if (opts?.rejectIfTrashed && existing.trashLevel >= 1) {
+      throw new AlreadyTrashedError(id, existing.trashLevel);
     }
 
     // W3: server-normalized HLC stamp; lww_counter bumps within the same ms.
