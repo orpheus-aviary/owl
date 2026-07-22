@@ -208,6 +208,19 @@ export const getConflictCount = () => request<{ count: number }>('GET', '/confli
 export const ignoreConflict = (id: string) =>
   request<{ id: string; ignored: true }>('POST', `/conflicts/${id}/ignore`);
 
+// W7 manual resolution. `expected_updated_at_ms` is the CAS baseline (current
+// note updated_at) — always required. `content` is only for 'merged'.
+export type ResolveConflictBody =
+  | { strategy: 'local'; expected_updated_at_ms: number }
+  | { strategy: 'merged'; content: string; expected_updated_at_ms: number };
+
+export type ResolveConflictResponse =
+  | { resolved: true; note: Note }
+  | { resolved: false; reason: string };
+
+export const resolveConflict = (id: string, body: ResolveConflictBody) =>
+  request<ResolveConflictResponse>('POST', `/conflicts/${id}/resolve`, body);
+
 // Tag editing helpers
 
 /** Serialize a note's tags array back to raw tag strings for API submission. */
