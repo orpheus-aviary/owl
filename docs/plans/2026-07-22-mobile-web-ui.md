@@ -256,3 +256,28 @@ manifest（+`id`/`scope`/standalone/图标 192/512/512-maskable/暗色）；图�
 
 ## 14. 关联文档
 路线源 `2026-07-04-road-to-1.0.0.md` §2 #5 · 架构 `2026-06-06-mobile-web-ecosystem-arch.md`(§4/§5/§9/§13) · Phase B `2026-06-14-phase-b-web-design.md`+B0–B4 · 前序 #4 `2026-07-16-0.6-local-features.md`(③ 会话隔离；commit 规范：代码 commit + 按需末尾 `docs:`) · 状态 `PROCESS.md`
+
+---
+
+## 15. 实施记录（进行中，起 2026-07-22）
+
+> Phase 1 前端本地阶段。每步 `just check`（9 守卫 + typecheck + typecheck-web）+ gui 单测全绿；**桌面零回归**（pinning 测试兜底）。直接提 `main`、逐步小 commit（每步前用户确认）。
+
+- **Step 1 ✅ `20b7339`** — `hooks/useIsMobile.ts`（`remoteClient && matchMedia('(max-width:767.98px)')`，`useSyncExternalStore`；Electron 恒 `false` 不挂 listener）+ `components/ui/sheet.tsx`（radix Dialog 侧滑 top/bottom/left/right，沿用 dialog inert-animate 约定）+ 10 单测。
+- **Step 2 ✅ `13be269`**（设计稿 `df95650`）— `MainApp` 分壳 `useIsMobile()?<MobileShell>:<DesktopShell>`；DndContext 提层 + 限域 `TouchSensor(delay:200,tolerance:8)`；抽 `components/AppRoutes.tsx`（+`/note/:noteId`，两壳共用、避免 MainApp↔MobileShell 循环）；面板 hooks 移 DesktopShell。**桌面 DOM 逐字节不变**。
+- **Step 3 ✅**（导航契约核心，4 sub-commit）：
+  - **3a `89960cf`** — `SaveResult` 判别联合（`saved|noop|conflict|failed|cancelled`，`ok` 仅 saved/noop 真）贯穿 save 全家族；调用方迁 `result.ok`；**EditorPage 关 `result.noteId`**（修 draft 存后关不掉的隐藏 bug）；`dismiss=cancelled` 不伪装成功。
+  - **3b-i `8cd0d57`** — `loadNoteById`（纯加载判别联合 `found`/`not-found`[仅 404]/`stale`；200 缺 data / 401 / 网络 **rethrow**）+ `mobileMode` 字段（独立 edit⇄preview，`reset` 归 edit，不碰持久 `mode`）+ `draft→real alias`（`saveDraft` 登记、`reset` 清）。
+  - **3b-ii `b3e57a7`** — `stores/note-nav-guard.ts`（`navSeq` last-wins + 脏 save/discard/cancel prompt + prepare 时序[**discard 先 prepare 成功再关旧脏 tab**] + `canPop`/`returnTo`）+ `hooks/useOpenNote.ts`（桌面 `openNoteById+navigate('/')` 逐字节 / 移动委托 guard，live NavContext）+ `resetAllStores` 集成（切会话取消在途 open、Promise 结算 `cancelled`）。17+4+1 单测。
+  - **3c `b1ee33c`** — 三个 app-root opener 接契约：`events-core`（`open_note`→注入 `openNote({noteId})`；`EventsSubscriber` 用 **ref** 供避免断点抖动重连 SSE）· `MessageBubble`（AI create/update 走 `prepare`，update 先 `loadNoteById`+`openNote(found)` 再 stage 消除静默 no-op，仅 `opened` 后 `markDraftOpened`）· `NoteAppliedToast`（`prepare` 内 fabricate tab 免多一次 fetch）。
+- **Step 4 ✅ `2b4bd20`** — 移动导航壳：`MobileTopBar` 两态（☰+标题 / ←+标题+模式切换+保存）· `MobileBottomNav`（4 + 更多 sheet，编辑 tab 领 `/`+`/note/*`，冲突 badge）· `MoreSheet` · `FolderDrawer` · `MobileShell`（导航即关抽屉 + sheet）· `FolderPanel` `drawer` variant（单击开 + 关抽屉 / 触摸行高 / 抑制整行拖拽避免 tap 冲突）+ note-open 走 `useOpenNote` · `SyncStatusBar` `drawer` variant（横行 + 弹层向上）· 6 单测。
+
+### Deferred（记账，勿忘）
+- **→ Step 5**：`useEditorShortcuts` Cmd+N opener 注入（随 EditorPage 一起穿 `openNote`）· `DeleteConfirmDialog` **delete 按来源**（非脏留来源页 / 脏经 open intent）。
+- **→ Step 8（触摸打磨）**：`FolderDrawer` 文件夹「独立拖拽手柄」（当前 drawer 抑制整行拖拽，暂不能拖动重排）。
+- **② 已知未完形态**：`/note/:id` 仍渲染桌面 `EditorPage`（含 22% 窄文件列表 Panel）——**Step 5 的 master-detail 正是解此**（`/`=列表全宽 master、`/note/:id`=编辑全宽 detail），非 bug。
+
+### 下一步 = Step 5
+EditorPage master-detail（`/` 列表全宽 / `/note/:id` 编辑全宽；§4.1.1 token 覆盖卸载 + 空 id + retryNonce + 解析定序 + preview + note-nav guard 挂载 + not-found/加载失败态 + alias 解析 + 关 `result.noteId` + `locationRef`）+ `EditorPanel` `effectiveMode=isMobile?mobileMode:mode` + TopBar 保存竞态（§4.1.6a）+ 上述两个 deferred。
+
+基线：**gui 566** / core 542 / daemon 431 / cli 139。
