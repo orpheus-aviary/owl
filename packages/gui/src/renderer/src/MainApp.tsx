@@ -1,3 +1,4 @@
+import { AppRoutes } from '@/components/AppRoutes';
 import { ClaimAccountDialog } from '@/components/ClaimAccountDialog';
 import { DeleteConfirmDialog } from '@/components/DeleteConfirmDialog';
 import { EventsSubscriber } from '@/components/EventsSubscriber';
@@ -8,9 +9,11 @@ import { UnsavedTabsDialog } from '@/components/UnsavedTabsDialog';
 import { ConflictDialog } from '@/components/ai/ConflictDialog';
 import { NoteAppliedToast } from '@/components/ai/NoteAppliedToast';
 import { VersionConflictDialog } from '@/components/editor/VersionConflictDialog';
+import { MobileShell } from '@/components/mobile/MobileShell';
 import { ConflictsNav } from '@/components/sync/ConflictsNav';
 import { SyncStatusBar } from '@/components/sync/SyncStatusBar';
 import { ResizeHandle } from '@/components/ui/resize-handle';
+import { useIsMobile } from '@/hooks/useIsMobile';
 import { useOwlLayout } from '@/hooks/useOwlLayout';
 import * as api from '@/lib/api';
 import { type ShortcutsConfig, moveNoteToFolder } from '@/lib/api';
@@ -31,6 +34,7 @@ import {
   DragOverlay,
   type DragStartEvent,
   MouseSensor,
+  TouchSensor,
   pointerWithin,
   useSensor,
   useSensors,
@@ -50,15 +54,7 @@ import {
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Group, Panel, usePanelRef } from 'react-resizable-panels';
-import { HashRouter, NavLink, Route, Routes, useNavigate } from 'react-router-dom';
-import { AIPage } from './pages/AIPage';
-import { BrowserPage } from './pages/BrowserPage';
-import { ConflictsPage } from './pages/ConflictsPage';
-import { EditorPage } from './pages/EditorPage';
-import { RemindersPage } from './pages/RemindersPage';
-import { SettingsPage } from './pages/SettingsPage';
-import { TodoPage } from './pages/TodoPage';
-import { TrashPage } from './pages/TrashPage';
+import { HashRouter, NavLink, useNavigate } from 'react-router-dom';
 
 interface NavItem {
   path: string;
@@ -276,25 +272,20 @@ export function MainApp() {
     });
   }, []);
 
-  const panelOpen = useFolderStore((s) => s.panelOpen);
-  const togglePanel = useFolderStore((s) => s.togglePanel);
-
-  const folderPanelRef = usePanelRef();
-  const folderLayout = useOwlLayout(LAYOUT_KEYS.folderLayout);
-
-  // Sync imperative collapse state with the store-backed `panelOpen` flag so
-  // Cmd+B / the sidebar button remain the source of truth. panelOpen itself
-  // is persisted in localStorage, so the initial mount matches the user's
-  // last explicit choice and the library's defaultLayout restores the width.
-  useEffect(() => {
-    const panel = folderPanelRef.current;
-    if (!panel) return;
-    if (panelOpen) panel.expand();
-    else panel.collapse();
-  }, [panelOpen, folderPanelRef]);
+  // Stage 1 #5 — pick the shell by host + viewport. Electron is always desktop
+  // (useIsMobile is a hard `false` there); the web host flips to the mobile
+  // shell below 768px. Both shells render `<AppRoutes/>` in their content slot.
+  const isMobile = useIsMobile();
 
   const [activeDrag, setActiveDrag] = useState<DragData | null>(null);
-  const sensors = useSensors(useSensor(MouseSensor, { activationConstraint: { distance: 5 } }));
+  // DndContext is hoisted above the shell switch so drag semantics are shared.
+  // MouseSensor drives desktop; TouchSensor needs a 200ms long-press so a tap /
+  // scroll on a phone isn't hijacked into a drag (§5 — only the folder drawer's
+  // dedicated handle opts into touch dragging; Browser rows never attach drag).
+  const sensors = useSensors(
+    useSensor(MouseSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 8 } }),
+  );
 
   const onDragStart = (e: DragStartEvent) => {
     const data = e.active.data.current;
@@ -320,98 +311,7 @@ export function MainApp() {
         onDragStart={onDragStart}
         onDragEnd={onDragEnd}
       >
-        <div className="flex h-screen bg-background text-foreground">
-          {/* Sidebar */}
-          <nav className="flex flex-col w-16 shrink-0 border-r border-border bg-sidebar text-sidebar-foreground select-none">
-            {/* Tool toggle — distinct color to separate it from the page nav below */}
-            <button
-              type="button"
-              onClick={togglePanel}
-              className={`flex flex-col items-center justify-center gap-0.5 h-14 text-[10px] transition-colors ${
-                panelOpen
-                  ? 'text-sidebar-primary-foreground bg-sidebar-primary'
-                  : 'text-sidebar-primary hover:bg-sidebar-primary/10'
-              }`}
-              title="文件夹 (Cmd+B)"
-            >
-              <FolderTree className="size-4" />
-              文件夹
-            </button>
-            {NAV_ITEMS.map((item) => (
-              <NavLink
-                key={item.path}
-                to={item.path}
-                end={item.path === '/'}
-                draggable={false}
-                className={({ isActive }) =>
-                  `flex flex-col items-center justify-center gap-0.5 h-14 text-[10px] transition-colors ${
-                    isActive
-                      ? 'text-sidebar-primary-foreground bg-sidebar-accent'
-                      : 'text-muted-foreground hover:text-sidebar-foreground hover:bg-sidebar-accent/50'
-                  }`
-                }
-              >
-                <item.icon className="size-4" />
-                {item.label}
-              </NavLink>
-            ))}
-
-            {/* P5-c §6.19 — only renders when count > 0. */}
-            <ConflictsNav />
-
-            {/* P5-b §6.3 — daemon sync indicator pinned to the bottom of
-             * the sidebar. The button must be a direct flex child of <nav>
-             * so it stretches to the 64px column width; a wrapping div
-             * would shrink it to content width and push the dot off-centre.
-             * `mt-auto` on the button pushes it past Settings, gap between
-             * scales with window height. */}
-            <SyncStatusBar className="mt-auto" />
-          </nav>
-
-          <Group
-            orientation="horizontal"
-            id={LAYOUT_KEYS.folderLayout}
-            defaultLayout={folderLayout.defaultLayout}
-            onLayoutChanged={(layout) => {
-              // Skip save when folder is collapsed (size 0) — otherwise Cmd+B
-              // close would overwrite the user's saved width with zero.
-              if ((layout.folder ?? 0) > 0) folderLayout.onLayoutChanged?.(layout);
-            }}
-            className="flex flex-1 min-w-0"
-          >
-            <Panel
-              id="folder"
-              panelRef={folderPanelRef}
-              collapsible
-              collapsedSize={0}
-              defaultSize="20%"
-              minSize="120px"
-              className="h-full w-full min-h-0 min-w-0"
-            >
-              <FolderPanel />
-            </Panel>
-            <ResizeHandle disabled={!panelOpen} className={panelOpen ? '' : 'invisible'} />
-            <Panel
-              id="main"
-              defaultSize="80%"
-              minSize="400px"
-              className="h-full w-full min-h-0 min-w-0"
-            >
-              <main className="h-full w-full overflow-hidden">
-                <Routes>
-                  <Route path="/" element={<EditorPage />} />
-                  <Route path="/browser" element={<BrowserPage />} />
-                  <Route path="/trash" element={<TrashPage />} />
-                  <Route path="/reminders" element={<RemindersPage />} />
-                  <Route path="/todo" element={<TodoPage />} />
-                  <Route path="/ai" element={<AIPage />} />
-                  <Route path="/conflicts" element={<ConflictsPage />} />
-                  <Route path="/settings" element={<SettingsPage />} />
-                </Routes>
-              </main>
-            </Panel>
-          </Group>
-        </div>
+        {isMobile ? <MobileShell /> : <DesktopShell />}
         <DragOverlay modifiers={[snapCenterToCursor]} dropAnimation={null}>
           {activeDrag && <DragOverlayCard drag={activeDrag} />}
         </DragOverlay>
@@ -424,6 +324,117 @@ export function MainApp() {
       <SwitchUnsavedDialog />
       <ClaimAccountDialog />
     </HashRouter>
+  );
+}
+
+/**
+ * Desktop shell — the 64px vertical nav + collapsible folder panel + resizable
+ * main pane. Owns the folder-panel layout hooks (`panelOpen` / `usePanelRef` /
+ * `useOwlLayout` + the collapse-sync effect) that used to live in MainApp; the
+ * DOM is byte-identical to the pre-split desktop layout.
+ */
+function DesktopShell() {
+  const panelOpen = useFolderStore((s) => s.panelOpen);
+  const togglePanel = useFolderStore((s) => s.togglePanel);
+
+  const folderPanelRef = usePanelRef();
+  const folderLayout = useOwlLayout(LAYOUT_KEYS.folderLayout);
+
+  // Sync imperative collapse state with the store-backed `panelOpen` flag so
+  // Cmd+B / the sidebar button remain the source of truth. panelOpen itself
+  // is persisted in localStorage, so the initial mount matches the user's
+  // last explicit choice and the library's defaultLayout restores the width.
+  useEffect(() => {
+    const panel = folderPanelRef.current;
+    if (!panel) return;
+    if (panelOpen) panel.expand();
+    else panel.collapse();
+  }, [panelOpen, folderPanelRef]);
+
+  return (
+    <div className="flex h-screen bg-background text-foreground">
+      {/* Sidebar */}
+      <nav className="flex flex-col w-16 shrink-0 border-r border-border bg-sidebar text-sidebar-foreground select-none">
+        {/* Tool toggle — distinct color to separate it from the page nav below */}
+        <button
+          type="button"
+          onClick={togglePanel}
+          className={`flex flex-col items-center justify-center gap-0.5 h-14 text-[10px] transition-colors ${
+            panelOpen
+              ? 'text-sidebar-primary-foreground bg-sidebar-primary'
+              : 'text-sidebar-primary hover:bg-sidebar-primary/10'
+          }`}
+          title="文件夹 (Cmd+B)"
+        >
+          <FolderTree className="size-4" />
+          文件夹
+        </button>
+        {NAV_ITEMS.map((item) => (
+          <NavLink
+            key={item.path}
+            to={item.path}
+            end={item.path === '/'}
+            draggable={false}
+            className={({ isActive }) =>
+              `flex flex-col items-center justify-center gap-0.5 h-14 text-[10px] transition-colors ${
+                isActive
+                  ? 'text-sidebar-primary-foreground bg-sidebar-accent'
+                  : 'text-muted-foreground hover:text-sidebar-foreground hover:bg-sidebar-accent/50'
+              }`
+            }
+          >
+            <item.icon className="size-4" />
+            {item.label}
+          </NavLink>
+        ))}
+
+        {/* P5-c §6.19 — only renders when count > 0. */}
+        <ConflictsNav />
+
+        {/* P5-b §6.3 — daemon sync indicator pinned to the bottom of
+         * the sidebar. The button must be a direct flex child of <nav>
+         * so it stretches to the 64px column width; a wrapping div
+         * would shrink it to content width and push the dot off-centre.
+         * `mt-auto` on the button pushes it past Settings, gap between
+         * scales with window height. */}
+        <SyncStatusBar className="mt-auto" />
+      </nav>
+
+      <Group
+        orientation="horizontal"
+        id={LAYOUT_KEYS.folderLayout}
+        defaultLayout={folderLayout.defaultLayout}
+        onLayoutChanged={(layout) => {
+          // Skip save when folder is collapsed (size 0) — otherwise Cmd+B
+          // close would overwrite the user's saved width with zero.
+          if ((layout.folder ?? 0) > 0) folderLayout.onLayoutChanged?.(layout);
+        }}
+        className="flex flex-1 min-w-0"
+      >
+        <Panel
+          id="folder"
+          panelRef={folderPanelRef}
+          collapsible
+          collapsedSize={0}
+          defaultSize="20%"
+          minSize="120px"
+          className="h-full w-full min-h-0 min-w-0"
+        >
+          <FolderPanel />
+        </Panel>
+        <ResizeHandle disabled={!panelOpen} className={panelOpen ? '' : 'invisible'} />
+        <Panel
+          id="main"
+          defaultSize="80%"
+          minSize="400px"
+          className="h-full w-full min-h-0 min-w-0"
+        >
+          <main className="h-full w-full overflow-hidden">
+            <AppRoutes />
+          </main>
+        </Panel>
+      </Group>
+    </div>
   );
 }
 
