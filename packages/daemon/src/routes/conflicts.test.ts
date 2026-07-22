@@ -12,10 +12,13 @@ import assert from 'node:assert/strict';
 import { after, before, beforeEach, describe, it } from 'node:test';
 import {
   DEFAULT_CONFIG,
+  type NoteWithTags,
   type OwlDatabase,
   createConsoleLogger,
   createDatabase,
+  createNote,
   ensureDeviceId,
+  getNote,
   recordConflict,
 } from '@owl/core';
 import type Database from 'better-sqlite3';
@@ -197,6 +200,186 @@ describe('conflicts routes (P5-c Step 13)', () => {
       const second = await app.inject({ method: 'POST', url: `/conflicts/${id}/ignore` });
       assert.equal(second.statusCode, 404);
       assert.equal(captured.length, 0, 'second ignore must not re-emit');
+    });
+  });
+
+  // ── POST /conflicts/:id/resolve (W7) ────────────────────────────
+
+  describe('POST /conflicts/:id/resolve', () => {
+    /** Seed a real note (remote/winning) + a conflict row whose local_payload
+     *  carries a losing copy. Returns note + conflict id + CAS baseline. */
+    function seedResolvable(
+      remote: string,
+      local: string,
+    ): {
+      note: NoteWithTags;
+      conflictId: string;
+      baseline: number;
+    } {
+      const note = createNote(db, sqlite, { content: remote });
+      const conflictId = recordConflict(sqlite, {
+        entityType: 'note',
+        entityId: note.id,
+        losingSide: 'local',
+        localPayload: { content: local, updated_at_ms: 100 },
+        remotePayload: { content: remote, updated_at_ms: 200 },
+        localUpdatedAtMs: 100,
+        remoteUpdatedAtMs: 200,
+      });
+      return { note, conflictId, baseline: note.updatedAt.getTime() };
+    }
+
+    it('local strategy → 200 {resolved:true, note}, note overwritten, emits changed', async () => {
+      const { note, conflictId, baseline } = seedResolvable('REMOTE', 'LOCAL');
+      const res = await app.inject({
+        method: 'POST',
+        url: `/conflicts/${conflictId}/resolve`,
+        payload: { strategy: 'local', expected_updated_at_ms: baseline },
+      });
+      assert.equal(res.statusCode, 200);
+      const body = res.json();
+      assert.equal(body.data.resolved, true);
+      assert.equal(body.data.note.content, 'LOCAL');
+      assert.equal(getNote(db, note.id)?.content, 'LOCAL');
+      assert.ok(captured.some((e) => e.type === 'conflicts:changed'));
+    });
+
+    it('merged strategy → writes supplied content', async () => {
+      const { note, conflictId, baseline } = seedResolvable('REMOTE', 'LOCAL');
+      const res = await app.inject({
+        method: 'POST',
+        url: `/conflicts/${conflictId}/resolve`,
+        payload: { strategy: 'merged', content: 'MERGED', expected_updated_at_ms: baseline },
+      });
+      assert.equal(res.statusCode, 200);
+      assert.equal(res.json().data.note.content, 'MERGED');
+      assert.equal(getNote(db, note.id)?.content, 'MERGED');
+    });
+
+    it('merged empty string is legal', async () => {
+      const { note, conflictId, baseline } = seedResolvable('REMOTE', 'LOCAL');
+      const res = await app.inject({
+        method: 'POST',
+        url: `/conflicts/${conflictId}/resolve`,
+        payload: { strategy: 'merged', content: '', expected_updated_at_ms: baseline },
+      });
+      assert.equal(res.statusCode, 200);
+      assert.equal(getNote(db, note.id)?.content, '');
+    });
+
+    it('400 VALIDATION on bad strategy', async () => {
+      const { conflictId, baseline } = seedResolvable('R', 'L');
+      const res = await app.inject({
+        method: 'POST',
+        url: `/conflicts/${conflictId}/resolve`,
+        payload: { strategy: 'bogus', expected_updated_at_ms: baseline },
+      });
+      assert.equal(res.statusCode, 400);
+      assert.equal(res.json().error_code, 'VALIDATION');
+    });
+
+    it('400 VALIDATION when expected_updated_at_ms missing / not a safe int', async () => {
+      const { conflictId } = seedResolvable('R', 'L');
+      for (const bad of [undefined, null, '100', -1, 1.5, Number.MAX_SAFE_INTEGER + 2]) {
+        const res = await app.inject({
+          method: 'POST',
+          url: `/conflicts/${conflictId}/resolve`,
+          payload: { strategy: 'local', expected_updated_at_ms: bad },
+        });
+        assert.equal(res.statusCode, 400, `expected_updated_at_ms=${bad}`);
+        assert.equal(res.json().error_code, 'VALIDATION');
+      }
+    });
+
+    it('400 VALIDATION when merged has no string content', async () => {
+      const { conflictId, baseline } = seedResolvable('R', 'L');
+      const res = await app.inject({
+        method: 'POST',
+        url: `/conflicts/${conflictId}/resolve`,
+        payload: { strategy: 'merged', expected_updated_at_ms: baseline },
+      });
+      assert.equal(res.statusCode, 400);
+      assert.equal(res.json().error_code, 'VALIDATION');
+    });
+
+    it('404 CONFLICT_NOT_FOUND on unknown id (no emit)', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/conflicts/nope/resolve',
+        payload: { strategy: 'local', expected_updated_at_ms: 0 },
+      });
+      assert.equal(res.statusCode, 404);
+      assert.equal(res.json().error_code, 'CONFLICT_NOT_FOUND');
+      assert.equal(captured.length, 0);
+    });
+
+    it('404 NOTE_NOT_FOUND when the conflict points at a missing note', async () => {
+      const conflictId = recordConflict(sqlite, {
+        entityType: 'note',
+        entityId: 'ghost',
+        losingSide: 'local',
+        localPayload: { content: 'x' },
+        remotePayload: { content: 'y' },
+        localUpdatedAtMs: 1,
+        remoteUpdatedAtMs: 2,
+      });
+      const res = await app.inject({
+        method: 'POST',
+        url: `/conflicts/${conflictId}/resolve`,
+        payload: { strategy: 'local', expected_updated_at_ms: 0 },
+      });
+      assert.equal(res.statusCode, 404);
+      assert.equal(res.json().error_code, 'NOTE_NOT_FOUND');
+    });
+
+    it('409 VERSION_MISMATCH on stale baseline', async () => {
+      const { note, conflictId, baseline } = seedResolvable('REMOTE', 'LOCAL');
+      sqlite.prepare('UPDATE notes SET updated_at = ? WHERE id = ?').run(baseline + 5000, note.id);
+      const res = await app.inject({
+        method: 'POST',
+        url: `/conflicts/${conflictId}/resolve`,
+        payload: { strategy: 'local', expected_updated_at_ms: baseline },
+      });
+      assert.equal(res.statusCode, 409);
+      assert.equal(res.json().error_code, 'VERSION_MISMATCH');
+    });
+
+    it('422 UNSUPPORTED_ENTITY on a non-note conflict', async () => {
+      const conflictId = recordConflict(sqlite, {
+        entityType: 'folder',
+        entityId: 'f1',
+        losingSide: 'local',
+        localPayload: { name: 'a' },
+        remotePayload: { name: 'b' },
+        localUpdatedAtMs: 1,
+        remoteUpdatedAtMs: 2,
+      });
+      const res = await app.inject({
+        method: 'POST',
+        url: `/conflicts/${conflictId}/resolve`,
+        payload: { strategy: 'merged', content: 'x', expected_updated_at_ms: 0 },
+      });
+      assert.equal(res.statusCode, 422);
+      assert.equal(res.json().error_code, 'UNSUPPORTED_ENTITY');
+    });
+
+    it('already-resolved → 200 {resolved:false}, no emit', async () => {
+      const { conflictId, baseline } = seedResolvable('REMOTE', 'LOCAL');
+      await app.inject({
+        method: 'POST',
+        url: `/conflicts/${conflictId}/resolve`,
+        payload: { strategy: 'local', expected_updated_at_ms: baseline },
+      });
+      captured.length = 0;
+      const second = await app.inject({
+        method: 'POST',
+        url: `/conflicts/${conflictId}/resolve`,
+        payload: { strategy: 'local', expected_updated_at_ms: baseline },
+      });
+      assert.equal(second.statusCode, 200);
+      assert.equal(second.json().data.resolved, false);
+      assert.equal(second.json().data.reason, 'already_resolved');
+      assert.equal(captured.length, 0, 'no event on idempotent no-op');
     });
   });
 });
