@@ -1,5 +1,7 @@
 # owl 移动端兼容 web UI（Stage 1 #5）设计稿 — v7（定稿）
 
+> ⚠️ **导航模型已在实施中修订（2026-07-23，用户拍板）→ 以 §16 为准。** §3「编辑 tab = master 笔记列表 + detail」作废：编辑器改为**仅 `/note/:id` 详情**，入口页 = 浏览（默认）+ 文件（文件夹树整页），底栏 `[浏览, 文件, 提醒, 待办]`。§4.1 的导航契约（resolveOpen/note-nav-guard/useOpenNote/SaveResult/竞态）仍有效并已实现，只是 master 列表页那一层换成了浏览/文件。**Step 5 已完成**（编辑器引擎 + 导航重构 + 入口迁移 + UI 反馈修，gui 601 全绿）；`/note/:id` 详情/保存/返回/新建/删除等实现细节见 §16。
+>
 > 状态：**规划 v7 —— 定稿，实施就绪**，起草 2026-07-22。整体架构自 v6 不变；本轮补齐 4 个协议边界 + 5 个实现细节，避免实现期「静默丢 AI 更新 / 旧 intent 抢导航 / 跨会话串状态」。
 > v6→v7：**①AI update 的 `prepare` 补 `openNote(found)`**（`loadNoteById` 只加载不写 store；`stageAiUpdate` 对未打开 tab 静默 no-op，`editor-store:530`）；**②last-wins 覆盖异步 `prepare`/`saving`**（导航级 `navSeq` + `isCurrent()`，每 await 后复核、旧 Promise 结算 `cancelled`、`discard` 在 target prepare 成功后再关当前脏 tab）；**③`SaveResult` 改判别联合**（`saved|noop|conflict|failed|cancelled`，让 note-nav guard 无歧义区分冲突与失败，`dismiss` 不再伪装成功）；**④note-nav-guard/alias/mobileMode/在途 Promise 全进 `resetAllStores`**（`reset.ts:32`）；**⑤实现细则**：TopBar 用 `locationRef.current`/nav token 非旧闭包 · alias 按 session 有限生命周期 · 脏删除经统一 open intent（写 `canPop/returnTo`）· **桌面分支规范条款**（`!isMobile` 保持 `openNoteById+navigate('/')`、不启用移动 guard，AI `prepare` 仍跑但 Electron 路由/tab 不变）· `OpenOutcome='opened'` = **导航已提交**（非普通笔记加载成功，后者仍由 EditorPage 展示错误）。
 > **路线源** = `2026-07-04-road-to-1.0.0.md` §2 #5；状态以 `PROCESS.md` 为准。前置：`2026-06-06-mobile-web-ecosystem-arch.md`（§4/§5/§9/§13）、Phase B（B0–B4）。
@@ -278,6 +280,49 @@ manifest（+`id`/`scope`/standalone/图标 192/512/512-maskable/暗色）；图�
 - **② 已知未完形态**：`/note/:id` 仍渲染桌面 `EditorPage`（含 22% 窄文件列表 Panel）——**Step 5 的 master-detail 正是解此**（`/`=列表全宽 master、`/note/:id`=编辑全宽 detail），非 bug。
 
 ### 下一步 = Step 5
-EditorPage master-detail（`/` 列表全宽 / `/note/:id` 编辑全宽；§4.1.1 token 覆盖卸载 + 空 id + retryNonce + 解析定序 + preview + note-nav guard 挂载 + not-found/加载失败态 + alias 解析 + 关 `result.noteId` + `locationRef`）+ `EditorPanel` `effectiveMode=isMobile?mobileMode:mode` + TopBar 保存竞态（§4.1.6a）+ 上述两个 deferred。
+见 §16（Step 5 实施中用户拍板改导航模型，原「编辑 master 列表 tab」作废）。
 
 基线：**gui 566** / core 542 / daemon 431 / cli 139。
+
+---
+
+## 16. 修订导航模型（2026-07-23，用户拍板）
+
+> Step 5 前端本地迭代到「详情/编辑器引擎」后，用户反馈**手机版「编辑」列表页与「浏览」页功能重叠、不好用**，拍板改模型。§3/§4.1 里「编辑 tab = master 笔记列表 + detail」的部分**作废**，以本节为准；`resolveOpen`/`MobileEditorDetail`/`EditorPanel effectiveMode`/`NoteNavGuardDialog`/保存-返回竞态/note-nav-guard 主体**保留复用**。三块 commit：①编辑器引擎 ②导航重构 ③入口迁移 + deferred。全程 `just check` 全绿 + 桌面零回归。
+
+### 16.1 拍板决策（3 问）
+1. **默认首页 = 浏览**：手机 `/` → `<Navigate to="/browser" replace>`；编辑器**只剩 `/note/:id` 详情**，仅由点笔记唤起。
+2. **未保存提示触发 = 离开编辑 + 打开另一篇**：顶栏「返回」按钮走 `guard.requestLeave` 拦；硬件/浏览器返回 HashRouter 拦不住 → 脏笔记留内存不丢（`UnsavedTabsDialog` 兜底），best-effort。
+3. **「打开笔记」= 直接跳到那篇未保存的笔记**（第三选项）。
+
+### 16.2 多篇未保存的安全保证（用户标的潜在坑）
+提示**永远只针对当前活动的脏笔记**（guard `pending.currentId`）；「打开笔记」= 跳/停在**这一篇**，无「跳哪篇」歧义。正常手动流程**结构上最多一篇脏**（打开/离开另一篇必先经 guard 处理掉当前脏的）。唯一能攒多篇脏 = AI 后台给非活动笔记标脏（既有行为、退出 `UnsavedTabsDialog` 兜底、桌面一致）。→「直接跳转」安全。
+
+### 16.3 导航模型
+- **底栏**：`[浏览, 文件, 提醒, 待办]` + 更多（**浏览最左 = 冷启动默认 `/`→`/browser`**；原 `编辑`→`文件`；`mobile-nav.PRIMARY_NAV`）。`isEditorActive` 删（编辑器详情隐藏底栏，纯 `pathname===path`）。
+- **新建笔记入口**（补：删编辑 master 列表后 ＋ 消失）：`MobileTopBar` normal 态在 `/browser`·`/files`（`NEW_NOTE_ROUTES`）右侧加 `新建笔记` ＋（`createNote()`→`openNote({noteId})`）。手机 only，桌面仍用编辑器 NoteList ＋。
+- **`/files` 新页 = `FilesPage`** → `FolderPanel variant="page"`（文件夹树整页；`isDrawer`→`isTouch=variant!=='sidebar'`，drawer/page 共用触摸行为：单击开/44px 行/长按=菜单）。点笔记→`useOpenNote`→`/note/:id`。**拖动整理（按住拖）= Step 8 触摸打磨**（需独立拖拽手柄才能与长按菜单共存——dnd-kit 200ms 会吃掉长按 contextmenu；文件页当前不可拖，无回归）。
+- **删抽屉**：删 `FolderDrawer.tsx` + 顶栏 `☰`（`MobileTopBar` 无参、normal 态标题[+新建]）；`SyncStatusBar variant="drawer"` 挪进 `MoreSheet` 底部。
+- **浏览**：`fetchNotes()` 空筛选默认 = 全部笔记（好首页）；**手机单击开**（`isMobile?handleOpenNote:setSelectedNoteId`），桌面仍单选双开；**手机禁拖**（`draggable={!isMobile}`——浏览无「拖进文件夹树」目标，长按=菜单不启拖），桌面仍可拖进文件夹树。
+
+### 16.4 note-nav-guard 扩（编辑器引擎 commit）
+- `NavChoice` +`'open-current'`；`prompt` +`kind:'open'|'leave'`。
+- `pending` 判别联合 `PendingOpen{intent,nav}` | `PendingLeave{proceed}`。
+- `requestLeave(proceed)`：干净→立即 `proceed()`；脏→弹 `保存/放弃/继续编辑`（save→保存后 proceed；discard→关 tab 后 proceed；open-current→留守）。
+- `open` 脏→`保存/放弃/打开笔记`（open-current→`commitNavigation(currentId)` 跳去脏笔记，pending 结算 `cancelled` 不开 B）。
+- `choose` 拆 `chooseOpenCurrent/chooseDiscard/chooseSave`（降复杂度）。
+- `NoteNavGuardDialog`（新，MainApp 挂）：3 键，第三键 `open→打开笔记 / leave→继续编辑`；dismiss=cancel。
+- `MobileTopBar` 详情：返回走 `requestLeave`；保存按钮**脏时主色高亮、干净灰**（`variant={dirty?'default':'ghost'}`）。
+
+### 16.5 入口迁移（commit ③）
+`BrowserPage / RemindersPage / TodoPage / ConflictsPage(ConflictRow) / NoteIdPill`：`openNoteById+navigate('/')` → `useOpenNote`（桌面逐字节 / 移动→`/note/:id`）。deferred：`useEditorShortcuts` new_note 穿 `openNote`（DesktopEditor 注入，桌面为主）；`DeleteConfirmDialog` delete 按来源（脏→`open({noteId})`，仅 `opened` 后弹确认；确认删成功 `navigate('/',{replace})`）。
+
+### 16.6 测试坑（沉淀）
+`useOpenNote.test`/`ConflictsPage.test` 原**依赖跨文件 @/platform mock 先加载 editor-store**（`...actual` spread real editor-store 的图读 platform）；③ 改 import 顺序后暴露 → 各自加 `vi.mock('@/platform',...)` 自足。
+
+### 16.7 commit（待用户确认后提 main）
+- **① 编辑器引擎**：`editor-tabs`(ResolveOutcome)/`editor-store`(resolveOpen)/`EditorPage`(拆壳+`/`重定向+detail 竞态)/`EditorPanel`(effectiveMode)/`NoteNavGuardDialog`(新)/`note-nav-guard`(3 选项+requestLeave)/`MobileTopBar`(返回 guard+脏高亮+保存竞态)。
+- **② 导航重构**：`mobile-nav`(文件)/`MobileBottomNav`/`MobileTopBar`(去 ☰)/`MobileShell`(去抽屉)/`MoreSheet`(+SyncStatus)/`FolderPanel`(page variant)/`FilesPage`(新)/`AppRoutes`(/files)/删 `FolderDrawer`。
+- **③ 入口迁移 + deferred**：5 入口 + `useEditorShortcuts` + `DeleteConfirmDialog`。
+
+基线：**gui 601**（566→+35，含用户 UI 反馈修：新建按钮 3 + 返回/新建路由 catch-all）/ core 542 / daemon 431 / cli 139 / `just check` 9 守卫全绿。**未测**：真软键盘/真 PWA/Lighthouse/真机。**未做（后续 Step）**：Step 6 单栏 Settings/Login/AI · Step 7 移动冲突 UI · **Step 8 触摸打磨（含 FolderPanel 文件页独立拖拽手柄 = 用户要的「文件页按住拖动整理」）** · Step 9 浮动 TagBar · Phase 2 PWA。
