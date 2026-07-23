@@ -56,11 +56,9 @@ type EditingState =
  * open, whole-row drag). `page` = the mobile 「文件」full-page tree (single-tap
  * to open, taller touch rows, whole-row drag suppressed in favour of a dedicated
  * grip handle so drag-to-reorganize coexists with the long-press menu).
- * `drawer` = the legacy folder drawer (same touch behavior as `page` plus a
- * close-on-open callback); kept for now.
- * `page` and `drawer` share all touch behavior (`isTouch = variant !== sidebar`).
+ * Touch behavior is gated on `isTouch = variant !== 'sidebar'`.
  */
-type FolderPanelVariant = 'sidebar' | 'drawer' | 'page';
+type FolderPanelVariant = 'sidebar' | 'page';
 
 /** Shared props threaded through the recursive FolderRow tree. */
 interface RowHandlers {
@@ -82,11 +80,8 @@ interface RowHandlers {
 
 export function FolderPanel({
   variant = 'sidebar',
-  onAfterOpen,
 }: {
   variant?: FolderPanelVariant;
-  /** Called after a note successfully opens — the drawer uses it to close. */
-  onAfterOpen?: () => void;
 } = {}) {
   const {
     folders,
@@ -171,11 +166,9 @@ export function FolderPanel({
   };
 
   const handleOpenNote = (noteId: string) => {
-    // Desktop useOpenNote = openNoteById + navigate('/') (unchanged); drawer
-    // additionally closes itself once the open commits.
-    void openNote({ noteId }).then((outcome) => {
-      if (outcome === 'opened') onAfterOpen?.();
-    });
+    // Desktop useOpenNote = openNoteById + navigate('/'); mobile routes to
+    // /note/:id. The 「文件」page is a full route, so nothing to close after.
+    void openNote({ noteId });
   };
 
   const handleDeleteNote = async (noteId: string) => {
@@ -469,7 +462,7 @@ function RowToggleIcon({ hasChildren, isOpen }: { hasChildren: boolean; isOpen: 
 }
 
 /**
- * Touch (page/drawer) drag handle. On the files page the row itself no longer
+ * Touch (page) drag handle. On the files page the row itself no longer
  * drags (its press is claimed by tap-to-open + the radix long-press context
  * menu) — dnd-kit's 200ms TouchSensor would eat that long-press. A dedicated
  * grip carries the drag activator instead, so 按住拖动整理 coexists with 长按菜单.
@@ -485,7 +478,7 @@ function DragHandle({
   attributes,
   label,
 }: {
-  /** Only the touch (page/drawer) variants get a grip; desktop drags the row. */
+  /** Only the touch (page) variants get a grip; desktop drags the row. */
   enabled: boolean;
   listeners: ReturnType<typeof useDraggable>['listeners'];
   attributes: ReturnType<typeof useDraggable>['attributes'];
