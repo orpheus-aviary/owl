@@ -138,8 +138,10 @@ export function SyncStatusBar({
           // enough to be a touch target.
           className={cn(
             'w-full text-muted-foreground hover:text-sidebar-foreground hover:bg-sidebar-accent/50 transition-colors',
+            // The drawer row carries no top border of its own — its container
+            // (the 更多 sheet footer) draws the single separator above it.
             isDrawer
-              ? 'flex flex-row items-center gap-2 h-12 px-3 text-sm border-t border-border'
+              ? 'flex flex-row items-center gap-2 h-12 px-3 text-sm'
               : 'flex flex-col items-center justify-center gap-0.5 h-14 text-[10px]',
             className,
           )}
