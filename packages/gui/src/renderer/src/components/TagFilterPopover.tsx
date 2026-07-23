@@ -2,6 +2,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { cn } from '@/lib/utils';
 import { useTagStore } from '@/stores/tag-store';
 import { Check, Filter } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
@@ -9,9 +10,11 @@ import { useEffect, useRef, useState } from 'react';
 interface TagFilterPopoverProps {
   activeTags: string[];
   onToggleTag: (tag: string) => void;
+  /** Extra classes for the trigger button (e.g. `w-full` in the mobile grid). */
+  className?: string;
 }
 
-export function TagFilterPopover({ activeTags, onToggleTag }: TagFilterPopoverProps) {
+export function TagFilterPopover({ activeTags, onToggleTag, className }: TagFilterPopoverProps) {
   const { tags, fetchTags } = useTagStore();
   const [search, setSearch] = useState('');
   const [open, setOpen] = useState(false);
@@ -59,11 +62,11 @@ export function TagFilterPopover({ activeTags, onToggleTag }: TagFilterPopoverPr
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
-        <Button variant="outline" size="sm" className="h-8 gap-1.5">
-          <Filter className="size-3.5" />
-          标签筛选
+        <Button variant="outline" size="sm" className={cn('h-8 gap-1.5', className)}>
+          <Filter className="size-3.5 shrink-0" />
+          <span className="truncate min-w-0">标签筛选</span>
           {activeTags.length > 0 && (
-            <Badge variant="secondary" className="px-1.5 py-0 text-[10px]">
+            <Badge variant="secondary" className="px-1.5 py-0 text-[10px] shrink-0">
               {activeTags.length}
             </Badge>
           )}

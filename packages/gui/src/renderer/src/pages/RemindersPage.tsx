@@ -2,12 +2,14 @@ import { extractTitle } from '@/components/NoteListItem';
 import { TagDisplay } from '@/components/TagDisplay';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { useIsMobile } from '@/hooks/useIsMobile';
 import { useOpenNote } from '@/hooks/useOpenNote';
 import * as api from '@/lib/api';
 import type { Note, NoteTag } from '@/lib/api';
 import { formatDateCompact } from '@/lib/date-format';
 import { type NearestAlarm, type TimeRange, filterAndSortReminders } from '@/lib/reminder-utils';
 import { sortTags } from '@/lib/tag-sort';
+import { cn } from '@/lib/utils';
 import { useReminderStore } from '@/stores/reminder-store';
 import { currentGen, isStale } from '@/stores/session-epoch';
 import { Bell } from 'lucide-react';
@@ -60,6 +62,7 @@ function ReminderRow({
 export function RemindersPage() {
   const { timeRange, notes, loading, setTimeRange, fetchReminders } = useReminderStore();
   const openNote = useOpenNote();
+  const isMobile = useIsMobile();
 
   useEffect(() => {
     fetchReminders();
@@ -92,8 +95,13 @@ export function RemindersPage() {
   return (
     <div className="flex flex-col h-full">
       <div className="shrink-0 p-3 border-b border-border">
-        <div className="flex items-center gap-2">
-          <div className="flex gap-1">
+        {/* Mobile stacks the count onto its own line below the ranges so the
+            filter row isn't overrun; desktop keeps the single inline row with
+            `ml-auto` (byte-identical when !isMobile). */}
+        <div
+          className={cn('flex items-center gap-2', isMobile && 'flex-col items-stretch gap-1.5')}
+        >
+          <div className={cn('flex gap-1', isMobile && 'flex-wrap')}>
             {TIME_RANGES.map(({ key, label }) => (
               <Button
                 key={key}
@@ -106,7 +114,9 @@ export function RemindersPage() {
               </Button>
             ))}
           </div>
-          <span className="ml-auto text-xs text-muted-foreground">共 {filtered.length} 条提醒</span>
+          <span className={cn('text-xs text-muted-foreground', isMobile ? 'self-end' : 'ml-auto')}>
+            共 {filtered.length} 条提醒
+          </span>
         </div>
       </div>
 

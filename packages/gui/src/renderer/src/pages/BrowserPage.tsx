@@ -31,6 +31,60 @@ const SORT_LABELS: Record<SortKey, string> = {
   created_asc: '创建时间 ↑',
 };
 
+/** Tag / folder / sort triggers. Mobile lays them out as an even 3-col grid so
+ *  they always fit one row and never wrap off; desktop keeps them inline (the
+ *  wrapper is `contents`, so byte-identical when !isMobile). */
+function FilterSortButtons({
+  activeTags,
+  onToggleTag,
+  folderId,
+  onSelectFolder,
+  sortKey,
+  onSortKey,
+  isMobile,
+}: {
+  activeTags: string[];
+  onToggleTag: (tag: string) => void;
+  folderId: string | undefined;
+  onSelectFolder: (id: string | undefined) => void;
+  sortKey: SortKey;
+  onSortKey: (key: SortKey) => void;
+  isMobile: boolean;
+}) {
+  const triggerCls = isMobile ? 'w-full min-w-0' : undefined;
+  return (
+    <div className={cn(isMobile ? 'grid grid-cols-3 gap-2' : 'contents')}>
+      <TagFilterPopover activeTags={activeTags} onToggleTag={onToggleTag} className={triggerCls} />
+
+      <FolderFilterPopover
+        activeFolderId={folderId}
+        onSelect={onSelectFolder}
+        className={triggerCls}
+      />
+
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button
+            variant="outline"
+            size="sm"
+            className={cn('h-8 gap-1.5 whitespace-nowrap', triggerCls)}
+          >
+            <ArrowDownAZ className="size-3.5 shrink-0" />
+            <span className="truncate min-w-0">{SORT_LABELS[sortKey]}</span>
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end">
+          {(Object.entries(SORT_LABELS) as [SortKey, string][]).map(([key, label]) => (
+            <DropdownMenuItem key={key} onClick={() => onSortKey(key)}>
+              {label}
+            </DropdownMenuItem>
+          ))}
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </div>
+  );
+}
+
 export function BrowserPage() {
   const {
     query,
@@ -213,7 +267,7 @@ export function BrowserPage() {
           filter/sort buttons below — so the narrow width doesn't cramp them;
           desktop keeps the single inline row (byte-identical when !isMobile). */}
       <div className="shrink-0 p-3 border-b border-border space-y-2">
-        <div className={cn('flex items-center gap-2', isMobile && 'flex-wrap')}>
+        <div className={cn(isMobile ? 'space-y-2' : 'flex items-center gap-2')}>
           {/* Search */}
           <div className={cn('relative', isMobile ? 'w-full' : 'flex-1')}>
             <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground" />
@@ -235,28 +289,15 @@ export function BrowserPage() {
             )}
           </div>
 
-          {/* Tag filter */}
-          <TagFilterPopover activeTags={activeTags} onToggleTag={handleToggleTag} />
-
-          {/* Folder filter */}
-          <FolderFilterPopover activeFolderId={folderId} onSelect={setFolderId} />
-
-          {/* Sort */}
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="sm" className="h-8 gap-1.5 whitespace-nowrap">
-                <ArrowDownAZ className="size-3.5" />
-                {SORT_LABELS[sortKey]}
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              {(Object.entries(SORT_LABELS) as [SortKey, string][]).map(([key, label]) => (
-                <DropdownMenuItem key={key} onClick={() => setSortKey(key)}>
-                  {label}
-                </DropdownMenuItem>
-              ))}
-            </DropdownMenuContent>
-          </DropdownMenu>
+          <FilterSortButtons
+            activeTags={activeTags}
+            onToggleTag={handleToggleTag}
+            folderId={folderId}
+            onSelectFolder={setFolderId}
+            sortKey={sortKey}
+            onSortKey={setSortKey}
+            isMobile={isMobile}
+          />
         </div>
 
         <ActiveFilters

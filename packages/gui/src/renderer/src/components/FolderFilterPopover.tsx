@@ -3,6 +3,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import type { Folder } from '@/lib/api';
+import { cn } from '@/lib/utils';
 import { type FolderNode, buildFolderTree, useFolderStore } from '@/stores/folder-store';
 import { Check, FolderOpen, Inbox } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -10,6 +11,8 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 interface FolderFilterPopoverProps {
   activeFolderId: string | undefined;
   onSelect: (id: string | undefined) => void;
+  /** Extra classes for the trigger button (e.g. `w-full` in the mobile grid). */
+  className?: string;
 }
 
 /** Build the full ancestor path string for a folder, e.g. "Root / Parent / Child". */
@@ -33,7 +36,11 @@ function flattenTree(nodes: FolderNode[]): string[] {
   return result;
 }
 
-export function FolderFilterPopover({ activeFolderId, onSelect }: FolderFilterPopoverProps) {
+export function FolderFilterPopover({
+  activeFolderId,
+  onSelect,
+  className,
+}: FolderFilterPopoverProps) {
   const { folders, fetch } = useFolderStore();
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState('');
@@ -102,11 +109,11 @@ export function FolderFilterPopover({ activeFolderId, onSelect }: FolderFilterPo
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
-        <Button variant="outline" size="sm" className="h-8 gap-1.5">
-          <FolderOpen className="size-3.5" />
-          文件夹
+        <Button variant="outline" size="sm" className={cn('h-8 gap-1.5', className)}>
+          <FolderOpen className="size-3.5 shrink-0" />
+          <span className="truncate min-w-0">文件夹</span>
           {activeFolderId && (
-            <Badge variant="secondary" className="px-1.5 py-0 text-[10px]">
+            <Badge variant="secondary" className="px-1.5 py-0 text-[10px] shrink-0">
               1
             </Badge>
           )}
