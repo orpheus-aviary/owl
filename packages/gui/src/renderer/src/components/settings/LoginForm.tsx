@@ -1,5 +1,7 @@
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { useIsMobile } from '@/hooks/useIsMobile';
+import { cn } from '@/lib/utils';
 import { Loader2 } from 'lucide-react';
 import { useState } from 'react';
 import type { LoginAndOpenSessionInput } from '../../../../shared/sync-auth-types.js';
@@ -54,6 +56,9 @@ export function LoginForm({
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [remember, setRemember] = useState(false);
+  // Mobile web: the SettingRow stacks, so the input takes the full row width
+  // rather than the fixed desktop `w-72` that would overflow a phone.
+  const inputCls = cn('h-8', useIsMobile() ? 'w-full' : 'w-72');
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -70,7 +75,7 @@ export function LoginForm({
         <SettingRow label="服务器地址">
           <Input
             type="text"
-            className="w-72 h-8"
+            className={inputCls}
             value={serverUrl}
             onChange={(e) => setServerUrl(e.target.value)}
             placeholder={DEFAULT_SERVER_URL}
@@ -82,7 +87,7 @@ export function LoginForm({
       <SettingRow label="邮箱">
         <Input
           type="email"
-          className="w-72 h-8"
+          className={inputCls}
           value={email}
           onChange={(e) => setEmail(e.target.value)}
           autoComplete="username"
@@ -92,7 +97,7 @@ export function LoginForm({
       <SettingRow label="密码">
         <Input
           type="password"
-          className="w-72 h-8"
+          className={inputCls}
           value={password}
           onChange={(e) => setPassword(e.target.value)}
           autoComplete="current-password"

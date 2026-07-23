@@ -1,7 +1,9 @@
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { useIsMobile } from '@/hooks/useIsMobile';
 import { testLlmConnection } from '@/lib/api';
 import type { LlmApiFormat, OwlConfig } from '@/lib/api';
+import { cn } from '@/lib/utils';
 import { useConfigStore } from '@/stores/config-store';
 import { Eye, EyeOff, Loader2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
@@ -22,26 +24,56 @@ function SettingRow({
   help,
   children,
   align = 'center',
+  stack = false,
 }: {
   label: string;
   help?: string;
   children: React.ReactNode;
   align?: 'center' | 'start';
+  /** Mobile web: stack label above the control so full-width inputs fit. */
+  stack?: boolean;
 }) {
   return (
     <div
-      className={`flex ${align === 'start' ? 'items-start' : 'items-center'} justify-between gap-4 px-4 py-3`}
+      className={cn(
+        'gap-4 px-4 py-3',
+        stack
+          ? 'flex flex-col gap-2'
+          : `flex ${align === 'start' ? 'items-start' : 'items-center'} justify-between`,
+      )}
     >
       <div className="flex flex-col min-w-0">
         <span className="text-sm">{label}</span>
         {help && <span className="text-[11px] text-muted-foreground">{help}</span>}
       </div>
-      <div className="flex items-center gap-2 flex-wrap justify-end">{children}</div>
+      <div
+        className={cn('flex items-center gap-2 flex-wrap', stack ? 'justify-start' : 'justify-end')}
+      >
+        {children}
+      </div>
     </div>
   );
 }
 
-export function CustomSection() {
+// Mobile web: inputs go full-width inside the stacked rows instead of the fixed
+// desktop widths that would overflow a phone. Kept out of the component body so
+// the ternaries don't count against its cognitive-complexity budget.
+function llmInputClasses(isMobile: boolean): { wide: string; mono: string } {
+  return {
+    wide: cn('h-8', isMobile ? 'w-full' : 'w-72'),
+    mono: cn('h-8 font-mono', isMobile ? 'w-full' : 'w-60'),
+  };
+}
+
+/**
+ * @param hideSecrets Mobile web — hide the LLM API Key row. Managing the LLM
+ *   secret on a phone browser is out of scope (design §8); the daemon-side key
+ *   also comes back redacted over HTTP, so exposing/overwriting it there is
+ *   both pointless and risky.
+ */
+export function CustomSection({ hideSecrets = false }: { hideSecrets?: boolean }) {
+  const isMobile = useIsMobile();
+  const { wide: wideInput, mono: monoInput } = llmInputClasses(isMobile);
   const llm = useConfigStore((s) => s.llm);
   const trash = useConfigStore((s) => s.trash);
   const editor = useConfigStore((s) => s.editor);
@@ -123,7 +155,7 @@ export function CustomSection() {
       <div>
         <h3 className="text-sm font-medium px-1 pb-2">LLM API</h3>
         <div className="border border-border rounded-md divide-y divide-border">
-          <SettingRow label="API 格式">
+          <SettingRow label="API 格式" stack={isMobile}>
             <div className="flex items-center gap-1">
               {API_FORMATS.map((f) => (
                 <Button
@@ -138,9 +170,9 @@ export function CustomSection() {
             </div>
           </SettingRow>
 
-          <SettingRow label="URL" help={currentFormat.placeholder}>
+          <SettingRow label="URL" help={currentFormat.placeholder} stack={isMobile}>
             <Input
-              className="w-72 h-8"
+              className={wideInput}
               placeholder={currentFormat.placeholder}
               value={urlDraft}
               onChange={(e) => setUrlDraft(e.target.value)}
@@ -151,30 +183,32 @@ export function CustomSection() {
             />
           </SettingRow>
 
-          <SettingRow label="API Key">
-            <Input
-              type={showKey ? 'text' : 'password'}
-              className="w-60 h-8 font-mono"
-              value={keyDraft}
-              onChange={(e) => setKeyDraft(e.target.value)}
-              onBlur={commitKey}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
-              }}
-            />
-            <Button
-              variant="outline"
-              size="icon-sm"
-              onClick={() => setShowKey((v) => !v)}
-              title={showKey ? '隐藏' : '显示'}
-            >
-              {showKey ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5" />}
-            </Button>
-          </SettingRow>
+          {!hideSecrets && (
+            <SettingRow label="API Key" stack={isMobile}>
+              <Input
+                type={showKey ? 'text' : 'password'}
+                className={monoInput}
+                value={keyDraft}
+                onChange={(e) => setKeyDraft(e.target.value)}
+                onBlur={commitKey}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+                }}
+              />
+              <Button
+                variant="outline"
+                size="icon-sm"
+                onClick={() => setShowKey((v) => !v)}
+                title={showKey ? '隐藏' : '显示'}
+              >
+                {showKey ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5" />}
+              </Button>
+            </SettingRow>
+          )}
 
-          <SettingRow label="模型名称">
+          <SettingRow label="模型名称" stack={isMobile}>
             <Input
-              className="w-60 h-8 font-mono"
+              className={monoInput}
               placeholder="gpt-4o-mini / claude-3-5-sonnet-latest"
               value={modelDraft}
               onChange={(e) => setModelDraft(e.target.value)}
@@ -188,6 +222,7 @@ export function CustomSection() {
           <SettingRow
             label="思考回传"
             help="DeepSeek V4 / Anthropic Extended Thinking 必须开启；DeepSeek V3 reasoner / OpenAI o-series chat 关闭"
+            stack={isMobile}
           >
             <div className="flex items-center gap-1">
               <Button
@@ -217,6 +252,7 @@ export function CustomSection() {
                 : '发送一条 ping 消息验证配置'
             }
             align="start"
+            stack={isMobile}
           >
             <Button size="sm" onClick={runTest} disabled={testing}>
               {testing ? <Loader2 className="size-3.5 animate-spin" /> : null}
@@ -233,6 +269,7 @@ export function CustomSection() {
           <SettingRow
             label="自动删除天数"
             help="「即将清除」中超过该天数的笔记会被自动永久删除（最小 1 天，最大 3650 天）"
+            stack={isMobile}
           >
             <Input
               type="number"
@@ -249,7 +286,7 @@ export function CustomSection() {
             <span className="text-sm text-muted-foreground">天</span>
           </SettingRow>
 
-          <SettingRow label="默认编辑模式" help="新开编辑页时使用">
+          <SettingRow label="默认编辑模式" help="新开编辑页时使用" stack={isMobile}>
             <div className="flex items-center gap-1">
               {MODE_OPTIONS.map((m) => (
                 <Button
@@ -264,7 +301,7 @@ export function CustomSection() {
             </div>
           </SettingRow>
 
-          <SettingRow label="默认排序字段" help="浏览页初始排序">
+          <SettingRow label="默认排序字段" help="浏览页初始排序" stack={isMobile}>
             <div className="flex items-center gap-1">
               <Button
                 size="sm"
@@ -283,7 +320,7 @@ export function CustomSection() {
             </div>
           </SettingRow>
 
-          <SettingRow label="默认排序方向">
+          <SettingRow label="默认排序方向" stack={isMobile}>
             <div className="flex items-center gap-1">
               <Button
                 size="sm"
