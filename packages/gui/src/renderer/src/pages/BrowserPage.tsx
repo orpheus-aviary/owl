@@ -12,16 +12,17 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { useIsMobile } from '@/hooks/useIsMobile';
+import { useOpenNote } from '@/hooks/useOpenNote';
 import * as api from '@/lib/api';
-import type { NoteTag } from '@/lib/api';
+import type { Note, NoteTag } from '@/lib/api';
+import { cn } from '@/lib/utils';
 import { type SortKey, useBrowserStore } from '@/stores/browser-store';
 import { useDataBus } from '@/stores/data-bus';
-import { openNoteById } from '@/stores/editor-store';
 import { useFolderStore } from '@/stores/folder-store';
 import { currentGen, isStale } from '@/stores/session-epoch';
 import { ArrowDownAZ, FolderOpen, Pin, PinOff, Search, Trash2, X } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 
 const SORT_LABELS: Record<SortKey, string> = {
   updated_desc: '修改时间 ↓',
@@ -50,7 +51,8 @@ export function BrowserPage() {
 
   const folderName = useFolderStore((s) => s.folders.find((f) => f.id === folderId)?.name);
 
-  const navigate = useNavigate();
+  const openNote = useOpenNote();
+  const isMobile = useIsMobile();
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   const inputRef = useRef<HTMLInputElement>(null);
   const [searchValue, setSearchValue] = useState(query);
@@ -107,10 +109,21 @@ export function BrowserPage() {
 
   const handleOpenNote = useCallback(
     (noteId: string) => {
-      openNoteById(noteId);
-      navigate('/');
+      // Desktop = openNoteById + navigate('/'); mobile routes to /note/:id.
+      void openNote({ noteId });
     },
-    [navigate],
+    [openNote],
+  );
+
+  // Desktop: single-click selects, double-click opens. Mobile (touch): a single
+  // tap opens — there's no hover/double-tap idiom, and 浏览 is the primary way
+  // to reach a note now.
+  const handleRowClick = useCallback(
+    (noteId: string) => {
+      if (isMobile) handleOpenNote(noteId);
+      else setSelectedNoteId(noteId);
+    },
+    [isMobile, handleOpenNote],
   );
 
   const requestDelete = useRequestDeleteNote();
@@ -171,9 +184,7 @@ export function BrowserPage() {
   }, [selectedNoteId, handleDeleteNote]);
 
   // Context menu state
-  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; noteId: string } | null>(
-    null,
-  );
+  const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
 
   const handleContextMenu = useCallback((e: React.MouseEvent, noteId: string) => {
     e.preventDefault();
@@ -198,11 +209,13 @@ export function BrowserPage() {
 
   return (
     <div className="flex flex-col h-full">
-      {/* Action bar */}
+      {/* Action bar. Mobile stacks it into two rows — search on top, the three
+          filter/sort buttons below — so the narrow width doesn't cramp them;
+          desktop keeps the single inline row (byte-identical when !isMobile). */}
       <div className="shrink-0 p-3 border-b border-border space-y-2">
-        <div className="flex items-center gap-2">
+        <div className={cn('flex items-center gap-2', isMobile && 'flex-wrap')}>
           {/* Search */}
-          <div className="relative flex-1">
+          <div className={cn('relative', isMobile ? 'w-full' : 'flex-1')}>
             <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground" />
             <Input
               ref={inputRef}
@@ -246,37 +259,13 @@ export function BrowserPage() {
           </DropdownMenu>
         </div>
 
-        {/* Active filters */}
-        {(activeTags.length > 0 || folderId) && (
-          <div className="flex items-center gap-1.5 flex-wrap">
-            <span className="text-xs text-muted-foreground">已筛选:</span>
-            {folderId && folderName && (
-              <Badge variant="secondary" className="gap-1 text-xs px-2 py-0.5">
-                <FolderOpen className="size-3" />
-                {folderName}
-                <button
-                  type="button"
-                  onClick={() => setFolderId(undefined)}
-                  className="hover:text-destructive"
-                >
-                  <X className="size-3" />
-                </button>
-              </Badge>
-            )}
-            {activeTags.map((tag) => (
-              <Badge key={tag} variant="secondary" className="gap-1 text-xs px-2 py-0.5">
-                #{tag}
-                <button
-                  type="button"
-                  onClick={() => removeTag(tag)}
-                  className="hover:text-destructive"
-                >
-                  <X className="size-3" />
-                </button>
-              </Badge>
-            ))}
-          </div>
-        )}
+        <ActiveFilters
+          activeTags={activeTags}
+          folderId={folderId}
+          folderName={folderName}
+          onRemoveTag={removeTag}
+          onClearFolder={() => setFolderId(undefined)}
+        />
       </div>
 
       {/* Note list */}
@@ -295,11 +284,14 @@ export function BrowserPage() {
                 <NoteListItem
                   note={note}
                   isActive={note.id === selectedNoteId}
-                  onClick={() => setSelectedNoteId(note.id)}
+                  onClick={() => handleRowClick(note.id)}
                   onDoubleClick={() => handleOpenNote(note.id)}
                   activeSort={activeSort}
                   onEditTag={(tag, newValue) => handleEditTag(note.id, tag, newValue)}
-                  draggable
+                  // Desktop drags notes into the folder tree; mobile 浏览 has no
+                  // such target (folders live on their own page) — so a touch
+                  // long-press should surface the context menu, not start a drag.
+                  draggable={!isMobile}
                 />
               </div>
             ))}
@@ -308,43 +300,110 @@ export function BrowserPage() {
       </ScrollArea>
 
       {/* Context menu */}
-      {contextMenu &&
-        (() => {
-          const menuNote = notes.find((n) => n.id === contextMenu.noteId);
-          const isPinned = menuNote?.pinnedAt != null;
-          return (
-            <div
-              data-context-menu
-              className="fixed z-50 min-w-32 rounded-md border border-border bg-popover py-1 shadow-md"
-              style={{ left: contextMenu.x, top: contextMenu.y }}
-            >
-              <button
-                type="button"
-                className="flex w-full items-center gap-2 px-3 py-1.5 text-xs hover:bg-accent transition-colors"
-                onClick={() => {
-                  const noteId = contextMenu.noteId;
-                  setContextMenu(null);
-                  handleTogglePin(noteId, !isPinned);
-                }}
-              >
-                {isPinned ? <PinOff className="size-3.5" /> : <Pin className="size-3.5" />}
-                {isPinned ? '取消置顶' : '置顶'}
-              </button>
-              <button
-                type="button"
-                className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-destructive hover:bg-accent transition-colors"
-                onClick={() => {
-                  const noteId = contextMenu.noteId;
-                  setContextMenu(null);
-                  handleDeleteNote(noteId);
-                }}
-              >
-                <Trash2 className="size-3.5" />
-                删除
-              </button>
-            </div>
-          );
-        })()}
+      {contextMenu && (
+        <BrowserContextMenu
+          menu={contextMenu}
+          notes={notes}
+          onTogglePin={handleTogglePin}
+          onDelete={handleDeleteNote}
+          onClose={() => setContextMenu(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+/** The "已筛选" chip row (active folder + tags). Pulled out of BrowserPage so
+ *  its render stays under the cognitive-complexity cap; renders nothing when no
+ *  filter is active. */
+function ActiveFilters({
+  activeTags,
+  folderId,
+  folderName,
+  onRemoveTag,
+  onClearFolder,
+}: {
+  activeTags: string[];
+  folderId: string | undefined;
+  folderName: string | undefined;
+  onRemoveTag: (tag: string) => void;
+  onClearFolder: () => void;
+}) {
+  if (activeTags.length === 0 && !folderId) return null;
+  return (
+    <div className="flex items-center gap-1.5 flex-wrap">
+      <span className="text-xs text-muted-foreground">已筛选:</span>
+      {folderId && folderName && (
+        <Badge variant="secondary" className="gap-1 text-xs px-2 py-0.5">
+          <FolderOpen className="size-3" />
+          {folderName}
+          <button type="button" onClick={onClearFolder} className="hover:text-destructive">
+            <X className="size-3" />
+          </button>
+        </Badge>
+      )}
+      {activeTags.map((tag) => (
+        <Badge key={tag} variant="secondary" className="gap-1 text-xs px-2 py-0.5">
+          #{tag}
+          <button type="button" onClick={() => onRemoveTag(tag)} className="hover:text-destructive">
+            <X className="size-3" />
+          </button>
+        </Badge>
+      ))}
+    </div>
+  );
+}
+
+interface ContextMenuState {
+  x: number;
+  y: number;
+  noteId: string;
+}
+
+/** Right-click / long-press note context menu (置顶 / 删除). Pulled out of
+ *  BrowserPage so its render stays under the cognitive-complexity cap. */
+function BrowserContextMenu({
+  menu,
+  notes,
+  onTogglePin,
+  onDelete,
+  onClose,
+}: {
+  menu: ContextMenuState;
+  notes: Note[];
+  onTogglePin: (noteId: string, pinned: boolean) => void;
+  onDelete: (noteId: string) => void;
+  onClose: () => void;
+}) {
+  const isPinned = notes.find((n) => n.id === menu.noteId)?.pinnedAt != null;
+  return (
+    <div
+      data-context-menu
+      className="fixed z-50 min-w-32 rounded-md border border-border bg-popover py-1 shadow-md"
+      style={{ left: menu.x, top: menu.y }}
+    >
+      <button
+        type="button"
+        className="flex w-full items-center gap-2 px-3 py-1.5 text-xs hover:bg-accent transition-colors"
+        onClick={() => {
+          onClose();
+          onTogglePin(menu.noteId, !isPinned);
+        }}
+      >
+        {isPinned ? <PinOff className="size-3.5" /> : <Pin className="size-3.5" />}
+        {isPinned ? '取消置顶' : '置顶'}
+      </button>
+      <button
+        type="button"
+        className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-destructive hover:bg-accent transition-colors"
+        onClick={() => {
+          onClose();
+          onDelete(menu.noteId);
+        }}
+      >
+        <Trash2 className="size-3.5" />
+        删除
+      </button>
     </div>
   );
 }

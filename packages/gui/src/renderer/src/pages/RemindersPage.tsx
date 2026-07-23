@@ -2,17 +2,16 @@ import { extractTitle } from '@/components/NoteListItem';
 import { TagDisplay } from '@/components/TagDisplay';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { useOpenNote } from '@/hooks/useOpenNote';
 import * as api from '@/lib/api';
 import type { Note, NoteTag } from '@/lib/api';
 import { formatDateCompact } from '@/lib/date-format';
 import { type NearestAlarm, type TimeRange, filterAndSortReminders } from '@/lib/reminder-utils';
 import { sortTags } from '@/lib/tag-sort';
-import { openNoteById } from '@/stores/editor-store';
 import { useReminderStore } from '@/stores/reminder-store';
 import { currentGen, isStale } from '@/stores/session-epoch';
 import { Bell } from 'lucide-react';
 import { useCallback, useEffect, useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
 
 const TIME_RANGES: { key: TimeRange; label: string }[] = [
   { key: 'today', label: '今天' },
@@ -60,7 +59,7 @@ function ReminderRow({
 
 export function RemindersPage() {
   const { timeRange, notes, loading, setTimeRange, fetchReminders } = useReminderStore();
-  const navigate = useNavigate();
+  const openNote = useOpenNote();
 
   useEffect(() => {
     fetchReminders();
@@ -73,10 +72,11 @@ export function RemindersPage() {
 
   const handleOpen = useCallback(
     (noteId: string) => {
-      openNoteById(noteId);
-      navigate('/');
+      // useOpenNote: desktop = openNoteById + navigate('/') (unchanged); mobile
+      // routes to /note/:id through the note-nav guard.
+      void openNote({ noteId });
     },
-    [navigate],
+    [openNote],
   );
 
   const handleEditTag = useCallback(

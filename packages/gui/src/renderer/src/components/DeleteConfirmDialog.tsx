@@ -7,6 +7,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { useOpenNote } from '@/hooks/useOpenNote';
 import * as api from '@/lib/api';
 import { SPECIAL_NOTE_ID_SET } from '@/lib/special-notes';
 import { useDataBus } from '@/stores/data-bus';
@@ -17,10 +18,13 @@ import { useNavigate } from 'react-router-dom';
 import { create } from 'zustand';
 
 /**
- * Unified note-delete flow:
- * - Clean (or not open in any tab) → delete API + close tab if open + refresh list
- * - Dirty tab exists → navigate to editor, activate the tab, open confirm dialog
- *   so the user can see the unsaved changes before choosing to discard them.
+ * Unified note-delete flow (delete-by-source, §4.1.4):
+ * - Clean (or not open in any tab) → delete API + close tab if open + refresh
+ *   list, staying on the source page (Browser stays Browser).
+ * - Dirty tab exists → open the note through `useOpenNote` (desktop = editor
+ *   tab + navigate('/'); mobile = /note/:id detail with canPop/returnTo) so the
+ *   user sees the unsaved changes, then the confirm dialog; a confirmed delete
+ *   replaces to '/' so back can't return to the deleted note.
  *
  * The "save then delete" path is intentionally not offered — saving a note
  * just to immediately move it to trash is a confusing UX. Users who want to
@@ -67,7 +71,7 @@ async function performDelete(noteId: string): Promise<void> {
  * (uses `useNavigate` for the dirty-jump case).
  */
 export function useRequestDeleteNote(): (noteId: string) => Promise<void> {
-  const navigate = useNavigate();
+  const openNote = useOpenNote();
   const openDialog = usePendingDeleteStore((s) => s.open);
   const openProtected = usePendingDeleteStore((s) => s.openProtected);
 
@@ -87,29 +91,35 @@ export function useRequestDeleteNote(): (noteId: string) => Promise<void> {
       const tab = editor.tabs.find((t) => t.noteId === noteId);
 
       if (tab?.dirty) {
-        // Jump to the dirty tab so the user sees what they'd lose.
-        editor.setActiveTab(noteId);
-        navigate('/');
-        openDialog(noteId, tab.title);
+        // Open the dirty note so the user sees what they'd lose, then confirm.
+        // Only surface the dialog once the open committed (mobile may prompt a
+        // save/discard on a different dirty note first, or the user may cancel).
+        const outcome = await openNote({ noteId });
+        if (outcome === 'opened') openDialog(noteId, tab.title);
         return;
       }
 
       await performDelete(noteId);
     },
-    [navigate, openDialog, openProtected],
+    [openNote, openDialog, openProtected],
   );
 }
 
 /** The actual confirm dialog. Mount once at the App level. */
 export function DeleteConfirmDialog() {
   const { noteId, title, kind, reset } = usePendingDeleteStore();
+  const navigate = useNavigate();
   const open = noteId !== null;
 
   const onConfirm = useCallback(async () => {
     if (!noteId) return;
     await performDelete(noteId);
     reset();
-  }, [noteId, reset]);
+    // The dirty-delete flow opened the note first; after deleting, leave that
+    // detail so a mobile back can't return to the now-deleted note. On desktop
+    // we're already at '/', so this is a no-op.
+    navigate('/', { replace: true });
+  }, [noteId, reset, navigate]);
 
   if (kind === 'protected') {
     return (

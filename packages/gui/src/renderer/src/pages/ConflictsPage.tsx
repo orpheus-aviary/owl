@@ -21,6 +21,7 @@ import { ConflictMergeDialog } from '@/components/sync/ConflictMergeDialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { useOpenNote } from '@/hooks/useOpenNote';
 import {
   ApiError,
   type ConflictRecord,
@@ -31,7 +32,7 @@ import {
 } from '@/lib/api';
 import { useConflictsStore } from '@/stores/conflicts-store';
 import { useDataBus } from '@/stores/data-bus';
-import { openNoteById, useEditorStore } from '@/stores/editor-store';
+import { useEditorStore } from '@/stores/editor-store';
 import { isUnsaved } from '@/stores/editor-tabs';
 import { currentGen, isStale } from '@/stores/session-epoch';
 import {
@@ -45,7 +46,6 @@ import {
   Undo2,
 } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 
 function formatTimestamp(ms: number | null): string {
   if (ms === null) return '—';
@@ -192,16 +192,16 @@ export function ConflictRow({
 }) {
   const local = parsePayloadContent(row.local_payload);
   const remote = parsePayloadContent(row.remote_payload);
-  const navigate = useNavigate();
+  const openNote = useOpenNote();
   const [copied, setCopied] = useState(false);
   const isNote = row.entity_type === 'note';
   const canOverwrite = isNote && row.local_payload !== null;
   // Open the conflicting note in the editor (shows the winning/remote version —
-  // the user can paste the copied losing content to recover/merge).
+  // the user can paste the copied losing content to recover/merge). Desktop =
+  // openNoteById + navigate('/'); mobile routes to /note/:id.
   const handleOpen = useCallback(() => {
-    openNoteById(row.entity_id);
-    navigate('/');
-  }, [navigate, row.entity_id]);
+    void openNote({ noteId: row.entity_id });
+  }, [openNote, row.entity_id]);
   const handleCopy = useCallback(async () => {
     try {
       await navigator.clipboard.writeText(local);

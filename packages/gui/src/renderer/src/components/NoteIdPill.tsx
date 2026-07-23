@@ -4,12 +4,11 @@ import {
   ContextMenuItem,
   ContextMenuTrigger,
 } from '@/components/ui/context-menu';
+import { useOpenNote } from '@/hooks/useOpenNote';
 import { type NoteMeta, fetchNoteMeta, noteMetaCacheGet } from '@/lib/note-id-refs';
 import { cn } from '@/lib/utils';
-import { openNoteById } from '@/stores/editor-store';
 import { Copy } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 
 const LABEL_MAX = 20;
 
@@ -25,7 +24,7 @@ const LABEL_MAX = 20;
  * shares results across all mounted pills for the same id.
  */
 export function NoteIdPill({ id }: { id: string }) {
-  const navigate = useNavigate();
+  const openNote = useOpenNote();
   const [meta, setMeta] = useState<NoteMeta>(() => noteMetaCacheGet(id) ?? { status: 'loading' });
 
   useEffect(() => {
@@ -48,12 +47,9 @@ export function NoteIdPill({ id }: { id: string }) {
   const handleClick = async (e: React.MouseEvent) => {
     if (meta.status !== 'ok') return;
     e.stopPropagation();
-    try {
-      await openNoteById(id);
-      navigate('/');
-    } catch (err) {
-      console.warn('[note-id-pill] openNoteById failed', id, err);
-    }
+    // Desktop = openNoteById + navigate('/'); mobile routes to /note/:id. The
+    // opener never rejects (it maps failures to a 'failed' outcome internally).
+    await openNote({ noteId: id });
   };
 
   const handleCopy = async () => {

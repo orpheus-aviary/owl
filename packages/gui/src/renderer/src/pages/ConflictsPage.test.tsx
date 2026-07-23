@@ -7,10 +7,19 @@ import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ConflictRow, ConflictsPage } from './ConflictsPage';
 
+// The editor-store mock spreads the real module; stub the platform so its
+// transitive graph loads regardless of test-file order.
+vi.mock('@/platform', () => ({
+  getPlatform: () => ({ remoteClient: false, daemonBaseUrl: () => '' }),
+}));
+
 vi.mock('@/stores/editor-store', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/stores/editor-store')>()),
-  openNoteById: vi.fn(),
 }));
+
+// ConflictRow opens a note through useOpenNote now; spy on the opener.
+const openNoteSpy = vi.hoisted(() => vi.fn(async () => 'opened' as const));
+vi.mock('@/hooks/useOpenNote', () => ({ useOpenNote: () => openNoteSpy }));
 
 // Keep ApiError (used by instanceof mapping) real; stub the request wrappers.
 vi.mock('@/lib/api', async (importOriginal) => ({
@@ -21,8 +30,6 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   getConflictCount: vi.fn(),
   ignoreConflict: vi.fn(),
 }));
-
-import { openNoteById } from '@/stores/editor-store';
 
 import {
   getConflictCount,
@@ -134,10 +141,10 @@ describe('ConflictRow copy button (Feature A — 复制输方内容)', () => {
 });
 
 describe('ConflictRow 打开笔记', () => {
-  it('opens the conflicting note in the editor by entity_id', () => {
+  it('opens the conflicting note through the opener by entity_id', () => {
     renderRow(makeRow({ entity_id: 'note-xyz-123' }));
     fireEvent.click(screen.getByRole('button', { name: /打开笔记/ }));
-    expect(openNoteById).toHaveBeenCalledWith('note-xyz-123');
+    expect(openNoteSpy).toHaveBeenCalledWith({ noteId: 'note-xyz-123' });
   });
 });
 

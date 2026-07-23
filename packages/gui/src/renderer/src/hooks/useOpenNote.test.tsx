@@ -5,6 +5,13 @@ import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useOpenNote } from './useOpenNote';
 
+// The mocked editor-store below spreads the REAL module (`...actual`), whose
+// transitive graph reads platform.remoteClient; mock the platform so that load
+// never depends on another test file having stubbed it first (cross-file order).
+vi.mock('@/platform', () => ({
+  getPlatform: () => ({ remoteClient: false, daemonBaseUrl: () => '' }),
+}));
+
 const isMobileMock = vi.hoisted(() => ({ value: false }));
 vi.mock('./useIsMobile', () => ({ useIsMobile: () => isMobileMock.value }));
 

@@ -2,6 +2,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { useOpenNote } from '@/hooks/useOpenNote';
 import * as api from '@/lib/api';
 import type { TodoGroup, TodoItem } from '@/lib/api';
 import {
@@ -9,10 +10,9 @@ import {
   parseTodosFromContent,
   toggleTodoLine,
 } from '@/lib/todo-parser';
-import { openNoteById, useEditorStore } from '@/stores/editor-store';
+import { useEditorStore } from '@/stores/editor-store';
 import { ChevronDown, ChevronRight, ChevronsDownUp, ChevronsUpDown } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 
 type TodoFilter = 'open' | 'all';
 
@@ -145,7 +145,7 @@ export function TodoPage() {
   const [loading, setLoading] = useState(false);
   const [filter, setFilter] = useState<TodoFilter>('all');
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
-  const navigate = useNavigate();
+  const openNote = useOpenNote();
 
   // Subscribe to editor tabs so any buffer change (including direct checkbox
   // toggles via updateContent) triggers an immediate re-merge.
@@ -206,10 +206,10 @@ export function TodoPage() {
 
   const handleOpenNote = useCallback(
     (noteId: string) => {
-      openNoteById(noteId);
-      navigate('/');
+      // Desktop = openNoteById + navigate('/'); mobile routes to /note/:id.
+      void openNote({ noteId });
     },
-    [navigate],
+    [openNote],
   );
 
   const expandAll = useCallback(() => {

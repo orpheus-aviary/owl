@@ -1,12 +1,16 @@
 import type { ShortcutsConfig } from '@/lib/api';
 import { matchesShortcut } from '@/lib/shortcuts';
 import { useConfigStore } from '@/stores/config-store';
+import type { OpenNoteIntent, OpenOutcome } from '@/stores/note-nav-guard';
 import { useNoteStore } from '@/stores/note-store';
 import { useEffect } from 'react';
-import { openNoteById, useEditorStore } from '../stores/editor-store';
+import { useEditorStore } from '../stores/editor-store';
 
 interface ShortcutHandlers {
   requestCloseTab: (noteId: string) => void;
+  /** Injected note opener (`useOpenNote`): desktop opens a tab + navigate('/'),
+   *  mobile routes to the `/note/:id` detail. Cmd+N opens the fresh note. */
+  openNote: (intent: OpenNoteIntent) => Promise<OpenOutcome>;
 }
 
 type ShortcutAction = (handlers: ShortcutHandlers) => void;
@@ -26,12 +30,12 @@ const ACTIONS: Partial<Record<keyof ShortcutsConfig, ShortcutAction>> = {
     const { activeTabId } = useEditorStore.getState();
     if (activeTabId) requestCloseTab(activeTabId);
   },
-  new_note: () => {
+  new_note: ({ openNote }) => {
     useNoteStore
       .getState()
       .createNote()
       .then((note) => {
-        if (note) openNoteById(note.id);
+        if (note) void openNote({ noteId: note.id });
       });
   },
   toggle_edit_mode: () => {
