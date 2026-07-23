@@ -21,6 +21,7 @@ import { ConflictMergeDialog } from '@/components/sync/ConflictMergeDialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { useIsMobile } from '@/hooks/useIsMobile';
 import { useOpenNote } from '@/hooks/useOpenNote';
 import {
   ApiError,
@@ -30,6 +31,7 @@ import {
   ignoreConflict as apiIgnoreConflict,
   resolveConflict as apiResolveConflict,
 } from '@/lib/api';
+import { cn } from '@/lib/utils';
 import { useConflictsStore } from '@/stores/conflicts-store';
 import { useDataBus } from '@/stores/data-bus';
 import { useEditorStore } from '@/stores/editor-store';
@@ -193,6 +195,7 @@ export function ConflictRow({
   const local = parsePayloadContent(row.local_payload);
   const remote = parsePayloadContent(row.remote_payload);
   const openNote = useOpenNote();
+  const isMobile = useIsMobile();
   const [copied, setCopied] = useState(false);
   const isNote = row.entity_type === 'note';
   const canOverwrite = isNote && row.local_payload !== null;
@@ -213,8 +216,13 @@ export function ConflictRow({
   }, [local]);
   return (
     <div className="border border-border rounded-md p-3 mb-3 bg-card">
-      <div className="flex items-start justify-between gap-2 mb-2">
-        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+      <div
+        className={cn(
+          'flex gap-2 mb-2',
+          isMobile ? 'flex-col items-stretch' : 'items-start justify-between',
+        )}
+      >
+        <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
           <AlertTriangle className="size-4 text-yellow-500" />
           <span>笔记 #{row.entity_id.slice(0, 8)}</span>
           <Badge variant="secondary" className="text-[10px]">
@@ -222,7 +230,7 @@ export function ConflictRow({
           </Badge>
           <span className="text-[11px]">检测于 {formatTimestamp(row.detected_at)}</span>
         </div>
-        <div className="flex items-center gap-1 shrink-0">
+        <div className={cn('flex items-center gap-1', isMobile ? 'flex-wrap' : 'shrink-0')}>
           <Button variant="ghost" size="sm" onClick={handleOpen} className="text-xs">
             <SquarePen className="size-3.5 mr-1" /> 打开笔记
           </Button>
@@ -259,7 +267,7 @@ export function ConflictRow({
           </Button>
         </div>
       </div>
-      <div className="grid grid-cols-2 gap-2 text-xs">
+      <div className={cn('grid gap-2 text-xs', isMobile ? 'grid-cols-1' : 'grid-cols-2')}>
         <div>
           <div className="flex items-center justify-between gap-2 mb-1">
             <span className="font-medium text-muted-foreground">
@@ -376,6 +384,21 @@ export function ConflictsPage() {
     [mergeRow],
   );
 
+  // Mobile only — the merge dialog's「采用本地副本」shortcut (resolveConflict
+  // ('local')); desktop adopts local from the row's「用本地覆盖」instead.
+  const handleMergeResolveLocal = useCallback(async () => {
+    if (!mergeRow) return;
+    setMergeError(null);
+    setMergeSubmitting(true);
+    const out = await performResolve(mergeRow, 'local');
+    setMergeSubmitting(false);
+    if (out.ok) {
+      setMergeRow(null);
+    } else {
+      setMergeError(out.message);
+    }
+  }, [mergeRow]);
+
   return (
     <div className="flex flex-col h-full p-4 overflow-hidden">
       <div className="flex items-center justify-between mb-3 shrink-0">
@@ -434,6 +457,7 @@ export function ConflictsPage() {
             setMergeError(null);
           }}
           onSubmit={handleMergeSubmit}
+          onResolveLocal={handleMergeResolveLocal}
         />
       )}
     </div>

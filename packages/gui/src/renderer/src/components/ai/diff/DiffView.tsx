@@ -1,3 +1,4 @@
+import { useIsMobile } from '@/hooks/useIsMobile';
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
 import { languages } from '@codemirror/language-data';
 import { MergeView } from '@codemirror/merge';
@@ -34,12 +35,15 @@ export function DiffView({
   modifiedLabel = 'AI 版本',
   className,
 }: DiffViewProps) {
+  const isMobile = useIsMobile();
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<MergeView | null>(null);
 
   useEffect(() => {
     const parent = containerRef.current;
-    if (!parent) return;
+    // Mobile web (§4.5): no side-by-side MergeView — the stacked read-only
+    // fallback below renders instead, so never instantiate the editor here.
+    if (!parent || isMobile) return;
 
     const baseExtensions = [
       lineNumbers(),
@@ -67,7 +71,18 @@ export function DiffView({
       view.destroy();
       viewRef.current = null;
     };
-  }, [original, modified]);
+  }, [original, modified, isMobile]);
+
+  // Mobile: two stacked read-only panes (no MergeView — it's unreadable at
+  // phone width). The accept/reject decision still lives on the parent dialog.
+  if (isMobile) {
+    return (
+      <div className={`flex flex-col min-h-0 overflow-auto ${className ?? ''}`}>
+        <DiffPane label={originalLabel} text={original} />
+        <DiffPane label={modifiedLabel} text={modified} />
+      </div>
+    );
+  }
 
   return (
     <div className={`flex flex-col min-h-0 ${className ?? ''}`}>
@@ -76,6 +91,20 @@ export function DiffView({
         <div className="flex-1 px-3 py-1">{modifiedLabel}</div>
       </div>
       <div ref={containerRef} className="flex-1 min-h-0 overflow-auto" />
+    </div>
+  );
+}
+
+/** One stacked read-only pane of the mobile diff fallback. */
+function DiffPane({ label, text }: { label: string; text: string }) {
+  return (
+    <div className="border-b border-border last:border-b-0">
+      <div className="sticky top-0 bg-muted/40 px-3 py-1 text-[11px] text-muted-foreground">
+        {label}
+      </div>
+      <pre className="whitespace-pre-wrap break-words px-3 py-2 text-xs text-foreground">
+        {text}
+      </pre>
     </div>
   );
 }
