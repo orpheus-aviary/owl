@@ -59,6 +59,10 @@ const CSP = [
   "img-src 'self' data:",
   "font-src 'self' data:",
   "connect-src 'self'",
+  // PWA install manifest (same-origin `/manifest.webmanifest`). `default-src`
+  // already covers it, but be explicit so a stricter default can't silently
+  // break install metadata.
+  "manifest-src 'self'",
   "object-src 'none'",
   "base-uri 'self'",
   "frame-ancestors 'none'",
