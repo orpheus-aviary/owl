@@ -20,6 +20,7 @@ import type {
   EditorMode,
   LoadNoteResult,
   PendingAiUpdate,
+  ResolveOutcome,
   SaveResult,
   TabState,
   VersionConflict,
@@ -37,6 +38,7 @@ export type {
   LoadNoteResult,
   PendingAiUpdate,
   PendingUpdateConflict,
+  ResolveOutcome,
   SaveResult,
   TabState,
   VersionConflict,
@@ -776,5 +778,38 @@ export async function loadNoteById(noteId: string): Promise<LoadNoteResult> {
     if (isStale(gen)) return { status: 'stale' };
     if (err instanceof api.ApiError && err.status === 404) return { status: 'not-found' };
     throw err;
+  }
+}
+
+/**
+ * Resolve a `/note/:id` route param into the editor store for the mobile
+ * master-detail detail view (§4.1.1/4.1.2). EditorPage's effect awaits this and
+ * commits the returned `ResolveOutcome` under its token guard. Resolution order:
+ *   1. Already-open tab (real id OR an in-store draft) → `setActiveTab`, no
+ *      reload (preserves the dirty baseline; a `draft_*` id lives only in the
+ *      store, so fetching it would 404 — this is the only correct branch for it).
+ *   2. Stale saved-draft URL (`/note/draft_*` reached via forward / old history)
+ *      → `aliased` so the caller canonical-replaces to the real id (§4.1.6 b).
+ *   3. Fetch via `loadNoteById` → open as a `preview` tab (a clean preview slot
+ *      auto-replaces), or surface `not-found` / `load-failed` / `stale`.
+ */
+export async function resolveOpen(noteId: string): Promise<ResolveOutcome> {
+  const gen = currentGen();
+  const editor = useEditorStore.getState();
+  if (editor.tabs.some((t) => t.noteId === noteId)) {
+    editor.setActiveTab(noteId);
+    return { kind: 'opened' };
+  }
+  const realId = resolveDraftAlias(noteId);
+  if (realId) return { kind: 'aliased', realId };
+  try {
+    const r = await loadNoteById(noteId);
+    // A session switch across the fetch: don't splice an old account's note in.
+    if (isStale(gen) || r.status === 'stale') return { kind: 'stale' };
+    if (r.status === 'not-found') return { kind: 'not-found' };
+    useEditorStore.getState().openNote(r.note, { preview: true });
+    return { kind: 'opened' };
+  } catch {
+    return { kind: 'load-failed' };
   }
 }

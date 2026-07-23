@@ -136,7 +136,7 @@ describe('note-nav-guard — dirty current prompt', () => {
     dirty();
     const { nav, navigate } = makeNav();
     void guard().open({ noteId: 'n2' }, nav);
-    expect(guard().prompt).toEqual({ title: 'n1', phase: 'prompting' });
+    expect(guard().prompt).toEqual({ title: 'n1', phase: 'prompting', kind: 'open' });
     expect(navigate).not.toHaveBeenCalled();
   });
 
@@ -202,11 +202,74 @@ describe('note-nav-guard — dirty current prompt', () => {
     const { nav, navigate } = makeNav();
     const p = guard().open({ noteId: 'n2' }, nav);
     await guard().choose('save');
-    expect(guard().prompt).toEqual({ title: 'n1', phase: 'save-failed' });
+    expect(guard().prompt).toEqual({ title: 'n1', phase: 'save-failed', kind: 'open' });
     expect(navigate).not.toHaveBeenCalled();
     // The open promise is still pending; a follow-up cancel settles it.
     await guard().choose('cancel');
     expect(await p).toBe('cancelled');
+  });
+});
+
+describe('note-nav-guard — open-current (打开笔记)', () => {
+  it('open context → jumps to the dirty note, abandons opening B, cancelled', async () => {
+    useEditorStore.setState({ tabs: [tab('n1', { dirty: true })], activeTabId: 'n1' });
+    const { nav, navigate } = makeNav({ path: '/browser' });
+    const p = guard().open({ noteId: 'n2' }, nav);
+    await guard().choose('open-current');
+    expect(await p).toBe('cancelled'); // B (n2) was NOT opened
+    // Navigated to the unsaved note (n1), not the tapped one (n2).
+    expect(navigate).toHaveBeenCalledWith('/note/n1', expect.anything());
+    expect(navigate).not.toHaveBeenCalledWith('/note/n2', expect.anything());
+    expect(guard().prompt).toBeNull();
+  });
+});
+
+describe('note-nav-guard — requestLeave (返回)', () => {
+  it('clean current → proceeds immediately, no prompt', async () => {
+    useEditorStore.setState({ tabs: [tab('n1')], activeTabId: 'n1' });
+    const back = vi.fn();
+    const outcome = await guard().requestLeave(back);
+    expect(outcome).toBe('opened');
+    expect(back).toHaveBeenCalledOnce();
+    expect(guard().prompt).toBeNull();
+  });
+
+  it('dirty current → prompt with kind:leave', () => {
+    useEditorStore.setState({ tabs: [tab('n1', { dirty: true })], activeTabId: 'n1' });
+    void guard().requestLeave(vi.fn());
+    expect(guard().prompt).toEqual({ title: 'n1', phase: 'prompting', kind: 'leave' });
+  });
+
+  it('discard → closes the tab and runs the back-navigation', async () => {
+    useEditorStore.setState({ tabs: [tab('n1', { dirty: true })], activeTabId: 'n1' });
+    const back = vi.fn();
+    const p = guard().requestLeave(back);
+    await guard().choose('discard');
+    expect(await p).toBe('opened');
+    expect(useEditorStore.getState().tabs.find((t) => t.noteId === 'n1')).toBeUndefined();
+    expect(back).toHaveBeenCalledOnce();
+  });
+
+  it('save success → runs the back-navigation, tab stays', async () => {
+    useEditorStore.setState({ tabs: [tab('n1', { dirty: true })], activeTabId: 'n1' });
+    const saved: SaveResult = { status: 'saved', ok: true, noteId: 'n1' };
+    useEditorStore.setState({ requestSaveOrConflict: vi.fn(async () => saved) });
+    const back = vi.fn();
+    const p = guard().requestLeave(back);
+    await guard().choose('save');
+    expect(await p).toBe('opened');
+    expect(back).toHaveBeenCalledOnce();
+    expect(useEditorStore.getState().tabs.find((t) => t.noteId === 'n1')).toBeDefined();
+  });
+
+  it('open-current (继续编辑) → stays on the note, back NOT run', async () => {
+    useEditorStore.setState({ tabs: [tab('n1', { dirty: true })], activeTabId: 'n1' });
+    const back = vi.fn();
+    const p = guard().requestLeave(back);
+    await guard().choose('open-current');
+    expect(await p).toBe('cancelled');
+    expect(back).not.toHaveBeenCalled(); // stayed put; no navigation
+    expect(guard().prompt).toBeNull();
   });
 });
 

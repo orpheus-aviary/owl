@@ -4,6 +4,7 @@ import { DeleteConfirmDialog } from '@/components/DeleteConfirmDialog';
 import { EventsSubscriber } from '@/components/EventsSubscriber';
 import { FolderPanel } from '@/components/FolderPanel';
 import { extractTitle } from '@/components/NoteListItem';
+import { NoteNavGuardDialog } from '@/components/NoteNavGuardDialog';
 import { SwitchUnsavedDialog } from '@/components/SwitchUnsavedDialog';
 import { UnsavedTabsDialog } from '@/components/UnsavedTabsDialog';
 import { ConflictDialog } from '@/components/ai/ConflictDialog';
@@ -322,6 +323,7 @@ export function MainApp() {
       <VersionConflictDialog />
       <UnsavedTabsDialog />
       <SwitchUnsavedDialog />
+      <NoteNavGuardDialog />
       <ClaimAccountDialog />
     </HashRouter>
   );

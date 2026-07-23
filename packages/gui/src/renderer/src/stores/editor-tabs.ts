@@ -150,6 +150,25 @@ export type LoadNoteResult =
   | { status: 'not-found' }
   | { status: 'stale' };
 
+/**
+ * Result of `resolveOpen` — the mobile master-detail resolver behind
+ * `/note/:id` (§4.1.1/4.1.2). EditorPage's effect commits it:
+ *   - `opened`      — the note is staged (activated an open tab, or fetched +
+ *                     opened as a preview) → render the editor.
+ *   - `aliased`     — the URL still points at a saved draft's dead `draft_*` id;
+ *                     canonical-`replace` to `realId` (§4.1.6 b).
+ *   - `not-found`   — a 404 → the note is gone → empty state.
+ *   - `load-failed` — 401 / network / protocol error → 加载失败·重试.
+ *   - `stale`       — the session switched during the fetch → discard silently
+ *                     (the epoch-keyed root remounts).
+ */
+export type ResolveOutcome =
+  | { kind: 'opened' }
+  | { kind: 'aliased'; realId: string }
+  | { kind: 'not-found' }
+  | { kind: 'load-failed' }
+  | { kind: 'stale' };
+
 /** Subset of the SSE `draft_ready` payload needed to seed a new draft tab. */
 export interface AiDraftInput {
   note_id: string; // draft_<uuid>

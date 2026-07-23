@@ -2,6 +2,7 @@ import { MarkdownEditor } from '@/components/MarkdownEditor';
 import { MarkdownPreview } from '@/components/MarkdownPreview';
 import { TagBar } from '@/components/TagBar';
 import { ResizeHandle } from '@/components/ui/resize-handle';
+import { useIsMobile } from '@/hooks/useIsMobile';
 import { useOwlLayout } from '@/hooks/useOwlLayout';
 import { LAYOUT_KEYS } from '@/lib/layout-keys';
 import { type EditorMode, useActiveTab, useEditorStore } from '@/stores/editor-store';
@@ -39,12 +40,18 @@ function ModeToggle() {
 }
 
 export function EditorPanel() {
+  const isMobile = useIsMobile();
   const tab = useActiveTab();
   const mode = useEditorStore((s) => s.mode);
+  const mobileMode = useEditorStore((s) => s.mobileMode);
   const updateContent = useEditorStore((s) => s.updateContent);
   const updateTags = useEditorStore((s) => s.updateTags);
 
   const splitLayout = useOwlLayout(LAYOUT_KEYS.editorSplit);
+
+  // Mobile uses the independent edit⇄preview toggle (no `split`); desktop reads
+  // the persisted `mode`. §4.2.
+  const effectiveMode: EditorMode = isMobile ? mobileMode : mode;
 
   if (!tab) {
     return (
@@ -56,24 +63,28 @@ export function EditorPanel() {
 
   return (
     <div className="flex flex-col h-full min-h-0">
-      <div className="flex items-center justify-end px-2 py-1 border-b border-border shrink-0">
-        <ModeToggle />
-      </div>
+      {/* The mode toggle sits in the top bar on mobile (§3.3); only desktop
+          shows this in-panel toggle strip. */}
+      {!isMobile && (
+        <div className="flex items-center justify-end px-2 py-1 border-b border-border shrink-0">
+          <ModeToggle />
+        </div>
+      )}
 
       <div className="flex-1 flex min-h-0">
-        {mode === 'edit' && (
+        {effectiveMode === 'edit' && (
           <div className="flex-1 min-h-0">
             <MarkdownEditor value={tab.content} onChange={(v) => updateContent(tab.noteId, v)} />
           </div>
         )}
 
-        {mode === 'preview' && (
+        {effectiveMode === 'preview' && (
           <div className="flex-1 min-h-0">
             <MarkdownPreview content={tab.content} />
           </div>
         )}
 
-        {mode === 'split' && (
+        {effectiveMode === 'split' && (
           <Group
             orientation="horizontal"
             id={LAYOUT_KEYS.editorSplit}

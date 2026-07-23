@@ -6,6 +6,7 @@ import {
   loadNoteById,
   registerDraftAlias,
   resolveDraftAlias,
+  resolveOpen,
   useEditorStore,
 } from './editor-store';
 import type { PendingAiUpdate } from './editor-store';
@@ -804,6 +805,70 @@ describe('loadNoteById (§4.1.2 — pure load, no store write)', () => {
   it('a 401 rethrows (→ load-failed, not not-found)', async () => {
     vi.spyOn(api, 'getNote').mockRejectedValue(new api.ApiError(401, 'UNAUTHORIZED', 'nope'));
     await expect(loadNoteById('n1')).rejects.toBeInstanceOf(api.ApiError);
+  });
+});
+
+describe('resolveOpen (§4.1.1/4.1.2 — mobile master-detail resolver)', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    useEditorStore.getState().reset(); // also clears the draft-alias table
+  });
+
+  it('already-open tab → activates it, no reload, opened', async () => {
+    useEditorStore.getState().openNote(makeNote('n1', 'hello'));
+    useEditorStore.getState().openNote(makeNote('n2', 'world'));
+    const getSpy = vi.spyOn(api, 'getNote');
+    const outcome = await resolveOpen('n1');
+    expect(outcome).toEqual({ kind: 'opened' });
+    expect(useEditorStore.getState().activeTabId).toBe('n1');
+    expect(getSpy).not.toHaveBeenCalled(); // store hit → never fetches
+  });
+
+  it('in-store dirty tab → activates without rebasing the baseline', async () => {
+    useEditorStore.getState().openNote(makeNote('n1', 'orig'));
+    useEditorStore.getState().updateContent('n1', 'edited'); // dirty
+    const getSpy = vi.spyOn(api, 'getNote');
+    await resolveOpen('n1');
+    const tab = useEditorStore.getState().tabs.find((t) => t.noteId === 'n1');
+    expect(tab?.content).toBe('edited');
+    expect(tab?.originalContent).toBe('orig'); // baseline untouched
+    expect(getSpy).not.toHaveBeenCalled();
+  });
+
+  it('saved-draft alias (draft not in store) → aliased to the real id', async () => {
+    registerDraftAlias('draft_abc', 'real_xyz');
+    const getSpy = vi.spyOn(api, 'getNote');
+    expect(await resolveOpen('draft_abc')).toEqual({ kind: 'aliased', realId: 'real_xyz' });
+    expect(getSpy).not.toHaveBeenCalled(); // alias resolves before any fetch
+  });
+
+  it('not open, not aliased → fetch + open as a PREVIEW tab, opened', async () => {
+    const note = makeNote('n9', 'fetched');
+    vi.spyOn(api, 'getNote').mockResolvedValue({ success: true, data: note });
+    expect(await resolveOpen('n9')).toEqual({ kind: 'opened' });
+    const tab = useEditorStore.getState().tabs.find((t) => t.noteId === 'n9');
+    expect(tab?.preview).toBe(true);
+    expect(useEditorStore.getState().activeTabId).toBe('n9');
+  });
+
+  it('404 → not-found, nothing staged', async () => {
+    vi.spyOn(api, 'getNote').mockRejectedValue(new api.ApiError(404, 'NOT_FOUND', 'gone'));
+    expect(await resolveOpen('missing')).toEqual({ kind: 'not-found' });
+    expect(useEditorStore.getState().tabs).toEqual([]);
+  });
+
+  it('401 / network / protocol error → load-failed', async () => {
+    vi.spyOn(api, 'getNote').mockRejectedValue(new api.ApiError(401, 'UNAUTHORIZED', 'nope'));
+    expect(await resolveOpen('n1')).toEqual({ kind: 'load-failed' });
+  });
+
+  it('session switched mid-fetch → stale, no store write', async () => {
+    vi.spyOn(api, 'getNote').mockImplementation(async () => {
+      useSessionEpoch.getState().beginInvalidate();
+      return { success: true, data: makeNote('n1', 'x') };
+    });
+    expect(await resolveOpen('n1')).toEqual({ kind: 'stale' });
+    expect(useEditorStore.getState().tabs).toEqual([]);
   });
 });
 
