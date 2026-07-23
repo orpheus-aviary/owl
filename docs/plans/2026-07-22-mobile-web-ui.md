@@ -2,7 +2,9 @@
 
 > ⚠️ **导航模型已在实施中修订（2026-07-23，用户拍板）→ 以 §16 为准。** §3「编辑 tab = master 笔记列表 + detail」作废：编辑器改为**仅 `/note/:id` 详情**，入口页 = 浏览（默认）+ 文件（文件夹树整页），底栏 `[浏览, 文件, 提醒, 待办]`。§4.1 的导航契约（resolveOpen/note-nav-guard/useOpenNote/SaveResult/竞态）仍有效并已实现，只是 master 列表页那一层换成了浏览/文件。**Step 5 已完成**（编辑器引擎 + 导航重构 + 入口迁移 + UI 反馈修，gui 601 全绿）；`/note/:id` 详情/保存/返回/新建/删除等实现细节见 §16。
 >
-> 状态：**规划 v7 —— 定稿，实施就绪**，起草 2026-07-22。整体架构自 v6 不变；本轮补齐 4 个协议边界 + 5 个实现细节，避免实现期「静默丢 AI 更新 / 旧 intent 抢导航 / 跨会话串状态」。
+> 状态：**已全部实施完成（Stage 1 #5 完成，2026-07-23）** —— Steps 1–9 + Phase 2 PWA 均已提 `main`。逐步实施记录：Steps 1–4 见 §15，Step 5（修订导航模型）见 §16，**Steps 6–9 + PWA 见 §17**。最终基线 gui **627** / core 542 / daemon 431 / cli 139，`just check` 9 守卫全绿。**真软键盘（Step 9）/ 真 PWA 安装（Phase 2）留 Stage 2 真机验收。**
+>
+> 原起草状态：规划 v7 —— 定稿，实施就绪，2026-07-22。整体架构自 v6 不变；补齐 4 个协议边界 + 5 个实现细节，避免实现期「静默丢 AI 更新 / 旧 intent 抢导航 / 跨会话串状态」。
 > v6→v7：**①AI update 的 `prepare` 补 `openNote(found)`**（`loadNoteById` 只加载不写 store；`stageAiUpdate` 对未打开 tab 静默 no-op，`editor-store:530`）；**②last-wins 覆盖异步 `prepare`/`saving`**（导航级 `navSeq` + `isCurrent()`，每 await 后复核、旧 Promise 结算 `cancelled`、`discard` 在 target prepare 成功后再关当前脏 tab）；**③`SaveResult` 改判别联合**（`saved|noop|conflict|failed|cancelled`，让 note-nav guard 无歧义区分冲突与失败，`dismiss` 不再伪装成功）；**④note-nav-guard/alias/mobileMode/在途 Promise 全进 `resetAllStores`**（`reset.ts:32`）；**⑤实现细则**：TopBar 用 `locationRef.current`/nav token 非旧闭包 · alias 按 session 有限生命周期 · 脏删除经统一 open intent（写 `canPop/returnTo`）· **桌面分支规范条款**（`!isMobile` 保持 `openNoteById+navigate('/')`、不启用移动 guard，AI `prepare` 仍跑但 Electron 路由/tab 不变）· `OpenOutcome='opened'` = **导航已提交**（非普通笔记加载成功，后者仍由 EditorPage 展示错误）。
 > **路线源** = `2026-07-04-road-to-1.0.0.md` §2 #5；状态以 `PROCESS.md` 为准。前置：`2026-06-06-mobile-web-ecosystem-arch.md`（§4/§5/§9/§13）、Phase B（B0–B4）。
 
@@ -325,4 +327,20 @@ manifest（+`id`/`scope`/standalone/图标 192/512/512-maskable/暗色）；图�
 - **② 导航重构**：`mobile-nav`(文件)/`MobileBottomNav`/`MobileTopBar`(去 ☰)/`MobileShell`(去抽屉)/`MoreSheet`(+SyncStatus)/`FolderPanel`(page variant)/`FilesPage`(新)/`AppRoutes`(/files)/删 `FolderDrawer`。
 - **③ 入口迁移 + deferred**：5 入口 + `useEditorShortcuts` + `DeleteConfirmDialog`。
 
-基线：**gui 601**（566→+35，含用户 UI 反馈修：新建按钮 3 + 返回/新建路由 catch-all）/ core 542 / daemon 431 / cli 139 / `just check` 9 守卫全绿。**未测**：真软键盘/真 PWA/Lighthouse/真机。**未做（后续 Step）**：Step 6 单栏 Settings/Login/AI · Step 7 移动冲突 UI · **Step 8 触摸打磨（含 FolderPanel 文件页独立拖拽手柄 = 用户要的「文件页按住拖动整理」）** · Step 9 浮动 TagBar · Phase 2 PWA。
+基线：**gui 601**（566→+35，含用户 UI 反馈修：新建按钮 3 + 返回/新建路由 catch-all）/ core 542 / daemon 431 / cli 139 / `just check` 9 守卫全绿。Steps 6–9 + PWA 见 §17。
+
+---
+
+## 17. 实施记录 Steps 6–9 + Phase 2（Stage 1 #5 完成，2026-07-23）
+
+> 全部直接提 `main`、逐步小 commit（每步用户 rig 手测确认后提）。每步 `just check`（9 守卫 + typecheck + typecheck-web）+ gui 单测全绿；**桌面零回归**（每处移动分支都 `useIsMobile` 门控，Electron 恒 false）。
+
+- **Step 6 — 移动 Settings/Login/AI 单栏**（`6afd80c` settings · `5254572` ai · `4c2bed6` 修 SyncStatus 双分割线）：
+  `SettingsPage` 横向 section 切换器 + 隐藏「快捷键」（无键盘，§8）+ 隐藏 tab deep-link 重定向；`CustomSection` `hideSecrets` 隐藏 API Key 行；`SettingRow`/`LoginForm`/`CustomSection` 私有 SettingRow 移动竖排 + 输入满宽（均 `useIsMobile` 门）。`AIPage` 聊天全屏 + 会话列表 Sheet（`ChatSidebar` `onAfterSelect` 关 sheet）。**判断项**：`hideSecrets` 仅隐藏 API Key 行；移动仅隐藏「快捷键」保留「高级」。gui 601→**611**。
+- **Step 7 — 移动冲突 UI**（`d2c571c`）：`DiffView` 移动堆叠只读（不实例化 MergeView，覆盖 AI/Version 两冲突对话框）；`ConflictMergeDialog` 拆桌面 MergeView / 移动只读本地 + 单栏「最终结果」textarea（**取消 / 采用本地副本[resolveConflict('local')] / 保存合并结果[merged]**，用户拍板简单模式）；`ConflictsPage` 行 grid-cols-2→堆叠 + 操作栏换行。gui 611→**617**。
+- **Step 8 — 触摸打磨（⭐ 文件页按住拖动整理）**（`a84522f`）：`FolderPanel` page 变体的文件夹/笔记行加独立**拖拽手柄**（`GripVertical`，`touch-none` + `stopPropagation`），使 dnd-kit 200ms 拖动与「单击开 / 长按菜单」共存（旧整行拖被长按吃掉）；复用既有 drop zone + DragOverlay + onDragEnd，桌面仍整行拖。`apps/web/index.html` 加 `viewport-fit=cover`。**次要未做**：Browser 笔记行「常显 ⋯」（长按已可用，判可选）。gui 617→**619**。
+- **Step 9 — 浮动 TagBar**（`cb944c9`）：`hooks/useKeyboardInset`（visualViewport，门控 聚焦 + scale≈1，无 vv → 0）；`TagBar` 移动 inset>0 时 `fixed bottom:<inset>` + ResizeObserver 占位；`DateTimePicker` 加 visualViewport 偏移校正（offset 0 时零改变）。gui 619→**627**。**⚠️ 真软键盘路径 rig 测不了 → 代码内 `REAL-DEVICE` 标注，Stage 2 真机调**。
+- **Phase 2 — PWA 安装元数据**（`1b14bb6`）：`apps/web/public/manifest.webmanifest`（id/scope/start_url `/`、standalone、暗色、192/512/512-maskable 图标）+ `scripts/build-pwa-icons.mjs`（`sips` 手动 macOS 跑、产物入 git、**绝不进 build-server**）+ `index.html` manifest/theme-color/apple-touch-icon meta + daemon CSP 加 `manifest-src`。**无 SW；真安装/A2HS 留 Stage 2**。
+- **收尾清理**（`f3c219b`）：删 `FolderPanel` 死 `drawer` 变体 + `onAfterOpen`（Step 5 删 FolderDrawer 后无 caller）。
+
+**Stage 1 #5 完成。** 最终基线：gui **627** / core 542 / daemon 431 / cli 139 / e2e 0-fail / `just check` 9 守卫。**留 Stage 2 真机**：Step 9 软键盘浮动 TagBar + DateTimePicker 视口校正 · Phase 2 真 PWA 安装（HTTPS/A2HS）· §12 微调（maskable padding / iOS fixed 抖动）。
