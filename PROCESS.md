@@ -1,6 +1,13 @@
 # 开发进度
 
-## 当前阶段：**🎉 Stage 1 全部完成（2026-07-23）→ 下一步 = Stage 2（上云，需真服务器）**
+## 当前阶段：**🚀 Stage 2 进行中（2026-07-23）—— 公网部署 + 0.6.0 发版已完成，剩 TLS / soak / 多设备 GA → 1.0.0**
+
+**Stage 2 已完成部分（2026-07-23）：**
+- **公网部署跑通**：skybridge-server `0.1.4` + **owl-server `0.6.0`** 部署到阿里云 Ubuntu + 宝塔（Node 24 + fish + PM2 CLI；明文 HTTP + 安全组锁源 IP；owl-server→skybridge 走 loopback）。异地浏览器 / 手机登录 → 读写真实笔记 → 移动 UI / PWA 真机验收通过（顺手修了浏览页三按钮挤行、提醒页计数过长两处移动 bug，`b5f62a1`）。全流程 + 踩坑 + 运维落 `docs/deploy/baota-fish-runbook.md`（better-sqlite3 Node24 ABI 重编 / npmmirror 新包未同步→scoped registry / OWL_NEST_DIR / account_lock / 删账号）。
+- **0.6.0 发版**：npm `@orpheus-aviary/owl-server@0.6.0`（云端 web，内嵌最新 web bundle）+ **桌面 `Owl-0.6.0-arm64.dmg`（GitHub Release `v0.6.0`）+ CLI `@orpheus-aviary/owl-cli@0.6.0`**（tag `v0.6.0` / `cli-v0.6.0`）。0.6.0 = 同步状态可视化 + 无刷新切账号 + 冲突手动解决/合并 + **A6 本地 daemon 鉴权（破坏性：升级须重启 daemon + CLI 同升）**。发版说明 `docs/history/0.6.0-release-notes.md`。
+- **剩余（→ 1.0.0）**：TLS / 反代（域名 + 自动证书）· 真·24h soak · P6 多设备 GA（skybridge Phase 5）。
+
+**Stage 1（全本地、不碰真服务器）五大项全 ✅（历史留档）：** 见下。
 
 **Stage 1（全本地、不碰真服务器）五大项全 ✅：** #1 owl-server 打包 · #2 A6 local CSRF · #3 重构一轮 · #4 0.6 本地功能（①③④②）· **#5 移动端兼容 web UI（Steps 1–9 + Phase 2 PWA 全完成）**。路线源 `docs/plans/2026-07-04-road-to-1.0.0.md`。
 
@@ -34,9 +41,9 @@
 - **B1 deferred（仍挂账）**：**apps/web 接 `tsc -b` + dedup `@types/react`** 撞 monorepo project-ref 墙 → 独立小任务（功能已由 gui typecheck 全覆盖）。
 - **Phase A/B 基线**：core **529** / daemon **405** / cli **137** / gui **441** + gated e2e **29**；`just check` **9 守卫**。**全部已 push `origin/main`**（上文各 "未 push/代码未提交" 字样均为当时记录，现已推送）。
 
-### 下一步 = **Stage 2（上云，需真服务器）**
+### 下一步 = **Stage 2 收尾（TLS → soak → 多设备 GA → 1.0.0）**
 
-**🎯 Stage 1 全部完成（2026-07-23）→ 下一步进入 Stage 2**：重部署 skybridge（阿里云）+ owl-server 上云 + 异地真机 → TLS/反代 → 真·24h soak → P6 多设备 GA → **1.0.0**。Stage 2 需真公网服务器，且要顺带验收 Stage 1 里 `REAL-DEVICE` 标注项（移动软键盘 TagBar / 真 PWA 安装）。下为 Stage 1 完整历史留档。
+**🚀 Stage 2 公网部署 + 0.6.0 发版已完成（2026-07-23，详见顶部）**：skybridge + owl-server 上云跑通、异地真机 / PWA 验收过、桌面 / CLI / web 三端 0.6.0 已发。**剩余到 1.0.0**：TLS / 反代 → 真·24h soak → P6 多设备 GA。下为 Stage 1 完整历史留档。
 
 **Phase B v1 (B0–B4) 全 ✅ 已 push；Aω 1a 本地云 rig ✅ 手测通过（2026-07-04）。用户 2026-07-04 拍板重排：「不碰真服务器就能做完的」全部先做完（含 owl-server 本地打包），公网部署 + soak + TLS + 多设备 GA 攒成发版前最后一道关卡（避免反复搭/拆阿里云 skybridge）。**
 
@@ -56,10 +63,11 @@
    - **② W7 冲突手动解决/合并 ✅ 完成 + GUI 手测通过（2026-07-22）**：core `resolveConflict(db,sqlite,id,args)` 独占外层 `.immediate()` 事务（SELECT→`pickResolvedContent`→原子抢占 `resolved_at`→`updateNote` CAS+`rejectIfTrashed`，抢占先于写笔记、失败一路回滚）+ 4 typed error（trash 复用 `AlreadyTrashedError`）+ `ConflictResolution` 扩 local/merged；daemon `POST /conflicts/:id/resolve`（纯校验 400 → core[事务外] → 200/404/409/422+emit，`resolved:false` 幂等 200）；shared client；GUI `ConflictsPage`（用本地覆盖/手动处理…/采用远端）+ `ConflictMergeDialog`（**callback ref 构造** 绕 radix Portal 时序 + content-height + 深色 gutter）+ `refreshList` count 修正 + D9 脏 tab 阻止/干净 tab 刷新 + gen-guard。**UI 措辞：忽略→采用远端、合并…→手动处理…**（消歧义）。零 migration（下一号仍 0010）。core **542**/daemon **431**/gui **519**·`just check` 9 守卫全绿。**0.6（#4）全部完成。**
 5. **✅ 移动端兼容 web UI 全部完成（2026-07-23）**：响应式 + 移动导航 + 触摸 + PWA（**不是 RN**；RN 是 1.0.0 后单独 app）。设计 `docs/plans/2026-07-22-mobile-web-ui.md`（Steps 1–4 §15 · Step 5 §16 · **Steps 6–9 + PWA §17**）。Steps 1–5（`20b7339`…`be95c32`）+ 本会话 Step 6（`6afd80c`/`5254572`/`4c2bed6`）· Step 7（`d2c571c`）· Step 8 ⭐文件页拖拽手柄（`a84522f`）· Step 9 浮动 TagBar（`cb944c9`）· Phase 2 PWA（`1b14bb6`）· 清理（`f3c219b`）。gui **627**、桌面零回归。**留 Stage 2 真机**：Step 9 软键盘 / Phase 2 真安装 / §12 微调（详见设计 §17）。
 
-**Stage 2（发版前最后关卡，需真服务器；攒一起做）：**
+**Stage 2（需真服务器）：**
 
-- **Aω 上云 = 公网部署**：重部署 skybridge（阿里云）+ owl-server 上云 + 异地真机。**⚠️ 公网先不配反代/TLS，IP 直连 + 安全组锁源 IP**（照 `skybridge/docs/deploy/ubuntu-baota.md` 明文 HTTP）。
-- **TLS/反代** · **真·24h soak** · **P6 多设备 GA** → **🎯 1.0.0**。
+- **✅ Aω 上云 = 公网部署（2026-07-23 完成）**：skybridge `0.1.4` + owl-server `0.6.0` 部署阿里云 / 宝塔，异地真机 / 手机 web + PWA 验收过。明文 HTTP + 安全组锁源 IP。运维见 `docs/deploy/baota-fish-runbook.md`。
+- **✅ 0.6.0 三端发版（2026-07-23）**：owl-server(npm) + 桌面 dmg(GitHub Release `v0.6.0`) + CLI(npm `owl-cli`)。发版说明 `docs/history/0.6.0-release-notes.md`。
+- **剩余 → 🎯 1.0.0**：**TLS / 反代** · **真·24h soak** · **P6 多设备 GA**（skybridge Phase 5）。
 
 **1.0.0 之后**：跨 profile 统一视图（+跨账号导入，时机再议）· **完整 RN 移动 app**（Phase C 发 owl-shared → D/E）· 其余 0.6+ backlog。
 

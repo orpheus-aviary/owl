@@ -5,13 +5,17 @@
 
 ## 状态
 
-当前版本 **0.5.0**。
+当前版本 **0.6.0**。
 - 仅 macOS Apple Silicon（arm64）
 - GUI 为 ad-hoc 签名（未 notarize），首次运行需绕过 Gatekeeper
 - 无自动更新
 
-0.5.0 主打 **per-profile 多账号隔离 + 免密快切**（需自部署 skybridge server；当前明文 HTTP，TLS 留 0.6）。
-完整发版说明见 `docs/history/0.5.0-release-notes.md`。
+0.6.0 主打**同步状态可视化 + 无缝切账号（无刷新）+ 冲突手动解决 / 合并**，并给本地 daemon 加了鉴权
+（**破坏性变更**：升级后重启 daemon，CLI 需一起升级到 0.6.0）。完整发版说明见
+`docs/history/0.6.0-release-notes.md`。
+
+> **网页 / 移动端**：云端版 `@orpheus-aviary/owl-server`（npm）在浏览器里用同一套 skybridge 账号读写
+> 笔记，与桌面版独立发布；自部署见 `docs/deploy/`。当前明文 HTTP + 锁源 IP，TLS / 反代留后续。
 
 ## 下载安装（macOS arm64）
 
