@@ -52,11 +52,13 @@ type EditingState =
 
 /**
  * `sidebar` = the desktop 64px-anchored panel (select-then-double-click to
- * open, whole-row drag). `drawer` = the mobile folder drawer (single-tap to
- * open + close the drawer, taller touch rows, drag suppressed for now so a tap
- * isn't hijacked — a dedicated handle lands in the touch-polish step).
+ * open, whole-row drag). `page` = the mobile 「文件」full-page tree (single-tap
+ * to open, taller touch rows, drag suppressed for now — a dedicated handle
+ * lands in the touch-polish step). `drawer` = the legacy folder drawer (same
+ * touch behavior as `page` plus a close-on-open callback); kept for now.
+ * `page` and `drawer` share all touch behavior (`isTouch = variant !== sidebar`).
  */
-type FolderPanelVariant = 'sidebar' | 'drawer';
+type FolderPanelVariant = 'sidebar' | 'drawer' | 'page';
 
 /** Shared props threaded through the recursive FolderRow tree. */
 interface RowHandlers {
@@ -499,10 +501,10 @@ function FolderRow({ node, depth, ...h }: { node: FolderNode; depth: number } & 
     setNodeDropRef(el);
   };
 
-  const isDrawer = h.variant === 'drawer';
+  const isTouch = h.variant !== 'sidebar';
   // Drawer: suppress whole-row drag (tap = toggle/open, not drag) and grow the
   // row to a touch target. Sidebar keeps the desktop drag-anywhere behavior.
-  const rowDragProps = isDrawer ? {} : { ...listeners, ...attributes };
+  const rowDragProps = isTouch ? {} : { ...listeners, ...attributes };
 
   // Rename takes over the row so the input stretches across the full width.
   if (isRenaming) {
@@ -528,7 +530,7 @@ function FolderRow({ node, depth, ...h }: { node: FolderNode; depth: number } & 
             onDoubleClick={() => hasChildren && h.onToggle(node.id)}
             className={cn(
               'group flex items-center gap-1 pr-1 rounded-sm',
-              isDrawer ? 'h-11' : 'h-6',
+              isTouch ? 'h-11' : 'h-6',
               isDragging && 'opacity-40',
               showNodeHover
                 ? 'bg-sidebar-primary/25 outline outline-2 outline-sidebar-primary'
@@ -545,7 +547,7 @@ function FolderRow({ node, depth, ...h }: { node: FolderNode; depth: number } & 
               <RowToggleIcon hasChildren={hasChildren} isOpen={isOpen} />
             </button>
             <Folder className="size-3.5 shrink-0 text-muted-foreground" />
-            <span className={cn('flex-1 truncate', isDrawer ? 'text-sm' : 'text-xs')}>
+            <span className={cn('flex-1 truncate', isTouch ? 'text-sm' : 'text-xs')}>
               {node.name}
             </span>
 
@@ -678,7 +680,7 @@ function FolderNoteRow({
   const title = extractTitle(note.content);
   const indent = depth * 12 + 4;
   const pinned = note.pinnedAt != null;
-  const isDrawer = variant === 'drawer';
+  const isTouch = variant !== 'sidebar';
   const dragData: DragData = { kind: 'note', noteId: note.id };
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: `panel-note:${note.id}`,
@@ -687,7 +689,7 @@ function FolderNoteRow({
   // Drawer: single tap opens (no select→double-tap), and we DON'T spread drag
   // listeners so a tap isn't captured as a long-press drag (§5; a dedicated
   // handle comes with the touch-polish step). Sidebar keeps the desktop feel.
-  const dragProps = isDrawer ? {} : { ...listeners, ...attributes };
+  const dragProps = isTouch ? {} : { ...listeners, ...attributes };
 
   const handleTogglePin = async () => {
     const gen = currentGen();
@@ -706,11 +708,11 @@ function FolderNoteRow({
         <div
           ref={setNodeRef}
           {...dragProps}
-          onClick={() => (isDrawer ? onOpen(note.id) : onSelect(note.id))}
+          onClick={() => (isTouch ? onOpen(note.id) : onSelect(note.id))}
           onDoubleClick={() => onOpen(note.id)}
           className={cn(
             'group flex items-center gap-1 pr-1 rounded-sm cursor-default',
-            isDrawer ? 'h-11' : 'h-6',
+            isTouch ? 'h-11' : 'h-6',
             isDragging && 'opacity-40',
             isSelected ? 'bg-accent' : 'hover:bg-sidebar-accent/60',
           )}
@@ -719,7 +721,7 @@ function FolderNoteRow({
           {/* Spacer matching the chevron column */}
           <div className="size-4 shrink-0" />
           <FileText className="size-3.5 shrink-0 text-muted-foreground" />
-          <span className={cn('flex-1 truncate', isDrawer ? 'text-sm' : 'text-xs')}>{title}</span>
+          <span className={cn('flex-1 truncate', isTouch ? 'text-sm' : 'text-xs')}>{title}</span>
           {/* Pin indicator — property only, does NOT affect sort or bg in the panel (P3.4-a §1.1). */}
           {pinned && <Pin className="size-3 shrink-0 text-primary rotate-45" aria-label="已置顶" />}
         </div>

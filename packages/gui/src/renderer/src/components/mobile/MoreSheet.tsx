@@ -1,3 +1,4 @@
+import { SyncStatusBar } from '@/components/sync/SyncStatusBar';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { useConflictsStore } from '@/stores/conflicts-store';
 import { AlertTriangle } from 'lucide-react';
@@ -6,8 +7,9 @@ import { MORE_NAV } from './mobile-nav';
 
 /**
  * The "更多" overflow sheet (§3.2) — the destinations that don't fit the four
- * bottom slots, plus the count-gated 冲突 entry. Tapping a tile navigates; the
- * shell's `useEffect([location])` closes the sheet on the resulting route
+ * bottom slots, plus the count-gated 冲突 entry, plus the sync-status row in the
+ * footer (its old home, the folder drawer, is gone). Tapping a tile navigates;
+ * the shell's `useEffect([location])` closes the sheet on the resulting route
  * change, so no explicit close is wired here.
  */
 export function MoreSheet({
@@ -55,6 +57,11 @@ export function MoreSheet({
               </span>
             </button>
           )}
+        </div>
+        {/* Sync status — moved here from the removed folder drawer. The drawer
+            variant lays it out as a full-width row with an upward popover. */}
+        <div className="border-t border-border px-2 py-1">
+          <SyncStatusBar variant="drawer" />
         </div>
       </SheetContent>
     </Sheet>

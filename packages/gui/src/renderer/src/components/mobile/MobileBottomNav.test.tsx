@@ -21,21 +21,16 @@ describe('MobileBottomNav', () => {
   const current = (name: string) =>
     screen.getByRole('button', { name }).getAttribute('aria-current');
 
-  it('marks 编辑 active on the editor root', () => {
-    renderAt('/');
-    expect(current('编辑')).toBe('page');
-  });
-
-  it('keeps 编辑 active on the /note/:id detail route', () => {
-    renderAt('/note/abc');
-    expect(current('编辑')).toBe('page');
+  it('marks the matching page active by pathname', () => {
+    renderAt('/files');
+    expect(current('文件')).toBe('page');
     expect(current('浏览')).toBeNull();
   });
 
-  it('marks the matching page active elsewhere', () => {
+  it('marks 浏览 active on /browser', () => {
     renderAt('/browser');
     expect(current('浏览')).toBe('page');
-    expect(current('编辑')).toBeNull();
+    expect(current('文件')).toBeNull();
   });
 
   it('shows a conflict count badge on 更多 only when there are conflicts', () => {

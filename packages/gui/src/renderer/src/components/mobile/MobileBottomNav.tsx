@@ -2,22 +2,21 @@ import { cn } from '@/lib/utils';
 import { useConflictsStore } from '@/stores/conflicts-store';
 import { MoreHorizontal } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { PRIMARY_NAV, isEditorActive } from './mobile-nav';
+import { PRIMARY_NAV } from './mobile-nav';
 
 /**
- * Bottom tab bar (§3.2). Four primary destinations + a "更多" trigger. Each
- * slot is ≥44px and reports `aria-current`. The 编辑 tab stays active across
- * both `/` and the `/note/:id` detail route; conflicts live in the 更多 sheet
- * and surface a count badge on the trigger. Hidden on the detail route by the
- * shell.
+ * Bottom tab bar (§3.2). Four primary destinations (文件 / 浏览 / 提醒 / 待办) +
+ * a "更多" trigger. Each slot is ≥44px and reports `aria-current`; conflicts
+ * live in the 更多 sheet and surface a count badge on the trigger. The bar is
+ * hidden on the `/note/:id` detail route by the shell, so a plain pathname
+ * match is enough for the active state.
  */
 export function MobileBottomNav({ onOpenMore }: { onOpenMore: () => void }) {
   const location = useLocation();
   const navigate = useNavigate();
   const conflictCount = useConflictsStore((s) => s.count);
 
-  const isActive = (path: string) =>
-    path === '/' ? isEditorActive(location.pathname) : location.pathname === path;
+  const isActive = (path: string) => location.pathname === path;
 
   return (
     <nav
