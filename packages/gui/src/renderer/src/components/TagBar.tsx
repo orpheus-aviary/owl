@@ -3,10 +3,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { DateTimePicker } from '@/components/DateTimePicker';
 import { TagChip } from '@/components/TagChip';
 import { Input } from '@/components/ui/input';
+import { useIsMobile } from '@/hooks/useIsMobile';
+import { useKeyboardInset } from '@/hooks/useKeyboardInset';
 import type { NoteTag, Tag } from '@/lib/api';
 import * as api from '@/lib/api';
 import { formatDateISO } from '@/lib/date-format';
 import { sortTags } from '@/lib/tag-sort';
+import { cn } from '@/lib/utils';
 
 const FREQUENCY_OPTIONS = [
   { type: '/time', label: '/time (过期时间)', needsPicker: true },
@@ -119,11 +122,36 @@ export function TagBar({ tags, onTagsChange }: TagBarProps) {
   const blurTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inputContainerRef = useRef<HTMLDivElement>(null);
 
+  // Step 9 (§4.2): on mobile, ride the soft keyboard — when a field is focused
+  // and the keyboard lifts, `position: fixed; bottom: <inset>` keeps the bar
+  // visible above it. A ResizeObserver-measured in-flow placeholder reserves the
+  // bar's height so the editor content above doesn't collapse/jump. When there's
+  // no keyboard (inset 0, desktop, no visualViewport) it's a normal in-flow bar.
+  const isMobile = useIsMobile();
+  const inset = useKeyboardInset();
+  const floating = isMobile && inset > 0;
+  const barRef = useRef<HTMLDivElement>(null);
+  const [barHeight, setBarHeight] = useState(0);
+
   useEffect(() => {
     return () => {
       if (blurTimerRef.current) clearTimeout(blurTimerRef.current);
     };
   }, []);
+
+  useEffect(() => {
+    if (!floating) {
+      setBarHeight(0);
+      return;
+    }
+    const el = barRef.current;
+    if (!el) return;
+    const measure = () => setBarHeight(el.offsetHeight);
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [floating]);
 
   useEffect(() => {
     const trimmed = input.trim();
@@ -419,87 +447,102 @@ export function TagBar({ tags, onTagsChange }: TagBarProps) {
   const sorted = sortTags(tags);
 
   return (
-    <div className="flex shrink-0 flex-col gap-1.5 border-t px-3 py-2" style={{ minHeight: 40 }}>
-      <div ref={inputContainerRef} className="relative">
-        <Input
-          data-tag-input
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={handleKeyDown}
-          onBlur={handleBlur}
-          onFocus={handleFocus}
-          placeholder="输入标签..."
-          className="h-7 border-none bg-transparent text-xs shadow-none focus-visible:ring-0"
-        />
-
-        <DateTimePicker
-          open={pickerOpen}
-          onOpenChange={setPickerOpen}
-          anchorRef={inputContainerRef}
-          initialDate={pickerInitialDate}
-          initialTime={pickerInitialTime}
-          onConfirm={handlePickerConfirm}
-        />
-
-        {suggestions.length > 0 && (
-          <div className="absolute bottom-full left-0 z-50 mb-1 max-h-48 w-56 overflow-y-auto rounded-md border bg-popover p-1 shadow-md">
-            {suggestions.map((tag, i) => (
-              <button
-                key={tag.id}
-                type="button"
-                className={`flex w-full cursor-pointer items-center rounded-sm px-2 py-1.5 text-xs ${
-                  i === selectedIndex && hasNavigated
-                    ? 'bg-accent text-accent-foreground'
-                    : 'hover:bg-accent/50'
-                }`}
-                onMouseDown={(e) => {
-                  e.preventDefault();
-                  handleSuggestionClick(tag);
-                }}
-              >
-                #{tag.tagValue}
-              </button>
-            ))}
-          </div>
+    <>
+      {/* In-flow placeholder: lifting the bar to `fixed` would otherwise let the
+          keyboard cover the editor's last lines / collapse the column. */}
+      {floating && <div aria-hidden style={{ height: barHeight }} />}
+      <div
+        ref={barRef}
+        className={cn(
+          'flex shrink-0 flex-col gap-1.5 border-t px-3 py-2',
+          // `fixed` needs a transform-free ancestor chain (the mobile editor
+          // shell is plain flex, so it is). bg-background keeps it opaque over
+          // the content it now overlaps.
+          floating && 'fixed inset-x-0 z-40 bg-background',
         )}
+        style={floating ? { minHeight: 40, bottom: inset } : { minHeight: 40 }}
+      >
+        <div ref={inputContainerRef} className="relative">
+          <Input
+            data-tag-input
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={handleKeyDown}
+            onBlur={handleBlur}
+            onFocus={handleFocus}
+            placeholder="输入标签..."
+            className="h-7 border-none bg-transparent text-xs shadow-none focus-visible:ring-0"
+          />
 
-        {showFrequency && (
-          <div className="absolute bottom-full left-0 z-50 mb-1 w-56 rounded-md border bg-popover p-1 shadow-md">
-            {filteredFrequency.map((opt, i) => (
-              <button
-                key={opt.type}
-                type="button"
-                className={`flex w-full cursor-pointer items-center rounded-sm px-2 py-1.5 text-xs ${
-                  i === selectedIndex ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/50'
-                }`}
-                onMouseDown={(e) => {
-                  e.preventDefault();
-                  handleFrequencyClick(opt);
-                }}
-              >
-                {opt.label}
-              </button>
+          <DateTimePicker
+            open={pickerOpen}
+            onOpenChange={setPickerOpen}
+            anchorRef={inputContainerRef}
+            initialDate={pickerInitialDate}
+            initialTime={pickerInitialTime}
+            onConfirm={handlePickerConfirm}
+          />
+
+          {suggestions.length > 0 && (
+            <div className="absolute bottom-full left-0 z-50 mb-1 max-h-48 w-56 overflow-y-auto rounded-md border bg-popover p-1 shadow-md">
+              {suggestions.map((tag, i) => (
+                <button
+                  key={tag.id}
+                  type="button"
+                  className={`flex w-full cursor-pointer items-center rounded-sm px-2 py-1.5 text-xs ${
+                    i === selectedIndex && hasNavigated
+                      ? 'bg-accent text-accent-foreground'
+                      : 'hover:bg-accent/50'
+                  }`}
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    handleSuggestionClick(tag);
+                  }}
+                >
+                  #{tag.tagValue}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {showFrequency && (
+            <div className="absolute bottom-full left-0 z-50 mb-1 w-56 rounded-md border bg-popover p-1 shadow-md">
+              {filteredFrequency.map((opt, i) => (
+                <button
+                  key={opt.type}
+                  type="button"
+                  className={`flex w-full cursor-pointer items-center rounded-sm px-2 py-1.5 text-xs ${
+                    i === selectedIndex ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/50'
+                  }`}
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    handleFrequencyClick(opt);
+                  }}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {sorted.length > 0 && (
+          <div className="flex flex-wrap items-center gap-1.5">
+            {sorted.map((tag) => (
+              <TagChip
+                key={tag.id}
+                tag={tag}
+                onDelete={() => removeTag(tag.id)}
+                onClick={
+                  tag.tagType === '/time' || tag.tagType === '/alarm'
+                    ? () => openPickerForEdit(tag)
+                    : undefined
+                }
+              />
             ))}
           </div>
         )}
       </div>
-
-      {sorted.length > 0 && (
-        <div className="flex flex-wrap items-center gap-1.5">
-          {sorted.map((tag) => (
-            <TagChip
-              key={tag.id}
-              tag={tag}
-              onDelete={() => removeTag(tag.id)}
-              onClick={
-                tag.tagType === '/time' || tag.tagType === '/alarm'
-                  ? () => openPickerForEdit(tag)
-                  : undefined
-              }
-            />
-          ))}
-        </div>
-      )}
-    </div>
+    </>
   );
 }

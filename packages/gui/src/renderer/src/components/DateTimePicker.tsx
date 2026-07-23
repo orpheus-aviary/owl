@@ -88,8 +88,17 @@ function DateTimePicker({
   };
   if (anchor) {
     const rect = anchor.getBoundingClientRect();
-    style.left = rect.left;
-    style.bottom = window.innerHeight - rect.top + 4;
+    // ⚠️ REAL-DEVICE (Step 9): when the soft keyboard offsets the visual viewport
+    // the anchor (floating TagBar) is itself `fixed`; `getBoundingClientRect` is
+    // visual-viewport-relative while this `fixed` panel lays out against the
+    // layout viewport, so add the offset back to keep the calendar in view. The
+    // rig can't raise a keyboard (offsets are 0 → identical to before), so final
+    // tuning is real-device feedback.
+    const vv = window.visualViewport;
+    const offsetLeft = vv?.offsetLeft ?? 0;
+    const offsetTop = vv?.offsetTop ?? 0;
+    style.left = rect.left + offsetLeft;
+    style.bottom = window.innerHeight - (rect.top + offsetTop) + 4;
   }
 
   return (
