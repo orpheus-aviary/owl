@@ -46,7 +46,12 @@ function nextConversationId(
   return filtered[nextIdx]?.id;
 }
 
-export function ChatSidebar() {
+/**
+ * @param onAfterSelect Fired after selecting or creating a conversation. The
+ *   mobile shell passes a sheet-close so tapping a row dismisses the overlay and
+ *   reveals the chat; desktop leaves it undefined (the sidebar is always shown).
+ */
+export function ChatSidebar({ onAfterSelect }: { onAfterSelect?: () => void } = {}) {
   const conversations = useAiStore((s) => s.conversations);
   const activeConversationId = useAiStore((s) => s.activeConversationId);
   const streamingByConversation = useAiStore((s) => s.streamingByConversation);
@@ -66,7 +71,16 @@ export function ChatSidebar() {
 
   const handleNew = useCallback(() => {
     newConversation();
-  }, [newConversation]);
+    onAfterSelect?.();
+  }, [newConversation, onAfterSelect]);
+
+  const handleSelect = useCallback(
+    (id: string) => {
+      setActiveConversation(id);
+      onAfterSelect?.();
+    },
+    [setActiveConversation, onAfterSelect],
+  );
 
   const handleConfirmDelete = useCallback(async () => {
     if (!pendingDelete) return;
@@ -140,7 +154,7 @@ export function ChatSidebar() {
                   meta={c}
                   isActive={c.id === activeConversationId}
                   isStreaming={streamingByConversation[c.id]?.isStreaming ?? false}
-                  onSelect={() => setActiveConversation(c.id)}
+                  onSelect={() => handleSelect(c.id)}
                   onRequestDelete={() => setPendingDelete(c)}
                 />
               ))
