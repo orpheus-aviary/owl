@@ -37,6 +37,7 @@ import {
   FileText,
   Folder,
   FolderPlus,
+  GripVertical,
   Inbox,
   MoreHorizontal,
   Pin,
@@ -53,9 +54,10 @@ type EditingState =
 /**
  * `sidebar` = the desktop 64px-anchored panel (select-then-double-click to
  * open, whole-row drag). `page` = the mobile 「文件」full-page tree (single-tap
- * to open, taller touch rows, drag suppressed for now — a dedicated handle
- * lands in the touch-polish step). `drawer` = the legacy folder drawer (same
- * touch behavior as `page` plus a close-on-open callback); kept for now.
+ * to open, taller touch rows, whole-row drag suppressed in favour of a dedicated
+ * grip handle so drag-to-reorganize coexists with the long-press menu).
+ * `drawer` = the legacy folder drawer (same touch behavior as `page` plus a
+ * close-on-open callback); kept for now.
  * `page` and `drawer` share all touch behavior (`isTouch = variant !== sidebar`).
  */
 type FolderPanelVariant = 'sidebar' | 'drawer' | 'page';
@@ -466,6 +468,45 @@ function RowToggleIcon({ hasChildren, isOpen }: { hasChildren: boolean; isOpen: 
   return isOpen ? <ChevronDown className="size-3" /> : <ChevronRight className="size-3" />;
 }
 
+/**
+ * Touch (page/drawer) drag handle. On the files page the row itself no longer
+ * drags (its press is claimed by tap-to-open + the radix long-press context
+ * menu) — dnd-kit's 200ms TouchSensor would eat that long-press. A dedicated
+ * grip carries the drag activator instead, so 按住拖动整理 coexists with 长按菜单.
+ *
+ * `touch-none` stops the browser scrolling while dragging from the grip.
+ * `stopPropagation` keeps a press on the grip from reaching the row's
+ * tap-open / long-press menu — dnd-kit's sensors listen on mouse/touch events,
+ * so stopping the (separate) pointer/click events doesn't disarm the drag.
+ */
+function DragHandle({
+  enabled,
+  listeners,
+  attributes,
+  label,
+}: {
+  /** Only the touch (page/drawer) variants get a grip; desktop drags the row. */
+  enabled: boolean;
+  listeners: ReturnType<typeof useDraggable>['listeners'];
+  attributes: ReturnType<typeof useDraggable>['attributes'];
+  label: string;
+}) {
+  if (!enabled) return null;
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      {...attributes}
+      {...listeners}
+      onPointerDown={(e) => e.stopPropagation()}
+      onClick={(e) => e.stopPropagation()}
+      className="flex w-9 shrink-0 items-center justify-center self-stretch touch-none cursor-grab text-muted-foreground/60 active:cursor-grabbing"
+    >
+      <GripVertical className="size-4" />
+    </button>
+  );
+}
+
 function FolderRow({ node, depth, ...h }: { node: FolderNode; depth: number } & RowHandlers) {
   const isRenaming = h.editing.kind === 'rename' && h.editing.folderId === node.id;
   const isOpen = h.expanded.has(node.id);
@@ -502,8 +543,9 @@ function FolderRow({ node, depth, ...h }: { node: FolderNode; depth: number } & 
   };
 
   const isTouch = h.variant !== 'sidebar';
-  // Drawer: suppress whole-row drag (tap = toggle/open, not drag) and grow the
-  // row to a touch target. Sidebar keeps the desktop drag-anywhere behavior.
+  // Touch: the whole-row drag moves to the grip handle (rendered below) so a tap
+  // toggles and a long-press opens the menu; the row keeps a touch-target height.
+  // Sidebar keeps the desktop drag-anywhere behavior.
   const rowDragProps = isTouch ? {} : { ...listeners, ...attributes };
 
   // Rename takes over the row so the input stretches across the full width.
@@ -581,6 +623,15 @@ function FolderRow({ node, depth, ...h }: { node: FolderNode; depth: number } & 
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
+
+            {/* Touch: a dedicated grip so 按住拖动整理 coexists with tap-to-toggle
+                and the long-press context menu. Desktop drags the whole row. */}
+            <DragHandle
+              enabled={isTouch}
+              listeners={listeners}
+              attributes={attributes}
+              label="拖动排序"
+            />
           </div>
         </ContextMenuTrigger>
         {/* Right-click menu — radix ContextMenu anchors to the cursor position,
@@ -686,9 +737,9 @@ function FolderNoteRow({
     id: `panel-note:${note.id}`,
     data: dragData,
   });
-  // Drawer: single tap opens (no select→double-tap), and we DON'T spread drag
-  // listeners so a tap isn't captured as a long-press drag (§5; a dedicated
-  // handle comes with the touch-polish step). Sidebar keeps the desktop feel.
+  // Touch: single tap opens (no select→double-tap); the drag moves to the grip
+  // handle (rendered below) so a tap isn't captured as a long-press drag.
+  // Sidebar keeps the desktop feel.
   const dragProps = isTouch ? {} : { ...listeners, ...attributes };
 
   const handleTogglePin = async () => {
@@ -724,6 +775,14 @@ function FolderNoteRow({
           <span className={cn('flex-1 truncate', isTouch ? 'text-sm' : 'text-xs')}>{title}</span>
           {/* Pin indicator — property only, does NOT affect sort or bg in the panel (P3.4-a §1.1). */}
           {pinned && <Pin className="size-3 shrink-0 text-primary rotate-45" aria-label="已置顶" />}
+          {/* Touch: grip carries the drag so tap-to-open + long-press menu stay
+              on the row itself. Desktop drags the whole row. */}
+          <DragHandle
+            enabled={isTouch}
+            listeners={listeners}
+            attributes={attributes}
+            label="拖动排序"
+          />
         </div>
       </ContextMenuTrigger>
       <ContextMenuContent>
