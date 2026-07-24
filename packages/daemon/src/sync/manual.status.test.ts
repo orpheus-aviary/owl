@@ -4,6 +4,12 @@
  * A cloud daemon keeps credentials in RAM (never toml), so status must read the
  * binding from the CredentialStore / installed session rather than reporting
  * `configured:false` off an absent toml.
+ *
+ * Local source (regression) — an installed `ctx.skybridgeSession` is the
+ * authoritative binding even in local mode: GUI main writes the toml profile
+ * section AFTER `/sync/session` installs the session, so a toml read at install
+ * time reports null device/workspace. Reading the session keeps the status
+ * broadcaster from flashing「已同步」→「本地」and manual sync from reverting.
  */
 
 import assert from 'node:assert/strict';
@@ -13,6 +19,7 @@ import type Database from 'better-sqlite3';
 import type { AppContext } from '../context.js';
 import { CredentialStore } from '../credential-store.js';
 import { readSyncStatus } from './manual.js';
+import type { SkybridgeSession } from './session.js';
 
 const SERVER = 'http://127.0.0.1:18443';
 
@@ -69,6 +76,65 @@ describe('readSyncStatus — cloud mode', () => {
     assert.equal(status.server_url, SERVER);
     assert.equal(status.device_id, 'dev-9');
     assert.equal(status.workspace_id, 'ws-9');
+    sqlite.close();
+  });
+});
+
+function localCtx(): { ctx: AppContext; sqlite: Database.Database } {
+  const { sqlite } = createDatabase({ dbPath: ':memory:' });
+  const config: OwlConfig = {
+    ...structuredClone(DEFAULT_CONFIG),
+    daemon: { ...DEFAULT_CONFIG.daemon, mode: 'local' },
+  };
+  const ctx = {
+    config,
+    sqlite,
+    credentialStore: null,
+    skybridgeSession: null,
+  } as unknown as AppContext;
+  return { ctx, sqlite };
+}
+
+function installFakeSession(ctx: AppContext): void {
+  ctx.skybridgeSession = {
+    realClient: {} as SkybridgeSession['realClient'],
+    module: {} as SkybridgeSession['module'],
+    config: { server: { url: SERVER } } as SkybridgeSession['config'],
+    workspaceId: 'ws-live',
+    deviceId: 'dev-live',
+    serverUrl: SERVER,
+  };
+}
+
+describe('readSyncStatus — local mode', () => {
+  it('reads server_url / device / workspace from the installed session', () => {
+    // Regression: the toml profile section is written only AFTER /sync/session
+    // installs the session, so status must not depend on it. No toml is written
+    // here, yet an installed session must still report the account binding —
+    // this is what stops the bar from reverting to「本地」post-install.
+    const { ctx, sqlite } = localCtx();
+    installFakeSession(ctx);
+    const status = readSyncStatus(ctx);
+    assert.equal(status.configured, true);
+    assert.equal(status.authenticated, true);
+    assert.equal(status.server_url, SERVER);
+    assert.equal(status.device_id, 'dev-live');
+    assert.equal(status.workspace_id, 'ws-live');
+    sqlite.close();
+  });
+
+  it('reads cursor pulled_seq / pushed_seq keyed by the session server_url', () => {
+    const { ctx, sqlite } = localCtx();
+    installFakeSession(ctx);
+    sqlite
+      .prepare(
+        'INSERT INTO sync_cursor (endpoint, pulled_seq, pushed_seq, updated_at) VALUES (?, ?, ?, ?)',
+      )
+      .run(SERVER, 21, 7, 98765);
+    const status = readSyncStatus(ctx);
+    assert.equal(status.pulled_seq, 21);
+    assert.equal(status.pushed_seq, 7);
+    assert.equal(status.last_sync_at, 98765);
     sqlite.close();
   });
 });

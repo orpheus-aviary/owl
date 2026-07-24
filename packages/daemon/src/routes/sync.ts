@@ -48,6 +48,7 @@ import {
   installSkybridgeSession,
   invalidateSkybridgeSession,
 } from '../sync/session.js';
+import { evictSyncStatusBroadcaster } from '../sync/status-broadcaster.js';
 
 export function registerSyncRoutes(app: FastifyInstance, ctx: AppContext): void {
   app.post('/sync/run', async (_req, reply) => {
@@ -200,6 +201,10 @@ export function registerSyncRoutes(app: FastifyInstance, ctx: AppContext): void 
       stopBackgroundHandles(ctx);
       ctx.skybridgeSession = null;
       const session = await installSkybridgeSession(ctx, input);
+      // Drop the cached broadcaster so the snapshot `createSseBridge` seeds
+      // below reflects the just-installed binding, not a stale one from a
+      // prior session (mirrors the profile-switch eviction).
+      evictSyncStatusBroadcaster(ctx);
       await ensureBackgroundHandles(ctx, ctx.logger);
       ctx.logger.info(
         {

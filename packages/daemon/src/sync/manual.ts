@@ -309,6 +309,33 @@ export function readSyncStatus(ctx: AppContext): SyncStatusResult {
   // installed session instead; cursor + pending still come from sqlite.
   if (ctx.config.daemon.mode === 'cloud') return readCloudSyncStatus(ctx);
 
+  // Local mode: prefer the live installed session (POST /sync/session) over
+  // toml for the binding identity. GUI main writes the `[profiles.<id>]`
+  // section + `active_profile` in login Step 7 — AFTER it installs the session
+  // in Step 6 — so at install time (and for the status broadcaster's snapshot,
+  // which `createSseBridge` seeds synchronously during that install) the toml
+  // still resolves to the prior/legacy view and reports null device/workspace.
+  // The in-RAM session is the authoritative "bound right now" signal; reading
+  // it here keeps `GET /sync/status` and the broadcaster consistent with the
+  // account the daemon is actually syncing, instead of flashing「已同步」then
+  // reverting to「本地」. Falls back to toml when no session is installed
+  // (logged out, or boot before restoreSessionOnStartup).
+  const session = ctx.skybridgeSession;
+  if (session) {
+    const cursor = readCursor(ctx, session.serverUrl);
+    return {
+      configured: true,
+      authenticated: true,
+      server_url: session.serverUrl,
+      device_id: session.deviceId,
+      workspace_id: session.workspaceId,
+      pending_count: readPendingCount(ctx),
+      pulled_seq: cursor?.pulled_seq ?? 0,
+      pushed_seq: cursor?.pushed_seq ?? 0,
+      last_sync_at: cursor?.updated_at ?? null,
+    };
+  }
+
   const cfgPath = skybridgeConfigPath();
   let config: SkybridgeConfig | null = null;
   try {
