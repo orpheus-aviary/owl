@@ -203,21 +203,29 @@ function maybeRecordNoteConflict(
   if (body.content === undefined) return;
   const localSnap = readLocalNoteSnapshot(sqlite, c.entityId);
   if (!localSnap || localSnap.content === body.content) return;
-  // P5-c follow-up #2: only "B actually edited X locally" counts as a
-  // real conflict; a fresh bootstrap that replays remote history hits
-  // this code path on every legacy update op (note already has
-  // newer-arrival content from the create row) and shouldn't drown the
-  // sidebar in 红点 noise. sync_changes only ever receives rows from
-  // local mutations (engine apply does NOT touch the table), so its
-  // presence is exactly the "did B touch X" signal we want.
-  const hasLocalEdit = sqlite
+  // Only a *pending* (unsynced) local edit is a real conflict: it means B
+  // changed X since its last successful sync and A's incoming edit is about to
+  // clobber that unpushed change. `synced_at IS NULL` is the signal.
+  //
+  // The old gate matched ANY sync_changes row for the note. But synced rows are
+  // never pruned (engine.ts marks synced_at, never DELETEs), so once B had ever
+  // created or edited X, EVERY later fast-forward edit from A registered a
+  // conflict — a false positive on normal one-sided sync (the reported "手动同步
+  // 后另一边一定冲突"). It still suppresses fresh-nest bootstrap replay (no local
+  // edits → no pending rows), which was the original reason the gate existed.
+  //
+  // Known limitation: if both sides pushed before either pulled, B's edit is
+  // already synced when A's arrives, so this misses that conflict. LWW still
+  // resolves the data deterministically; proper detection needs per-entity base
+  // versions (skybridge design work), not the outbox-presence heuristic.
+  const hasPendingLocalEdit = sqlite
     .prepare(
       `SELECT 1 FROM sync_changes
-        WHERE entity_type = 'note' AND entity_id = ?
+        WHERE entity_type = 'note' AND entity_id = ? AND synced_at IS NULL
         LIMIT 1`,
     )
     .get(c.entityId) as { 1: number } | undefined;
-  if (!hasLocalEdit) return;
+  if (!hasPendingLocalEdit) return;
   const now = conflictSink.nowMs ?? Date.now;
   recordConflict(sqlite, {
     entityType: 'note',

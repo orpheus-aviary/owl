@@ -113,14 +113,30 @@ function seedNote(
 }
 
 /**
- * P5-c follow-up #2: conflict detection gates on `sync_changes` row
- * presence — "B has touched this entity locally". Tests that want to
- * exercise the conflict-record path must seed at least one
- * synthetic outbox row so the gate opens. Synced-at can be either
- * NULL (still pending) or a timestamp (already pushed); either way
- * counts as "B edited X" history.
+ * Conflict detection gates on a *pending* (unsynced) `sync_changes` row —
+ * "B changed this entity since its last sync and A's edit is about to clobber
+ * that unpushed change". Tests that want to exercise the conflict-record path
+ * seed a pending outbox row (`synced_at IS NULL`). An already-synced row does
+ * NOT count (that's a fast-forward, not a conflict) — see
+ * `markSyncedLocalEdit` + the false-positive regression test.
  */
 function markLocalEdit(sqlite: Database.Database, id: string, cid: string): void {
+  sqlite
+    .prepare(
+      `INSERT INTO sync_changes
+         (device_id, entity_type, entity_id, op, payload, created_at,
+          client_change_id, server_seq, synced_at)
+       VALUES ('dev-local', 'note', ?, 'update', '{}', 500, ?, NULL, NULL)`,
+    )
+    .run(id, cid);
+}
+
+/**
+ * A local edit that was ALREADY pushed (synced). Represents "B created/edited X
+ * in the past, all synced" — the common steady-state. An incoming remote edit
+ * to such a note is a normal fast-forward and must NOT record a conflict.
+ */
+function markSyncedLocalEdit(sqlite: Database.Database, id: string, cid: string): void {
   sqlite
     .prepare(
       `INSERT INTO sync_changes
@@ -1865,6 +1881,41 @@ describe('runSync — conflict detection (P5-c §6.16)', () => {
     assert.equal(result.conflictsRecorded, 0, 'no conflict row — pure replay');
     assert.equal(readConflicts().length, 0);
     assert.equal(readNote(sqlite, 'n-bootstrap')?.content, 'later-history');
+  });
+
+  it('fast-forward: already-synced local edit does NOT record a conflict', async () => {
+    // Regression for the "手动同步后另一边一定冲突" false positive. B created /
+    // edited X and pushed it (synced row, no pending edit). A then edits X and
+    // pushes; B pulls A's newer edit. This is a clean fast-forward — B has no
+    // unpushed change to lose — so NO conflict must be recorded even though B
+    // has a (synced) sync_changes row for X and the content differs.
+    seedNote(sqlite, 'n-ff', { content: 'B-old-synced', updatedAt: 1_000 });
+    markSyncedLocalEdit(sqlite, 'n-ff', 'cid-synced');
+    const client = new FakeSkybridgeClient();
+    client.enqueuePull({
+      changes: [
+        makeNoteChange({
+          serverSeq: 9,
+          entityId: 'n-ff',
+          op: 'update',
+          payload: { updated_at_ms: 2_000, content: 'A-newer' },
+        }),
+      ],
+      hasMore: false,
+    });
+    const result = await runSync({
+      db,
+      sqlite,
+      client,
+      workspaceId: WORKSPACE_ID,
+      serverUrl: SERVER_URL,
+      nowMs: fakeNow,
+    });
+
+    assert.equal(result.appliedTotal, 1, 'LWW apply still happens');
+    assert.equal(result.conflictsRecorded, 0, 'fast-forward must not conflict');
+    assert.equal(readConflicts().length, 0);
+    assert.equal(readNote(sqlite, 'n-ff')?.content, 'A-newer');
   });
 
   it('self-replay does not trigger conflict detection (cid matches synced outbox)', async () => {
