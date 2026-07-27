@@ -22,6 +22,18 @@
  * when `runSync` returns `conflictsRecorded > 0`, and by `/conflicts/:id/ignore`
  * after the soft-delete UPDATE so other windows see the count drop.
  *
+ * `notes:changed` (Problem A / Phase 1b) is the same shape of poke for note +
+ * folder data a sync round applied from the remote. Without it the renderer's
+ * data-bus is only ever bumped by LOCAL mutations, so a pulled change landed in
+ * sqlite while every list and open editor kept showing the pre-sync state until
+ * the user navigated or restarted. Emitted by `manual.ts` when `runSync`
+ * returns `appliedTotal > 0`.
+ *
+ * Deliberately payload-free even though the engine knows which rows it touched:
+ * the receiver's cost is bounded by how many tabs are OPEN (it re-reads those),
+ * not by how many changes arrived, so a first-sync bootstrap applying thousands
+ * of rows still costs one refetch per open tab.
+ *
  * New event types should be added here and mirrored in the renderer
  * dispatcher (see `packages/gui/src/renderer/src/components/
  * events-subscriber-core.ts`). The wire contract is simply
@@ -31,7 +43,8 @@ export type OwlEvent =
   | { type: 'hello'; server_time: number }
   | { type: 'open_note'; note_id: string }
   | { type: 'sync:status_changed'; status: SyncStatusSnapshot }
-  | { type: 'conflicts:changed' };
+  | { type: 'conflicts:changed' }
+  | { type: 'notes:changed' };
 
 export type SyncState = 'idle' | 'syncing' | 'error' | 'offline';
 

@@ -34,6 +34,7 @@ import {
   runSync,
   skybridgeConfigPath,
 } from '@owl/core';
+import { refreshCloudSession } from '../cloud-login.js';
 import type { AppContext } from '../context.js';
 import { ensureBackgroundHandles } from './bridge-lifecycle.js';
 import { createCoalescer } from './coalesce.js';
@@ -44,6 +45,7 @@ import {
   ensureSkybridgeSession,
   invalidateSkybridgeSession,
 } from './session.js';
+import { isApiError, isNetworkError } from './skybridge-errors.js';
 import { getSyncStatusBroadcaster } from './status-broadcaster.js';
 
 export { SkybridgeNotInstalledError };
@@ -124,23 +126,10 @@ export class SkybridgeSyncFailedError extends Error {
 
 // ─── Error translation from skybridge client / fetch failures ─────────
 //
-// `@orpheus-aviary/skybridge-client` raises `NetworkError` / `ApiError`-tagged errors;
-// since we never `import`-type that module we duck-type on `.name` and
-// `.status`. 401 specifically nukes the on-disk [auth] block so the next
-// sync surfaces `SKYBRIDGE_AUTH_REQUIRED` instead of replaying a dead
-// token.
-
-function isNetworkError(err: unknown): boolean {
-  if (typeof err !== 'object' || err === null) return false;
-  const name = (err as { name?: unknown }).name;
-  return name === 'NetworkError' || name === 'FetchError';
-}
-
-function isApiError(err: unknown): err is { status: number; message: string } {
-  if (typeof err !== 'object' || err === null) return false;
-  const name = (err as { name?: unknown }).name;
-  return name === 'ApiError' && typeof (err as { status?: unknown }).status === 'number';
-}
+// The duck-typed predicates live in `./skybridge-errors.js` (Problem A /
+// Phase 2B) so `cloud-login.ts` can share them without an import cycle.
+// 401 drops the cached session so the next sync surfaces
+// `SKYBRIDGE_AUTH_REQUIRED` instead of replaying a dead token.
 
 /**
  * Translate raw SDK / fetch errors into daemon's own error class
@@ -226,34 +215,49 @@ export function drainManualSync(): Promise<void> {
   return syncCoalescer.whenIdle();
 }
 
+/** One sync round against the currently-installed session. */
+async function attemptSyncRound(ctx: AppContext): Promise<RunSyncResult> {
+  const session = await ensureSkybridgeSession(ctx);
+  // P5-c §2.2-bis: if daemon booted with an incomplete toml,
+  // bridge-lifecycle skipped the SSE bridge on boot. Now that a
+  // session has come up cleanly, kick off background handles in
+  // the background — idempotent when already started, never throws.
+  // Fire-and-log so a slow ensureSession path inside doesn't push
+  // sync round latency up.
+  void ensureBackgroundHandles(ctx, ctx.logger).catch((err: unknown) => {
+    ctx.logger.warn(
+      { kind: 'mid-session-bootstrap', err: errorMessageForLog(err) },
+      'ensureBackgroundHandles failed mid-session',
+    );
+  });
+  return runSync({
+    db: ctx.db,
+    sqlite: ctx.sqlite,
+    client: adaptClient(session.realClient),
+    workspaceId: session.workspaceId,
+    serverUrl: session.serverUrl,
+    logger: {
+      info: (...a) => emitSyncLog(ctx.logger.info.bind(ctx.logger), a),
+      warn: (...a) => emitSyncLog(ctx.logger.warn.bind(ctx.logger), a),
+    },
+  });
+}
+
 async function doRunManualSync(ctx: AppContext): Promise<RunSyncResult> {
   const broadcaster = getSyncStatusBroadcaster(ctx);
   broadcaster.markSyncing();
   try {
-    const session = await ensureSkybridgeSession(ctx);
-    // P5-c §2.2-bis: if daemon booted with an incomplete toml,
-    // bridge-lifecycle skipped the SSE bridge on boot. Now that a
-    // session has come up cleanly, kick off background handles in
-    // the background — idempotent when already started, never throws.
-    // Fire-and-log so a slow ensureSession path inside doesn't push
-    // sync round latency up.
-    void ensureBackgroundHandles(ctx, ctx.logger).catch((err: unknown) => {
-      ctx.logger.warn(
-        { kind: 'mid-session-bootstrap', err: errorMessageForLog(err) },
-        'ensureBackgroundHandles failed mid-session',
-      );
-    });
-    const result = await runSync({
-      db: ctx.db,
-      sqlite: ctx.sqlite,
-      client: adaptClient(session.realClient),
-      workspaceId: session.workspaceId,
-      serverUrl: session.serverUrl,
-      logger: {
-        info: (...a) => emitSyncLog(ctx.logger.info.bind(ctx.logger), a),
-        warn: (...a) => emitSyncLog(ctx.logger.warn.bind(ctx.logger), a),
-      },
-    });
+    let result: RunSyncResult;
+    try {
+      result = await attemptSyncRound(ctx);
+    } catch (err) {
+      // Problem A / Phase 2B — a cloud daemon owns its refresh token, so a
+      // rejected access token is recoverable in-process. At most one refresh +
+      // one retry per round; `attemptSyncRound` is called directly rather than
+      // through `runManualSync`, which would re-enter the coalescer.
+      if (!(await maybeRecoverCloudSession(ctx, err))) throw err;
+      result = await attemptSyncRound(ctx);
+    }
     // P5-b §6.3: success path emits status + reloads the in-memory
     // reminder scheduler from the post-apply reminder_status truth.
     broadcaster.markSuccess({
@@ -261,7 +265,13 @@ async function doRunManualSync(ctx: AppContext): Promise<RunSyncResult> {
       pushed_seq: result.serverSeqHigh || undefined,
       last_sync_at: Date.now(),
     });
-    if (result.appliedTotal > 0) ctx.scheduler.reload();
+    if (result.appliedTotal > 0) {
+      ctx.scheduler.reload();
+      // Problem A / Phase 1b — tell the GUI its note/folder data is stale.
+      // The renderer's data-bus is otherwise only bumped by local mutations,
+      // so a pulled edit sat invisible in sqlite until the user navigated.
+      ctx.eventsBus.emit({ type: 'notes:changed' });
+    }
     // P5-c §6.19: detection-time poke for the GUI sidebar 红点. Payload-free —
     // subscribers refetch `/conflicts/count` to learn the new value.
     if (result.conflictsRecorded > 0) {
@@ -280,6 +290,60 @@ async function doRunManualSync(ctx: AppContext): Promise<RunSyncResult> {
     broadcaster.markError(translated);
     throw translated;
   }
+}
+
+// ─── Cloud 401 recovery (Problem A / Phase 2B) ────────────────────────
+
+/** Minimum gap between two refresh-on-401 attempts, per daemon process. */
+const REFRESH_ON_401_COOLDOWN_MS = 30_000;
+const lastRefreshOnUnauthorized = new WeakMap<AppContext, number>();
+
+/** Injectable for tests; production uses `refreshCloudSession`. */
+export type CloudRefresher = (ctx: AppContext) => Promise<{ outcome: string }>;
+
+/**
+ * Should this failure be retried after refreshing the cloud session?
+ *
+ * Only a cloud daemon can answer yes: it holds the refresh token in RAM, so a
+ * rejected access token is fixable without a human. A desktop daemon never has
+ * one — GUI main owns it — so it returns false and the 401 surfaces as
+ * `AUTH_REQUIRED` for the Phase 2A recovery path to handle.
+ *
+ * `refreshCloudSession` is imported statically even though it closes the loop
+ * manual → cloud-login → bridge-lifecycle → scheduler → manual. That cycle
+ * already existed (manual → bridge-lifecycle → …) and is harmless: every edge
+ * is a function called at runtime, never a binding read during module init.
+ * A dynamic `import()` here would be tidier on paper but splits the @owl/server
+ * tsup bundle into hashed chunks, and that package publishes a single
+ * `index.js` — the extra chunks are not in its `files` list, so the published
+ * server would crash on first use.
+ */
+export async function maybeRecoverCloudSession(
+  ctx: AppContext,
+  err: unknown,
+  refresh?: CloudRefresher,
+): Promise<boolean> {
+  if (ctx.config.daemon.mode !== 'cloud') return false;
+  const unauthorized =
+    (isApiError(err) && err.status === 401) || err instanceof SkybridgeAuthRequiredError;
+  if (!unauthorized) return false;
+
+  const now = Date.now();
+  const last = lastRefreshOnUnauthorized.get(ctx) ?? 0;
+  if (now - last < REFRESH_ON_401_COOLDOWN_MS) {
+    // A dead token would otherwise make every trigger burn a refresh round-trip.
+    ctx.logger.info(
+      { kind: 'cloud-refresh', since_last_ms: now - last },
+      'skipping refresh-on-401 (cooldown)',
+    );
+    return false;
+  }
+  lastRefreshOnUnauthorized.set(ctx, now);
+
+  const doRefresh = refresh ?? refreshCloudSession;
+  const { outcome } = await doRefresh(ctx);
+  ctx.logger.info({ kind: 'cloud-refresh', outcome }, 'refresh-on-401 attempted');
+  return outcome === 'refreshed';
 }
 
 // ─── Status ───────────────────────────────────────────────────────────
