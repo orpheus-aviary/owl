@@ -4,12 +4,13 @@
  *
  * Previously duplicated in `packages/daemon/src/sync/session.ts` and
  * `packages/gui/src/main/sync-auth.ts`. Both call sites format the value
- * as `owl ${OWL_APP_VERSION}` for the skybridge device record. The Phase 22
- * release bump set this to `0.5.0`; future bumps change THIS file and
- * everything downstream picks up the new tag automatically.
+ * as `owl ${OWL_APP_VERSION}` for the skybridge device record. Bump it with
+ * each release and everything downstream picks up the new tag automatically —
+ * 0.6.0 shipped without doing so, which left every device registered since
+ * then labelled `owl 0.5.0` in 设备管理.
  *
  * Not the same thing as the gui `package.json` "version", which drives
  * the dmg / electron-builder release. That bumps separately per the
  * release process (see PROCESS.md).
  */
-export const OWL_APP_VERSION = '0.5.0';
+export const OWL_APP_VERSION = '0.6.1';

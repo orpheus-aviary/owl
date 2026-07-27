@@ -45,6 +45,7 @@ import {
   DEFAULT_CONFIG,
   LOCAL_PROFILE,
   type Logger,
+  OWL_APP_VERSION,
   computeProfileId,
   createDatabase,
   createNote,
@@ -75,7 +76,7 @@ import type { RealSkybridgeClient } from './session.js';
 import { createSwitchGate } from './switch-gate.js';
 
 const gate = process.env.SKYBRIDGE_E2E === '1';
-const APP_VERSION = 'owl 0.5.0';
+const APP_VERSION = `owl ${OWL_APP_VERSION}`;
 
 // ─── Structural skybridge surfaces (never named in `import`) ─────────
 

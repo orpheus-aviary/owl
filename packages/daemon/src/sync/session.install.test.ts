@@ -15,6 +15,7 @@
 import assert from 'node:assert/strict';
 import { after, before, beforeEach, describe, it } from 'node:test';
 import {
+  OWL_APP_VERSION,
   type OwlDatabase,
   createConsoleLogger,
   createDatabase,
@@ -127,9 +128,9 @@ describe('installSkybridgeSession (P5-d Phase 6)', () => {
       device: { id: 'dev-A', name: 'mac-a' }, // no app_version / client_version
       workspace: { id: 'ws-A' }, // no slug
     });
-    assert.match(
-      session.config.device?.app_version ?? '',
-      /owl 0\.5\.0/,
+    assert.equal(
+      session.config.device?.app_version,
+      `owl ${OWL_APP_VERSION}`,
       'app_version defaults to current OWL_APP_VERSION',
     );
     assert.equal(session.config.workspace?.slug, 'owl/default', 'slug defaults to owl/default');
