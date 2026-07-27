@@ -79,6 +79,26 @@ const publishable = {
 };
 
 if (!existsSync(distDir)) mkdirSync(distDir, { recursive: true });
+
+// Fail closed on a split bundle. `files` above ships exactly `index.js`, so any
+// extra emitted .js (tsup code-splits on a dynamic `import()`) would be left
+// behind by `npm publish` and the server would die on first use — with a
+// module-not-found for a hashed filename that exists locally, which is about
+// the worst debugging experience we could hand an operator. Caught for real
+// once: a lazy `import('../cloud-login.js')` added two chunks.
+const strayJs = readdirSync(distDir).filter((f) => f.endsWith('.js') && f !== 'index.js');
+if (strayJs.length > 0) {
+  console.error(
+    [
+      `[gen-manifest] tsup emitted ${strayJs.length} extra JS file(s): ${strayJs.join(', ')}`,
+      'The published package ships only index.js, so these would be missing at runtime.',
+      'Cause is almost always a dynamic import() in the bundled graph — make it static,',
+      'or add the chunks to `files` AND verify a clean `npm pack` install.',
+    ].join('\n'),
+  );
+  process.exit(1);
+}
+
 writeFileSync(join(distDir, 'package.json'), `${JSON.stringify(publishable, null, 2)}\n`);
 
 // Embed the built web bundle (apps/web/dist → dist/web). Fail closed if it's
