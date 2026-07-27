@@ -5,6 +5,12 @@
 > **口径**：`0.6.1` 发版当天盘点。已 ship 的不列（历史见 `PROCESS.md` 归档表）。
 > **状态源**：当前进度永远以 `PROCESS.md` 为准；本文只在有项目完成/新增时改。
 >
+> **2026-07-27 更新**：**B1 / B2 / C2 已在 0.6.2 全部完成**（计划 + 实施记录
+> `docs/plans/2026-07-27-0.6.2-plan.md`），下面三节保留原文只加一行完成标记，
+> 便于回看当时的判断。新增待办：**D9 —— 含同步痕迹的 local 库要不要禁止 claim merge**
+> （0.6.2 计划 §4.4；已知 bug：整库复制会把旧 `sync_cursor` 与旧 `synced_at` 行带进新账号，
+> 导致新账号漏拉低 seq 的远端变更 + 本地笔记永不上传，尚未拍板修法）。
+>
 > 盘点来源：`docs/plans/2026-07-04-road-to-1.0.0.md` §3-4 · `docs/plans/2026-06-06-0.6.0-plan.md`
 > §Step1+ · `docs/plans/2026-07-24-problem-a-auto-sync-plan.md` §7-8 · 0.6.1 实施中发现的技术债。
 
@@ -65,6 +71,10 @@ server 端 changes 表的保留策略。
 
 ### B1. Phase 2A —— 桌面 token 过期自愈
 
+> ✅ **已完成（0.6.2 W3）**。`SyncState` 加了 `auth_required` + `auth_reason` 三值优先级；
+> 真机验收还抓到一个计划没预见的 bug（外部限流吞掉「升级后的 reason」），见 0.6.2 计划 §11。
+
+
 **现状**：access token 过期后，桌面**必须手动去设置里重新登录一次**。云端 daemon 已在 0.6.1
 自愈（它自己持 refresh token），桌面不行 —— refresh token 在 GUI main 的 keychain 里，
 daemon 拿不到。
@@ -109,6 +119,9 @@ server 默认 30 天，未真机确认）—— 决定 renewal 节奏和怎么�
 
 ### B2. W7 尾巴 —— `conflict_record` 加 counter 列
 
+> ✅ **已完成（0.6.2 W1）**。迁移 `0011`，counter + device_id 四列一起加，冲突页按三级分支展示。
+
+
 **现状**：W3 上了 HLC-lite 三元组 LWW `(updated_at_ms, lww_counter, device_id)`，但
 `conflict_record` 表只存了 ms，没存 counter。W3 §4.1 当时明确留账。
 
@@ -141,6 +154,10 @@ SSE 订阅者。所以部署**必须单实例 fork**，这条已写进 `docs/dep
 **不能声称能可靠发现所有多副本场景**。改动路径：skybridge 仓改 → 发版 → owl 升依赖 → 重新部署验证。
 
 ### C2. `sync_changes` 无裁剪策略
+
+> ✅ **已完成（0.6.2 W2）**。`core/src/sync/retention.ts` 四道闸 + 每小时节流；
+> 默认 7 天窗 / 5000 行仍是模块常量，等长期使用测试的数据再定要不要提成配置项。
+
 
 **现状**：engine 推送成功只置 `synced_at`，**从不 DELETE**。表单调增长。
 

@@ -1,6 +1,42 @@
 # 开发进度
 
-## 当前阶段：**🎉 0.6.1 已发版（2026-07-27）→ 下一步 Stage 2 收尾**
+## 当前阶段：**🎉 0.6.2 已发版（2026-07-27）→ 下一步长期使用测试 + Stage 2 收尾**
+
+0.6.2 = backlog 的 **B1 / B2 / C2** 三项（桌面 token 自愈 + conflict LWW key + outbox 裁剪）。
+计划 + 实施记录 + 真机验收记录见 `docs/plans/2026-07-27-0.6.2-plan.md`（§11），
+用户可见说明 `docs/history/0.6.2-release-notes.md`。
+
+真机验收四个自愈场景全过，并抓到一个**计划没预见的 bug**：`requestRecovery` 的 10s 限流
+原本是全局一个时间戳，而「daemon 重启 → 重装过期 token → subscribe 401」会在 1.5 秒内
+连发两个**不同** reason，升级后的 `token_rejected` 被静默丢弃且不再排期 → 永久卡「需登录」。
+已改成**按 reason 限流** + 回归用例。（教训：单测里每个 reason 各是一个用例、时间戳互不干扰，
+这类「同一窗口内 reason 升级」只有真机时序能踩出来。）
+
+### 0.6.2 发布内容
+
+| 包 | 版本 | 渠道 |
+|---|---|---|
+| 桌面 | `Owl-0.6.2-arm64.dmg` | GitHub Release `v0.6.2` |
+| owl-server | `@orpheus-aviary/owl-server@0.6.2` | npm（`latest`）|
+| owl-cli | `owl-cli@0.6.2` | npm（0.6.0 → 0.6.2，补上 0.6.1 漏发）|
+| `OWL_APP_VERSION` | `'0.6.2'` | 决定 skybridge 设备管理显示的版本 |
+
+⚠️ 含 migration `user_version` 10 → 11（`0011_conflict_record_lww_key.sql`），单向不可回滚，
+升级前备份 db。三端共用同一套 core，**桌面 / CLI / 云端必须一起升**。
+
+### 0.6.2 修了什么
+
+- **W1 conflict LWW key** —— `conflict_record` 存完整三元组 `(updated_at_ms, lww_counter, device_id)`，
+  冲突页在「同一毫秒」时能解释谁赢。LWW 判定零变化。
+- **W2 outbox 裁剪** —— `sync_changes` 里已确认、且服务器不可能再投的行，每小时最多裁一次
+  （四道闸：endpoint 单一 / provenance 水位 / 游标水位 / 7 天窗）。实测 200k 行稳态 ~5ms。
+- **W3 桌面 token 自愈** —— 新状态 `auth_required` + `auth_reason` 三值；daemon 401 / SSE 401 /
+  冷启动无 session 都进状态机；GUI main 自动 refresh 或重装 session；凭据真的死了才让用户重登。
+- 顺带修掉从 0.6.1 起就挂在 `before` 钩子里的 `profile-chain.e2e`（与本轮无关的历史遗留）。
+
+---
+
+## 上一阶段：**🎉 0.6.1 已发版（2026-07-27）**
 
 0.6.0（2026-07-23）转真机长期使用测试，暴露的跨设备同步问题在 0.6.1 一批修完并发版。
 主线是 **Problem A（跨 skybridge 自动同步不生效）**，计划 + 三轮审阅记录见
@@ -47,8 +83,11 @@
 **⭐ 完整逐项清单（截至 0.6.1，含每项背景 / 落点 / 验收 / 已知坑）= `docs/plans/2026-07-27-backlog-as-of-0.6.1.md`。** 摘要：
 
 - [ ] **Stage 2 收尾 → 🎯1.0.0**：**TLS / 反代**（现在明文 HTTP；改 https = 换 sync endpoint key，注意游标会从 0 重来）· **真·24h soak** · **P6 多设备 GA**（skybridge Phase 5，跨仓）。
-- [ ] **Phase 2A**（延后，用户 2026-07-27 定「不影响使用」）：desktop token 过期自愈。开工前先拍板 `SyncState` 是否加 `auth_required`（推荐加）。
-- [ ] **技术债**：skybridge EventBus 换跨进程总线（跨仓，解除单实例约束）· `sync_changes` 无裁剪策略（24h soak 可能暴露）。
+- [x] ~~**Phase 2A / B1**：desktop token 过期自愈~~ —— 0.6.2 W3 已做（`auth_required` 加了）。
+- [ ] **长期使用测试（= backlog A2 soak）**：盯 W2 是否真把 `sync_changes` 压住
+      （`count(*)` 走势 + `kind:'sync-retention'` 的 deleted 累计 + 有没有意外落进 `pruned:false`）·
+      W3 是否真自愈（跨过一次真实吊销/到期后有无手动登录记录）· 0.6.1 的修复有无回归。
+- [ ] **技术债**：skybridge EventBus 换跨进程总线（跨仓，解除单实例约束）· ~~`sync_changes` 无裁剪策略~~（0.6.2 W2 已做，默认 7 天窗待长期测试验证）· **D9 未拍板**：含同步痕迹的 local 库要不要禁止 claim merge（计划 §4.4，已知会带旧 cursor + 旧 synced_at 进新账号）。
 - [ ] **1.0.0 后**：跨 profile 统一视图（需 spike）· 跨账号导入 · 完整 RN 移动 app（C→D→E）· P8 非核心池。
 
 ---
@@ -75,6 +114,7 @@
 | Phase A 云端 daemon（A0–A6）+ Phase B 网页版（B0–B4）| 各 `docs/plans/2026-06-12`…`2026-06-19-*.md` § 实施记录 |
 | **Stage 1**：owl-server 打包 · A6 local CSRF · 重构一轮 · 0.6 本地功能 · 移动 web UI + PWA | `2026-07-04-owl-server-packaging.md` · `2026-07-15-a6-local-csrf.md` · `2026-07-15-refactor-round.md` · `2026-07-16-0.6-local-features.md` · `2026-07-22-mobile-web-ui.md` |
 | **Stage 2 公网部署 + 0.6.0 三端发版**（2026-07-23：阿里云/宝塔 skybridge 0.1.4 + owl-server 0.6.0；桌面 dmg GitHub Release v0.6.0；owl-cli npm；异地真机/PWA 验收）| `docs/deploy/baota-fish-runbook.md` + `docs/history/0.6.0-release-notes.md` |
+| **0.6.2 token 自愈 + conflict LWW key + outbox 裁剪**（2026-07-27：桌面 dmg + owl-server + owl-cli 三端同发；migration 0011）| `docs/plans/2026-07-27-0.6.2-plan.md` §11 + `docs/history/0.6.2-release-notes.md` |
 | **0.6.1 跨设备同步修复**（2026-07-27：Problem A push-on-mutation + 前端自动刷新 + 桌面 CAS + special-notes seed；桌面 dmg + owl-server npm）| `docs/plans/2026-07-24-problem-a-auto-sync-plan.md` + `docs/history/0.6.1-release-notes.md` |
 
 ## 关键参考

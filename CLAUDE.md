@@ -35,8 +35,9 @@ just dev-daemon   # 启动 daemon dev
 - **统一响应格式**：`{"success": bool, "data": {}, "message": "..."}`
 - **数据目录**：`~/orpheus-aviary-nest/owl/`
 - **skybridge 同步**（per-profile，0.5.0/P5-d）：`owl.db` 有 `sync_changes`/`sync_cursor`/`conflict_record` 表；每账号 `profiles/<id>/owl.db`，**local `owl/owl.db` 永不被账号同步写**（D10b）。登录/切换/设备管理全在 GUI（Settings → 同步），daemon 不写 toml、靠 GUI main 经 `POST /sync/session` 注入明文 token。架构 `aviary/docs/SKYBRIDGE_ARCH.md`；完整实施 `docs/history/P5-d-shipped.md`；本地开发/部署 `skybridge/docs/deploy/ubuntu-baota.md`
-- **skybridge daemon.log debug 关键字**：`sse-bridge`（started/skipped/connected/SSE error/`idle watchdog fired`）· `kind:'sync'`（runSync push/pull/apply/LWW）· `kind:'sync-scheduler'`（`[sync].interval_min` default 5min，`<=0` 禁用）· `kind:'outbox-watcher'`（push-on-mutation：started / `pending outbox, syncing`(debug) / 退避 warn / 无 session idle）· `kind:'cloud-refresh'`（三态 + recovery 重排 + refresh-on-401）· `kind:'health-probe'`（onError 退避期 10s `/health`）· `kind:'mid-session-bootstrap'` · `[REDACTED]`（pino redact）。SSE 永久重连退避 `[2,4,8,16,30]s+jitter`（无手动重连按钮，offline 是信息态）+ idle watchdog 60s 半开假死自动重连。彻底重启 bridge：`just stop-daemon && just dev-daemon`
+- **skybridge daemon.log debug 关键字**：`sse-bridge`（started/skipped/connected/SSE error/`idle watchdog fired`）· `kind:'sync'`（runSync push/pull/apply/LWW）· `kind:'sync-scheduler'`（`[sync].interval_min` default 5min，`<=0` 禁用）· `kind:'outbox-watcher'`（push-on-mutation：started / `pending outbox, syncing`(debug) / 退避 warn / 无 session idle）· `kind:'cloud-refresh'`（三态 + recovery 重排 + refresh-on-401）· `kind:'health-probe'`（onError 退避期 10s `/health`）· `kind:'mid-session-bootstrap'` · `kind:'sync-retention'`（0.6.2 W2 outbox 裁剪：deleted/cutoff/pulled_seq/safe_after；`pruned:false` 每进程每 reason 只 warn 一次）· `[REDACTED]`（pino redact）。SSE 永久重连退避 `[2,4,8,16,30]s+jitter`（无手动重连按钮，offline 是信息态）+ idle watchdog 60s 半开假死自动重连。彻底重启 bridge：`just stop-daemon && just dev-daemon`
 - **同步触发器（0.6.1）**：SSE `change` / 重连 `onOpen` / scheduler（`interval_min`）/ 手动 `/sync/run` / **`sync/outbox-watcher.ts` push-on-mutation**（1s 轮询已提交 outbox，debounce 800ms + maxWait 5s，退避 `[2,4,8,16,30]s+jitter`）。**任何轮询型触发器必须自带 singleflight** —— `createCoalescer` 的 follow-up 在前一轮 reject 后照跑，否则退避形同虚设。所有触发器先过 `sync/trigger-gate.ts` 的 `syncTriggerReady`（两种 mode 都只看 `ctx.skybridgeSession != null`；P5-d Phase 10 起 daemon 不读 toml、不认明文 token）。
+- **同步状态机（0.6.2 W3）**：`SyncState` 多一个 `auth_required` + `auth_reason`（`missing_session` < `token_rejected` < `credentials_missing`，**弱不覆盖强**，否则重装被拒 token → 401 死循环）。**粘性**：`markError`/`markOffline` 不降级、`markSyncing` 无 session 时不动、只有 `markSuccess`/`markSessionInstalled`/broadcaster evict 能清。产生者统一走 `sync/auth-signal.ts`（非账号 profile 落 `markError`，否则手动同步会永久卡「同步中」）；账号判定 `sync/account-profile.ts`（看 daemon **实际打开的库**，`':memory:'` 与 local 库一律非账号）。SSE 401 = 认证不是掉线 → 停重连 + 进状态机。`GET /sync/status` 带 state/auth_reason/last_error（冷启动 renderer 唯一来源）。renderer 三条写 store 的路径统一走 `stores/sync-status.ts` 的 `commitSnapshot`。恢复在 GUI main `sync-auth-recovery.ts`：外部入口 `requestRecovery` **按 reason 限流 10s** / 内部退避入口 `runRecoveryAttempt` **不限流**。⚠️ 两条都是真机踩出来的：内部退避走外部入口会被吞且不再排期；外部限流若共用一个时间戳，「daemon 重启 → 重装过期 token → subscribe 401」这条 1.5s 内 reason 升级的链会被静默丢弃 → 永久卡「需登录」。generation 进队列前捕获、拿锁后再比；退避 `[2,5,10,30,60]s` 睡在队列外。
 - **`@owl/server` 必须是单文件 bundle**：publish manifest 的 `files` 只列 `index.js`，一个 `await import()` 就让 tsup 拆出 hashed chunk → 发出去的包首次使用即炸。`gen-publishable-manifest.mjs` 已 fail-closed 拦截。
 - **skybridge token 安全（路 C）**：`skybridge_config.toml` chmod 0600（local secret）+ GUI safeStorage keychain 加密（`encrypted_token`/`encrypted_refresh_token`）；token 不进 log/UI（pino redact + `redactToken()` 拼接 helper）。`just check` 8 守卫含 core-convergence / token-not-templated / daemon-no-electron-storage / no-prod-env-token / session-body-not-logged / daemon-no-toml-write
 
@@ -65,11 +66,15 @@ Scope: `db` / `config` / `notes` / `tags` / `daemon` / `gui` / `editor` / `brows
 - 测试完成后用户反馈结果，再决定是否继续
 
 ## 当前进度
-**🎉 owl 0.6.1 已发版（2026-07-27）** —— 桌面 dmg + `@orpheus-aviary/owl-server@0.6.1`（owl-cli 无改动仍 0.6.0）。
-0.6.1 是 0.6.0 真机使用后的**跨设备同步修复批**：push-on-mutation、远端变更前端自动刷新、桌面 CAS、
-special-notes 确定性 seed（migration `0010`）。见 `docs/plans/2026-07-24-problem-a-auto-sync-plan.md`
-（含三轮审阅的逐条核实记录）+ `docs/history/0.6.1-release-notes.md`。
+**🎉 owl 0.6.2 已发版（2026-07-27）** —— 桌面 dmg + `@orpheus-aviary/owl-server@0.6.2` + `owl-cli@0.6.2`（三端同发，**migration `0011`**）。
+0.6.2 = 0.6.1 backlog 的 B1/B2/C2：**桌面 token 过期自愈**（新状态 `auth_required`）、
+`conflict_record` 存完整 LWW 三元组、`sync_changes` 裁剪。计划 + 实施 + 真机验收记录见
+`docs/plans/2026-07-27-0.6.2-plan.md`（§11 记了一个只有真机时序能踩出来的限流 bug），
+用户可见说明 `docs/history/0.6.2-release-notes.md`。
+上一版 0.6.1 是跨设备同步修复批（push-on-mutation / 前端自动刷新 / 桌面 CAS / migration `0010`），
+见 `docs/plans/2026-07-24-problem-a-auto-sync-plan.md` + `docs/history/0.6.1-release-notes.md`。
 **⭐ 通往 1.0.0 的路线 = `docs/plans/2026-07-04-road-to-1.0.0.md`**（Stage 1 全本地已完 → Stage 2 上云：
 公网部署✅ + TLS/反代 + soak + P6 GA → 1.0.0；RN 移动 app + 跨 profile 视图 = 1.0.0 后）。
 当前状态 + 下一步**以 `PROCESS.md` 为准**；扩生态总架构 `docs/plans/2026-06-06-mobile-web-ecosystem-arch.md`；
-跨仓路线 `aviary/docs/ROADMAP.md`；P5-d 归档 `docs/history/P5-d-shipped.md`；0.6 backlog 原始清单 `docs/plans/2026-06-06-0.6.0-plan.md`。
+跨仓路线 `aviary/docs/ROADMAP.md`；P5-d 归档 `docs/history/P5-d-shipped.md`；
+**待办清单（B1/B2/C2 已划掉，D9 待拍板）= `docs/plans/2026-07-27-backlog-as-of-0.6.1.md`**；0.6 backlog 原始清单 `docs/plans/2026-06-06-0.6.0-plan.md`。
