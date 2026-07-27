@@ -101,6 +101,25 @@ pm2 save        # 快照进程列表（含 env），重启机器可恢复
 ```
 > 注意 `--` ：它把后面的 `--config ...` 传给脚本本身，而不是 pm2。
 
+> ### ⚠️ 部署不变量：skybridge 必须**单实例 fork**
+>
+> skybridge server 的 `EventBus` 是**单进程内存实现**。push 之后它只能通知
+> **同一进程内**的 SSE 订阅者。一旦跑成多副本（`pm2 start -i`、cluster 模式、
+> 多容器、滚动发布期间新旧并存），连到 A 副本的设备就收不到 B 副本处理的推送，
+> 表现是**「对方改了这边一直不同步」** —— 和 Problem A 的症状一模一样，
+> 且日志上完全看不出来，极难归因。
+>
+> - **禁止** `pm2 start -i <n>` / `--exec-mode cluster` / 多容器同时对同一个库。
+> - 上面的 `pm2 start` 默认就是 fork 单实例，**不要加 `-i`**。
+> - 每次部署后确认一次：
+>   ```fish
+>   pm2 describe skybridge | grep -E "exec mode|instances"
+>   # 期望 exec mode : fork   /   instances : 1
+>   ```
+> - 进程内**探测不到**这个问题：`NODE_APP_INSTANCE` 是实例序号不是总数（单实例
+>   也可能是 0），多容器场景各自都是 0。所以只能靠这条部署纪律 + 上面这次人工确认。
+> - 长期解法是把 EventBus 换成 Redis / pubsub 跨进程总线，记在 skybridge 仓 backlog。
+
 **1.6 验健康**（本机 loopback，不用开防火墙）
 ```fish
 curl -s http://127.0.0.1:8443/v1/health         # {"ok":true,...}
