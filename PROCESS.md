@@ -44,9 +44,12 @@
 
 ### 待办
 
-- [ ] **Phase 2A**（Problem A 唯一剩下的实现项，用户定：不影响使用，延后）：desktop token 过期自动恢复 —— 事件带 reason（`missing_session` / `token_rejected`）、状态（broadcaster，可查询）与命令（瞬时事件）拆开、`logged_out` 调 `clearSkybridgeAuth()`。触及 9 处：`SyncState` 两份定义 + broadcaster + manual 401 分支 + `/sync/session`/`logout-local` 路由 + renderer 转发 + preload/IPC + main `recoverSession` + 状态栏 UI。**开工前先拍板 `SyncState` 是否加 `auth_required`**（推荐加）。
-- [ ] 剩 Stage 2 收尾 → 🎯1.0.0：TLS / 反代 · 真·24h soak · P6 多设备 GA（skybridge Phase 5）。
-- [ ] 1.0.0 后：跨 profile 统一视图 · 完整 RN 移动 app（Phase C→D→E）· 其余 0.6+ backlog。
+**⭐ 完整逐项清单（截至 0.6.1，含每项背景 / 落点 / 验收 / 已知坑）= `docs/plans/2026-07-27-backlog-as-of-0.6.1.md`。** 摘要：
+
+- [ ] **Stage 2 收尾 → 🎯1.0.0**：**TLS / 反代**（现在明文 HTTP；改 https = 换 sync endpoint key，注意游标会从 0 重来）· **真·24h soak** · **P6 多设备 GA**（skybridge Phase 5，跨仓）。
+- [ ] **Phase 2A**（延后，用户 2026-07-27 定「不影响使用」）：desktop token 过期自愈。开工前先拍板 `SyncState` 是否加 `auth_required`（推荐加）。
+- [ ] **技术债**：skybridge EventBus 换跨进程总线（跨仓，解除单实例约束）· `sync_changes` 无裁剪策略（24h soak 可能暴露）。
+- [ ] **1.0.0 后**：跨 profile 统一视图（需 spike）· 跨账号导入 · 完整 RN 移动 app（C→D→E）· P8 非核心池。
 
 ---
 
