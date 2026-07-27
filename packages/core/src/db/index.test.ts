@@ -8,7 +8,7 @@ import { eq } from 'drizzle-orm';
 import { v4 as uuidv4 } from 'uuid';
 import { createDatabase } from './index.js';
 import { folders, noteTags, notes, tags } from './schema.js';
-import { SPECIAL_NOTES, ensureDeviceId, ensureSpecialNotes } from './special-notes.js';
+import { SEED_TS, SPECIAL_NOTES, ensureDeviceId, ensureSpecialNotes } from './special-notes.js';
 
 describe('database initialization', () => {
   let sqlite: ReturnType<typeof createDatabase>['sqlite'];
@@ -154,6 +154,31 @@ describe('special notes', () => {
     const todo = db.select().from(notes).where(eq(notes.id, SPECIAL_NOTES.TODO)).get();
     assert.ok(todo);
     assert.ok(todo.content.includes('待办'));
+  });
+
+  // Problem A / Phase 4 — the seed must be deterministic, not `Date.now()`.
+  // A wall-clock stamp made this purely-local materialisation win LWW against
+  // the other device's real edit, so the pulled update was skipped forever.
+  it('seeds special notes at SEED_TS so any real edit outranks them', () => {
+    ensureSpecialNotes(db);
+
+    for (const id of Object.values(SPECIAL_NOTES)) {
+      const row = db.select().from(notes).where(eq(notes.id, id)).get();
+      assert.ok(row);
+      assert.equal(row.createdAt.getTime(), SEED_TS, `${id} created_at`);
+      assert.equal(row.updatedAt.getTime(), SEED_TS, `${id} updated_at`);
+      assert.equal(row.lwwCounter, 0, `${id} lww_counter`);
+    }
+  });
+
+  it('seeding emits no sync_changes row (materialised locally, never synced)', () => {
+    ensureSpecialNotes(db);
+    const row = sqlite
+      .prepare(
+        "SELECT count(*) AS n FROM sync_changes WHERE entity_type = 'note' AND entity_id IN (?, ?)",
+      )
+      .get(SPECIAL_NOTES.MEMO, SPECIAL_NOTES.TODO) as { n: number };
+    assert.equal(row.n, 0);
   });
 
   it('does not duplicate on repeated calls', () => {
