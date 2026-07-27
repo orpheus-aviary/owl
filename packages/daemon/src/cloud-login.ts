@@ -47,6 +47,7 @@ import {
   installSkybridgeSession,
   loadSkybridgeClient,
 } from './sync/session.js';
+import { isRefreshTokenDead } from './sync/skybridge-errors.js';
 
 // ─── Errors ──────────────────────────────────────────────────────────
 
@@ -364,6 +365,7 @@ async function rebindSession(
 /** Full Layer-1 teardown — drops creds + session + all Layer-2 + refresh timer. */
 export function teardownCloudSession(ctx: AppContext): void {
   clearRefreshTimer(ctx);
+  recoveryAttempts.delete(ctx);
   stopBackgroundHandles(ctx);
   ctx.skybridgeSession = null;
   ctx.credentialStore?.clear();
@@ -462,10 +464,37 @@ function defaultDeviceName(): string {
   return `owl-cloud@${hostname()}`;
 }
 
-// ─── Proactive refresh ───────────────────────────────────────────────
+// ─── Proactive refresh + recovery ────────────────────────────────────
 
 const REFRESH_LEAD_MS = 60_000; // refresh ~1min before expiry
 const MAX_TIMEOUT_MS = 2_147_483_647; // 2^31 - 1 (setTimeout 32-bit ceiling)
+
+/**
+ * Retry ladder after a TRANSIENT refresh failure (Problem A / Phase 2B).
+ * Without it a network blip during the renewal window would leave the daemon
+ * with credentials it never retries: the proactive timer is one-shot, and the
+ * sync triggers stay silent once the 401 path has dropped the session.
+ */
+const RECOVERY_BACKOFF_MS: readonly number[] = [30_000, 60_000, 120_000, 300_000];
+
+/** Consecutive transient-failure count per ctx; reset on a successful refresh. */
+const recoveryAttempts = new WeakMap<AppContext, number>();
+
+/**
+ * What a refresh attempt concluded. Callers need the distinction: a transient
+ * failure must keep the credentials (and let the recovery timer retry), while
+ * `logged_out` means the server has definitively rejected the refresh token and
+ * the owner has to log in again.
+ *
+ * `error` carries the refresh failure itself — a caller that reached here from
+ * a sync 401 has two different errors in hand and must not confuse them.
+ */
+export type RefreshOutcome = 'refreshed' | 'transient_failure' | 'logged_out' | 'no_credentials';
+
+export interface RefreshResult {
+  outcome: RefreshOutcome;
+  error?: unknown;
+}
 
 /**
  * (Re)arm the refresh timer for the given access-token expiry. No-op when the
@@ -499,34 +528,98 @@ export function clearRefreshTimer(ctx: AppContext): void {
 }
 
 /**
- * Refresh the Layer-1 access token and REBIND the session (rebuild the
- * realClient with the fresh token; design §2.3). On a hard refresh failure
- * (REFRESH_INVALID / REPLAYED) tear the cloud session down so the owner
- * re-logs-in. Serialised through the login mutex.
+ * Re-arm the refresh timer with the transient-failure backoff ladder. This is
+ * the ONLY thing that brings a cloud daemon back after a network blip during
+ * renewal, so it must not be skipped on any transient path.
  */
-export function refreshCloudSession(ctx: AppContext, deps: CloudLoginDeps = {}): Promise<void> {
-  const d = resolveDeps(deps);
-  return loginMutex(ctx).run(() => refreshImpl(ctx, d));
+function scheduleRecovery(ctx: AppContext, deps: CloudLoginDeps): void {
+  const attempt = recoveryAttempts.get(ctx) ?? 0;
+  const delay = RECOVERY_BACKOFF_MS[Math.min(attempt, RECOVERY_BACKOFF_MS.length - 1)];
+  recoveryAttempts.set(ctx, attempt + 1);
+  clearRefreshTimer(ctx);
+  ctx.refreshTimer = setTimeout(() => {
+    void refreshCloudSession(ctx, deps);
+  }, delay);
+  ctx.refreshTimer.unref?.();
+  ctx.logger.info(
+    { kind: 'cloud-refresh', attempt: attempt + 1, delay_ms: delay },
+    'cloud session recovery scheduled',
+  );
 }
 
-async function refreshImpl(ctx: AppContext, deps: ResolvedDeps): Promise<void> {
+/**
+ * Refresh the Layer-1 access token and REBIND the session (rebuild the
+ * realClient with the fresh token; design §2.3). Serialised through the login
+ * mutex. NEVER throws — the proactive timer calls it fire-and-forget, and the
+ * outcome is the return value.
+ *
+ * Failure handling is three-way (Problem A / Phase 2B). The pre-Problem-A code
+ * tore the session down on ANY refresh error, so one flaky minute of network
+ * dropped the RAM credentials AND revoked every Layer-2 browser session — the
+ * cloud daemon appeared permanently logged out until someone re-logged in by
+ * hand. Only an explicit server verdict counts as logged-out now.
+ */
+export function refreshCloudSession(
+  ctx: AppContext,
+  deps: CloudLoginDeps = {},
+): Promise<RefreshResult> {
+  const d = resolveDeps(deps);
+  return loginMutex(ctx).run(() => refreshImpl(ctx, d, deps));
+}
+
+async function refreshImpl(
+  ctx: AppContext,
+  deps: ResolvedDeps,
+  rawDeps: CloudLoginDeps,
+): Promise<RefreshResult> {
   const store = ctx.credentialStore;
   const creds = store?.get();
-  if (!store || !creds?.refreshToken) return; // nothing to refresh
-  const sb = await deps.loadClient();
+  if (!store || !creds?.refreshToken) return { outcome: 'no_credentials' };
+
   let next: { token: string; refreshToken?: string; expiresAt?: number };
+  let sb: SkybridgeClientModule;
   try {
+    sb = await deps.loadClient();
     next = await sb.refresh(creds.serverUrl, creds.refreshToken);
   } catch (err) {
+    if (isRefreshTokenDead(err)) {
+      ctx.logger.warn(
+        { kind: 'cloud-refresh', err: errorText(err) },
+        'refresh token rejected by server; Layer-1 needs re-login',
+      );
+      teardownCloudSession(ctx);
+      return { outcome: 'logged_out', error: err };
+    }
     ctx.logger.warn(
-      { kind: 'cloud-refresh', err: err instanceof Error ? err.message : String(err) },
-      'token refresh failed; Layer-1 needs re-login',
+      { kind: 'cloud-refresh', err: errorText(err) },
+      'token refresh failed transiently; credentials kept, will retry',
     );
-    teardownCloudSession(ctx);
-    return;
+    scheduleRecovery(ctx, rawDeps);
+    return { outcome: 'transient_failure', error: err };
   }
+
   store.rotate({ token: next.token, refreshToken: next.refreshToken, expiresAt: next.expiresAt });
   const refreshed = store.get() as CloudCredentials;
-  await rebindSession(ctx, installInputFrom(refreshed, refreshed.token), sb);
-  scheduleRefresh(ctx, next.expiresAt, deps);
+  try {
+    // Rebinding restarts the background handles; the SSE bridge's own onOpen
+    // catch-up covers whatever accumulated while we were unauthenticated, so
+    // there is deliberately no extra sync round kicked off here.
+    await rebindSession(ctx, installInputFrom(refreshed, refreshed.token), sb);
+  } catch (err) {
+    // The rotated token is already persisted in the store, so a retry re-reads
+    // it; only the install leg failed. Treat as transient.
+    ctx.logger.warn(
+      { kind: 'cloud-refresh', err: errorText(err) },
+      'session rebind after refresh failed; will retry',
+    );
+    scheduleRecovery(ctx, rawDeps);
+    return { outcome: 'transient_failure', error: err };
+  }
+  recoveryAttempts.delete(ctx);
+  scheduleRefresh(ctx, next.expiresAt, rawDeps);
+  return { outcome: 'refreshed' };
+}
+
+function errorText(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
 }

@@ -29,6 +29,7 @@ import {
   AccountBusyError,
   AccountLockedError,
   SkybridgeServerTooOldError,
+  clearRefreshTimer,
   cloudLogin,
   computeOwnerProfileId,
   refreshCloudSession,
@@ -80,9 +81,25 @@ interface MockOpts {
   noServerId?: boolean;
   registerId?: string;
   expiresAt?: number;
+  /** Throw a server verdict that the refresh token is dead (ApiError-shaped). */
   refreshThrows?: boolean;
+  /** Throw a transport-level failure instead (NetworkError-shaped). */
+  refreshThrowsTransient?: boolean;
   refreshToken?: string;
   ensureWorkspaceThrows?: boolean;
+}
+
+/**
+ * The daemon duck-types skybridge SDK errors on `.name` (it never imports the
+ * module statically), so the mocks must carry the same tags the real client
+ * sets — otherwise every failure would look transient.
+ */
+function apiError(code: string, status: number): Error {
+  return Object.assign(new Error(code), { name: 'ApiError', code, status });
+}
+
+function networkError(message: string): Error {
+  return Object.assign(new Error(message), { name: 'NetworkError' });
 }
 
 function mockSdk(spies: Spies, opts: MockOpts = {}): SkybridgeClientModule {
@@ -97,7 +114,8 @@ function mockSdk(spies: Spies, opts: MockOpts = {}): SkybridgeClientModule {
       expiresAt: opts.expiresAt,
     }),
     refresh: async () => {
-      if (opts.refreshThrows) throw new Error('REFRESH_INVALID');
+      if (opts.refreshThrows) throw apiError('REFRESH_INVALID', 401);
+      if (opts.refreshThrowsTransient) throw networkError('connect ECONNREFUSED');
       return { token: 'tok-refreshed', refreshToken: 'ref-2', expiresAt: opts.expiresAt };
     },
     getServerInfo: async () => ({ serverId: 'srv-1' }),
@@ -349,13 +367,14 @@ describe('refreshCloudSession', () => {
     );
     assert.equal(ctx.credentialStore?.get()?.token, 'tok-a@test');
 
-    await refreshCloudSession(ctx, loader(mockSdk({ register: 0, logout: 0 })));
+    const result = await refreshCloudSession(ctx, loader(mockSdk({ register: 0, logout: 0 })));
+    assert.equal(result.outcome, 'refreshed');
     assert.equal(ctx.credentialStore?.get()?.token, 'tok-refreshed');
     assert.equal(ctx.credentialStore?.get()?.refreshToken, 'ref-2');
     assert.ok(ctx.skybridgeSession, 'session rebound after refresh');
   });
 
-  it('a hard refresh failure tears the cloud session down (re-login required)', async () => {
+  it('a server verdict on the refresh token tears the cloud session down', async () => {
     ctx = makeCtx(cloudConfig());
     await cloudLogin(
       ctx,
@@ -364,12 +383,65 @@ describe('refreshCloudSession', () => {
     );
     assert.ok(ctx.credentialStore?.bound);
 
-    await refreshCloudSession(
+    const result = await refreshCloudSession(
       ctx,
       loader(mockSdk({ register: 0, logout: 0 }, { refreshThrows: true })),
     );
+    assert.equal(result.outcome, 'logged_out');
     assert.equal(ctx.credentialStore?.bound, false);
     assert.equal(ctx.skybridgeSession, null);
+    assert.equal(ctx.refreshTimer ?? null, null, 'no retry scheduled for a dead refresh token');
+  });
+
+  // Problem A / Phase 2B: the pre-fix code tore the session down on ANY refresh
+  // error, so a single network blip logged the cloud daemon out for good (and
+  // revoked every Layer-2 browser session with it).
+  it('a transient refresh failure keeps credentials + schedules a retry', async () => {
+    ctx = makeCtx(cloudConfig());
+    await cloudLogin(
+      ctx,
+      { email: 'a@test', password: 'pw' },
+      loader(mockSdk({ register: 0, logout: 0 })),
+    );
+    const sessionsBefore = ctx.sessionStore?.liveCount() ?? 0;
+
+    const result = await refreshCloudSession(
+      ctx,
+      loader(mockSdk({ register: 0, logout: 0 }, { refreshThrowsTransient: true })),
+    );
+    assert.equal(result.outcome, 'transient_failure');
+    assert.ok(result.error, 'the refresh failure is handed back to the caller');
+    assert.equal(ctx.credentialStore?.bound, true, 'credentials kept');
+    assert.equal(ctx.credentialStore?.get()?.refreshToken, 'ref-1', 'refresh token not rotated');
+    assert.equal(ctx.sessionStore?.liveCount() ?? 0, sessionsBefore, 'Layer-2 sessions survive');
+    assert.ok(ctx.refreshTimer, 'recovery retry armed');
+    clearRefreshTimer(ctx);
+  });
+
+  it('recovery retries eventually rebind once the network comes back', async () => {
+    ctx = makeCtx(cloudConfig());
+    await cloudLogin(
+      ctx,
+      { email: 'a@test', password: 'pw' },
+      loader(mockSdk({ register: 0, logout: 0 })),
+    );
+    await refreshCloudSession(
+      ctx,
+      loader(mockSdk({ register: 0, logout: 0 }, { refreshThrowsTransient: true })),
+    );
+    assert.equal(ctx.credentialStore?.get()?.token, 'tok-a@test', 'still on the old token');
+
+    // What the armed timer would do when it fires.
+    const result = await refreshCloudSession(ctx, loader(mockSdk({ register: 0, logout: 0 })));
+    assert.equal(result.outcome, 'refreshed');
+    assert.equal(ctx.credentialStore?.get()?.token, 'tok-refreshed');
+    assert.ok(ctx.skybridgeSession, 'session rebound');
+  });
+
+  it('reports no_credentials instead of throwing when nothing is bound', async () => {
+    ctx = makeCtx(cloudConfig());
+    const result = await refreshCloudSession(ctx, loader(mockSdk({ register: 0, logout: 0 })));
+    assert.equal(result.outcome, 'no_credentials');
   });
 });
 
