@@ -69,7 +69,7 @@ import { createBuiltinRegistry } from '../ai/tools/index.js';
 import type { AppContext } from '../context.js';
 import { EventsBus } from '../events/bus.js';
 import { ReminderScheduler } from '../scheduler.js';
-import { buildServer } from '../server.js';
+import { buildTestServer } from '../testing/build-test-server.js';
 import { stopBackgroundHandles } from './bridge-lifecycle.js';
 import { __resetInflightSync, drainManualSync } from './manual.js';
 import type { RealSkybridgeClient } from './session.js';
@@ -248,7 +248,7 @@ describe('per-profile model full-chain e2e (P5-d Phase 18)', { skip: !gate }, ()
   let nest: string;
   let priorEnv: string | undefined;
   let ctx: AppContext;
-  let app: ReturnType<typeof buildServer>;
+  let app: ReturnType<typeof buildTestServer>;
 
   const EMAIL_A = 'a@local';
   const PWD_A = 'password-a-12345';
@@ -283,7 +283,7 @@ describe('per-profile model full-chain e2e (P5-d Phase 18)', { skip: !gate }, ()
     mkdirSync(paths.owlDir(), { recursive: true }); // createDatabase won't mkdir (db/index.ts)
 
     ctx = makeCtx(resolveActiveProfileDbPath()); // no toml yet → local owl/owl.db
-    app = buildServer(ctx);
+    app = buildTestServer(ctx);
     await app.ready();
   });
 
@@ -317,7 +317,7 @@ describe('per-profile model full-chain e2e (P5-d Phase 18)', { skip: !gate }, ()
   async function restartDaemonCtx(): Promise<void> {
     await teardownCtx();
     ctx = makeCtx(resolveActiveProfileDbPath()); // = cli.ts:66 boot resolution
-    app = buildServer(ctx);
+    app = buildTestServer(ctx);
     await app.ready();
   }
 
