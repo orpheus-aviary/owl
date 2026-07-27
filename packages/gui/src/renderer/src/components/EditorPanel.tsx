@@ -1,6 +1,7 @@
 import { MarkdownEditor } from '@/components/MarkdownEditor';
 import { MarkdownPreview } from '@/components/MarkdownPreview';
 import { TagBar } from '@/components/TagBar';
+import { RemoteUpdateBanner } from '@/components/editor/RemoteUpdateBanner';
 import { ResizeHandle } from '@/components/ui/resize-handle';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import { useOwlLayout } from '@/hooks/useOwlLayout';
@@ -63,6 +64,8 @@ export function EditorPanel() {
 
   return (
     <div className="flex flex-col h-full min-h-0">
+      {tab.remoteUpdated && <RemoteUpdateBanner noteId={tab.noteId} />}
+
       {/* The mode toggle sits in the top bar on mobile (§3.3); only desktop
           shows this in-panel toggle strip. */}
       {!isMobile && (

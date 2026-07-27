@@ -76,6 +76,16 @@ export interface TabState {
    *   on an already-pinned tab will NOT demote it.
    */
   preview: boolean;
+  /**
+   * Problem A / Phase 1b — a sync round pulled a newer version of this note
+   * while the tab had unsaved edits, so it could NOT be silently reloaded.
+   * Drives the "远端已更新" banner; cleared by loading the remote copy or by
+   * saving (which resolves the divergence one way or the other).
+   *
+   * Clean tabs never set this: they are refreshed in place instead, since
+   * there is nothing of the user's to lose.
+   */
+  remoteUpdated: boolean;
 }
 
 /**
@@ -229,13 +239,65 @@ export function isUnsaved(tab: TabState): boolean {
  * a server version to check against; empty on desktop (= last-write-wins, the
  * existing behavior) and for never-saved drafts.
  */
-export function casBaseline(
-  tab: TabState,
-  remoteClient: boolean,
-): { expected_updated_at?: number } {
-  return remoteClient && tab.originalUpdatedAt
+/**
+ * Optimistic-concurrency baseline for a PATCH.
+ *
+ * Sent on EVERY host since Problem A / Phase 1b. It used to be web-only, which
+ * left desktop with no check at all: once background sync could pull a remote
+ * edit under an open editor, saving a stale tab silently overwrote it — no 409,
+ * no dialog, and the clobber then propagated by LWW. The daemon route accepts
+ * `expected_updated_at` regardless of host, so the fix is just to stop
+ * withholding it.
+ *
+ * Empty for a never-saved draft: there is no server version to check against
+ * (that path POSTs rather than PATCHes).
+ */
+export function casBaseline(tab: TabState): { expected_updated_at?: number } {
+  return tab.originalUpdatedAt
     ? { expected_updated_at: new Date(tab.originalUpdatedAt).getTime() }
     : {};
+}
+
+/**
+ * Decide what a single open tab should become after a sync round pulled remote
+ * changes. Pure, so the three-way policy is testable on its own:
+ *
+ *   - no remote copy (fetch failed / note gone) → untouched; the user's content
+ *     stays on screen rather than being guessed at
+ *   - same version as the tab's baseline → untouched (the round touched other
+ *     notes, or this is our own write echoing back)
+ *   - tab has unsaved work → flag only; NEVER overwrite what the user typed
+ *   - clean tab → adopt the remote version in place
+ */
+export function reconcileTab(tab: TabState, remote: Note | undefined): TabState {
+  if (!remote) return tab;
+  if (remote.updatedAt === tab.originalUpdatedAt) return tab;
+  if (isUnsaved(tab)) return tab.remoteUpdated ? tab : { ...tab, remoteUpdated: true };
+  return adoptRemote(tab, remote);
+}
+
+/**
+ * Adopt a freshly-fetched server copy as the tab's clean baseline, discarding
+ * whatever the tab held. Shared by the version-conflict dialog's `load-remote`
+ * decision, the remote-update banner's 「加载远端」, and the silent refresh of
+ * clean tabs after a sync round.
+ */
+export function adoptRemote(tab: TabState, remote: Note): TabState {
+  const tags = remote.tags ?? [];
+  return {
+    ...tab,
+    content: remote.content,
+    originalContent: remote.content,
+    tags,
+    originalTags: tags,
+    folderId: remote.folderId,
+    originalFolderId: remote.folderId,
+    originalUpdatedAt: remote.updatedAt,
+    title: extractTitle(remote.content),
+    dirty: false,
+    pendingAiUpdate: null,
+    remoteUpdated: false,
+  };
 }
 
 export function detectPendingUpdateConflict(
@@ -276,21 +338,20 @@ export function detectPendingUpdateConflict(
 }
 
 /**
- * Map a `saveNote` failure to a version conflict, or null. Only a web 409
+ * Map a `saveNote` failure to a version conflict, or null. A 409
  * `VERSION_MISMATCH` qualifies: re-fetch the server copy so the UI can show
- * local-vs-remote. Any other failure (network, other 409 codes, desktop, or a
- * failed re-fetch) yields null → plain save-failed.
+ * local-vs-remote. Any other failure (network, other 409 codes, or a failed
+ * re-fetch) yields null → plain save-failed.
+ *
+ * Host-agnostic since Problem A / Phase 1b — see `casBaseline`. Desktop now
+ * sends the baseline too, so it must also be able to surface the dialog.
  */
 export async function versionConflictFromError(
   err: unknown,
   noteId: string,
-  remoteClient: boolean,
 ): Promise<VersionConflict | null> {
   const isMismatch =
-    remoteClient &&
-    err instanceof ApiError &&
-    err.status === 409 &&
-    err.errorCode === 'VERSION_MISMATCH';
+    err instanceof ApiError && err.status === 409 && err.errorCode === 'VERSION_MISMATCH';
   if (!isMismatch) return null;
   try {
     const fresh = await api.getNote(noteId);

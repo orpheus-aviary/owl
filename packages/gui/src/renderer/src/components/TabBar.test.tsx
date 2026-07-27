@@ -36,6 +36,7 @@ function makeTab(noteId: string, title: string, preview: boolean): TabState {
     isDraft: false,
     pendingAiUpdate: null,
     preview,
+    remoteUpdated: false,
   };
 }
 

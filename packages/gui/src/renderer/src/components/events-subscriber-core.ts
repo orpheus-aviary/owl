@@ -31,7 +31,12 @@ import type { SyncStatusSnapshot } from '@/lib/api';
  * emits `hello`, so this is how that state self-heals. Truly unknown names
  * (anything else) still no-op.
  */
-export const EVENT_TYPES = ['open_note', 'sync:status_changed', 'conflicts:changed'] as const;
+export const EVENT_TYPES = [
+  'open_note',
+  'sync:status_changed',
+  'conflicts:changed',
+  'notes:changed',
+] as const;
 export type EventName = (typeof EVENT_TYPES)[number];
 
 export interface EventHandlers {
@@ -47,6 +52,11 @@ export interface EventHandlers {
   refreshConflicts: () => Promise<void>;
   /** P5-c §6.19: nudges data-bus subscribers (ConflictsPage list refetch). */
   bumpConflicts: () => void;
+  /**
+   * Problem A / Phase 1b: a sync round applied remote note/folder changes.
+   * Invalidates the list stores and reconciles open editor tabs.
+   */
+  onRemoteChanges: () => void;
   /** ①: the SSE channel just (re)connected (`hello` frame) — re-probe status. */
   onConnected: () => void;
 }
@@ -64,6 +74,12 @@ export async function handleDaemonEvent(
   }
   if (eventName === 'conflicts:changed') {
     return handleConflictsChanged(handlers);
+  }
+  if (eventName === 'notes:changed') {
+    // Payload-free poke, same shape as `conflicts:changed` — the handler
+    // re-reads whatever it needs from the (already-synced) daemon.
+    handlers.onRemoteChanges();
+    return;
   }
   if (eventName === 'hello') {
     handlers.onConnected();

@@ -50,6 +50,7 @@ function tab(noteId: string, opts?: Partial<TabState>): TabState {
     isDraft: false,
     pendingAiUpdate: null,
     preview: false,
+    remoteUpdated: false,
     ...opts,
   };
 }

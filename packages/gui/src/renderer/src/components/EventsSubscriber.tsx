@@ -5,6 +5,7 @@ import { clearWebSession, getWebSession } from '../platform/web-session';
 import { invalidateSession } from '../session/session-actions';
 import { useConflictsStore } from '../stores/conflicts-store';
 import { useDataBus } from '../stores/data-bus';
+import { useEditorStore } from '../stores/editor-store';
 import { currentGen, isStale } from '../stores/session-epoch';
 import { useSyncStatus } from '../stores/sync-status';
 import { handleDaemonEvent } from './events-subscriber-core';
@@ -37,6 +38,8 @@ export function EventsSubscriber(): null {
   const fetchSyncStatus = useSyncStatus((s) => s.fetch);
   const refreshConflicts = useConflictsStore((s) => s.refresh);
   const bumpConflicts = useDataBus((s) => s.bumpConflicts);
+  const bumpNotes = useDataBus((s) => s.bumpNotes);
+  const bumpFolders = useDataBus((s) => s.bumpFolders);
 
   // Hold the opener in a ref so the SSE subscription effect never lists it as a
   // dependency — on mobile its identity changes when the viewport crosses the
@@ -82,6 +85,14 @@ export function EventsSubscriber(): null {
         if (isStale(gen)) return;
         void fetchSyncStatus();
       },
+      onRemoteChanges: () => {
+        if (isStale(gen)) return;
+        // Lists first (cheap, synchronous counter bump), then the open tabs —
+        // the tab pass hits the network per tab and must not delay the lists.
+        bumpNotes();
+        bumpFolders();
+        void useEditorStore.getState().reconcileRemoteChanges();
+      },
     };
 
     subscribeSse({
@@ -115,7 +126,7 @@ export function EventsSubscriber(): null {
     });
 
     return () => controller.abort();
-  }, [setSyncStatus, fetchSyncStatus, refreshConflicts, bumpConflicts]);
+  }, [setSyncStatus, fetchSyncStatus, refreshConflicts, bumpConflicts, bumpNotes, bumpFolders]);
 
   return null;
 }

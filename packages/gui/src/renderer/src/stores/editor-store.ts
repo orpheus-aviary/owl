@@ -1,14 +1,15 @@
 import * as api from '@/lib/api';
 import type { Note, NoteTag } from '@/lib/api';
-import { getPlatform } from '@/platform';
 import { create } from 'zustand';
 import { useDataBus } from './data-bus';
 import {
+  adoptRemote,
   casBaseline,
   deserializeTags,
   detectPendingUpdateConflict,
   extractTitle,
   isUnsaved,
+  reconcileTab,
   serializeTags,
   tagsEqual,
   versionConflictFromError,
@@ -77,8 +78,18 @@ interface EditorState {
   syncTabFolderId: (noteId: string, folderId: string | null, updatedAt?: string) => void;
   markSaved: (noteId: string, content: string, tags: NoteTag[], updatedAt?: string) => void;
   saveNote: (noteId: string) => Promise<SaveResult>;
-  /** Apply a version-conflict decision (web 409 dialog), clearing the prompt. */
+  /** Apply a version-conflict decision (409 dialog), clearing the prompt. */
   resolveVersionConflict: (decision: VersionConflictDecision) => Promise<SaveResult>;
+  /**
+   * Problem A / Phase 1b — a sync round applied remote changes; re-read every
+   * open tab. Clean tabs adopt the new version silently; tabs with unsaved work
+   * only get flagged (`remoteUpdated`) so the banner can offer the choice.
+   */
+  reconcileRemoteChanges: () => Promise<void>;
+  /** Banner action: discard local edits and adopt the server copy. */
+  loadRemoteIntoTab: (noteId: string) => Promise<void>;
+  /** Banner action: keep editing. The next save still goes through CAS. */
+  dismissRemoteUpdated: (noteId: string) => void;
   saveActiveNote: () => Promise<SaveResult>;
   /** Open a brand-new AI draft (`create` / `create_reminder`) as an unsaved tab. */
   openAiDraft: (draft: AiDraftInput) => void;
@@ -189,6 +200,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       isDraft: false,
       pendingAiUpdate: null,
       preview: requestPreview,
+      remoteUpdated: false,
     };
     // Preview insertion replaces the existing preview tab in place so the
     // user's tab order doesn't shuffle every time they click through the
@@ -299,10 +311,14 @@ export const useEditorStore = create<EditorState>((set, get) => ({
               originalTags: tags,
               originalFolderId: t.folderId,
               // Advance the optimistic-concurrency baseline to the version the
-              // server just wrote, so the next web save checks against it.
+              // server just wrote, so the next save checks against it.
               originalUpdatedAt: updatedAt ?? t.originalUpdatedAt,
               dirty: false,
               pendingAiUpdate: null,
+              // The save settled whatever divergence the banner was warning
+              // about — either it went through, or CAS turned it into the
+              // version-conflict dialog and we never got here.
+              remoteUpdated: false,
               // A saved tab is user-authoritative — don't let the next
               // preview click replace it.
               preview: false,
@@ -319,8 +335,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     // Nothing to persist — dirty / draft / pending-AI are the only save
     // triggers (a pending AI update can leave a tab non-dirty yet save-worthy).
     if (!isUnsaved(tab)) return { status: 'noop', ok: true, noteId: tab.noteId };
-    const remoteClient = getPlatform().remoteClient;
-    const cas = casBaseline(tab, remoteClient);
+    const cas = casBaseline(tab);
     try {
       const rawTags = serializeTags(tab.tags);
 
@@ -343,7 +358,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       useDataBus.getState().bumpNotes();
       return { status: 'saved', ok: true, noteId: tab.noteId };
     } catch (err) {
-      return handleSaveFailure(set, err, noteId, remoteClient, gen);
+      return handleSaveFailure(set, err, noteId, gen);
     }
   },
 
@@ -367,26 +382,9 @@ export const useEditorStore = create<EditorState>((set, get) => ({
 
     if (decision === 'load-remote') {
       // Discard local edits, load the server copy as the new clean baseline.
-      const tags = remote.tags ?? [];
       set((state) => ({
         versionConflict: null,
-        tabs: state.tabs.map((t) =>
-          t.noteId === tabId
-            ? {
-                ...t,
-                content: remote.content,
-                originalContent: remote.content,
-                tags,
-                originalTags: tags,
-                folderId: remote.folderId,
-                originalFolderId: remote.folderId,
-                originalUpdatedAt: remote.updatedAt,
-                title: extractTitle(remote.content),
-                dirty: false,
-                pendingAiUpdate: null,
-              }
-            : t,
-        ),
+        tabs: state.tabs.map((t) => (t.noteId === tabId ? adoptRemote(t, remote) : t)),
       }));
       // Loaded the server copy as a clean baseline — safe to navigate away.
       return { status: 'noop', ok: true, noteId: tabId };
@@ -403,6 +401,54 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       ),
     }));
     return get().saveNote(tabId);
+  },
+
+  reconcileRemoteChanges: async (): Promise<void> => {
+    const gen = currentGen();
+    // Drafts have no server copy yet, so there is nothing to reconcile them
+    // against. Cost is bounded by open tabs, not by how much the round applied.
+    const open = get().tabs.filter((t) => !t.isDraft);
+    if (open.length === 0) return;
+
+    const fetched = await Promise.all(
+      open.map(async (t) => {
+        try {
+          const res = await api.getNote(t.noteId);
+          return res.data ? { noteId: t.noteId, remote: res.data } : null;
+        } catch {
+          // Trashed/deleted remotely, or a transient failure. Leave the tab as
+          // it is rather than guessing — the user's content stays on screen.
+          return null;
+        }
+      }),
+    );
+    if (isStale(gen)) return;
+
+    const byId = new Map(fetched.filter((f) => f !== null).map((f) => [f.noteId, f.remote]));
+    set((state) => ({
+      tabs: state.tabs.map((t) => reconcileTab(t, byId.get(t.noteId))),
+    }));
+  },
+
+  loadRemoteIntoTab: async (noteId: string): Promise<void> => {
+    const gen = currentGen();
+    let remote: Note | undefined;
+    try {
+      remote = (await api.getNote(noteId)).data;
+    } catch {
+      return; // keep the banner up; the user can retry or resolve at save time
+    }
+    if (isStale(gen) || !remote) return;
+    const fresh = remote;
+    set((state) => ({
+      tabs: state.tabs.map((t) => (t.noteId === noteId ? adoptRemote(t, fresh) : t)),
+    }));
+  },
+
+  dismissRemoteUpdated: (noteId: string) => {
+    set((state) => ({
+      tabs: state.tabs.map((t) => (t.noteId === noteId ? { ...t, remoteUpdated: false } : t)),
+    }));
   },
 
   hasUnsavedTabs: () => get().tabs.some(isUnsaved),
@@ -511,6 +557,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       // Drafts are pinned — they carry unsaved user intent and must not
       // be replaced by a subsequent preview click.
       preview: false,
+      remoteUpdated: false,
     };
     set((state) => ({
       tabs: [...state.tabs.filter((t) => t.noteId !== draft.note_id), newTab],
@@ -694,20 +741,19 @@ type ConfigUpdater<T> = (state: T) => Partial<T>;
  * transport failure (the caller's try/catch maps that to save-failed).
  */
 /**
- * Map a failed save (draft POST or note PATCH) to a `SaveResult`. Web
- * optimistic concurrency: a 409 VERSION_MISMATCH surfaces the remote copy as a
- * `conflict` (VersionConflictDialog) instead of silently dropping the save;
- * anything else is a plain `failed`. ③-guarded: a session switch mid-failure
- * yields `cancelled` and drops the dialog write.
+ * Map a failed save (draft POST or note PATCH) to a `SaveResult`. Optimistic
+ * concurrency: a 409 VERSION_MISMATCH surfaces the remote copy as a `conflict`
+ * (VersionConflictDialog) instead of silently dropping the save; anything else
+ * is a plain `failed`. ③-guarded: a session switch mid-failure yields
+ * `cancelled` and drops the dialog write.
  */
 async function handleSaveFailure(
   set: (update: ConfigUpdater<EditorState> | Partial<EditorState>) => void,
   err: unknown,
   noteId: string,
-  remoteClient: boolean,
   gen: number,
 ): Promise<SaveResult> {
-  const conflict = await versionConflictFromError(err, noteId, remoteClient);
+  const conflict = await versionConflictFromError(err, noteId);
   if (isStale(gen)) return { status: 'cancelled', ok: false, noteId: null };
   if (conflict) {
     set({ versionConflict: conflict });

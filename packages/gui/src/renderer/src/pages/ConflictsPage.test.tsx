@@ -102,6 +102,7 @@ function makeTab(over: Partial<TabState> = {}): TabState {
     isDraft: false,
     pendingAiUpdate: null,
     preview: false,
+    remoteUpdated: false,
     ...over,
   };
 }

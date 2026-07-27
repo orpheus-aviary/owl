@@ -9,6 +9,7 @@ function makeHandlers() {
     refreshConflicts: vi.fn().mockResolvedValue(undefined),
     bumpConflicts: vi.fn(),
     onConnected: vi.fn(),
+    onRemoteChanges: vi.fn(),
   };
 }
 
@@ -195,10 +196,32 @@ describe('handleDaemonEvent — hello (① connection re-probe)', () => {
   });
 });
 
+describe('handleDaemonEvent — notes:changed (Problem A / Phase 1b)', () => {
+  it('pokes the remote-changes handler', async () => {
+    const handlers = makeHandlers();
+    await handleDaemonEvent('notes:changed', JSON.stringify({ type: 'notes:changed' }), handlers);
+    expect(handlers.onRemoteChanges).toHaveBeenCalledTimes(1);
+  });
+
+  // Payload-free by contract, so an empty / junk body must still poke rather
+  // than being dropped as malformed — the receiver re-reads from the daemon.
+  it('ignores the payload entirely', async () => {
+    const handlers = makeHandlers();
+    await handleDaemonEvent('notes:changed', '', handlers);
+    expect(handlers.onRemoteChanges).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not fire on other events', async () => {
+    const handlers = makeHandlers();
+    await handleDaemonEvent('conflicts:changed', '{}', handlers);
+    expect(handlers.onRemoteChanges).not.toHaveBeenCalled();
+  });
+});
+
 describe('EVENT_TYPES is the source of truth (P5-c §6.30)', () => {
   it('lists every event handled by handleDaemonEvent', () => {
     expect([...EVENT_TYPES].sort()).toEqual(
-      ['conflicts:changed', 'open_note', 'sync:status_changed'].sort(),
+      ['conflicts:changed', 'notes:changed', 'open_note', 'sync:status_changed'].sort(),
     );
   });
 });

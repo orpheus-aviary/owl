@@ -21,6 +21,7 @@ function dirtyTab(noteId: string): TabState {
     isDraft: false,
     pendingAiUpdate: null,
     preview: false,
+    remoteUpdated: false,
   };
 }
 
