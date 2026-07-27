@@ -87,8 +87,8 @@ describe('conflicts routes (P5-c Step 13)', () => {
       losingSide: 'local',
       localPayload: { content: `local-${entityId}`, updated_at_ms: detectedAt - 100 },
       remotePayload: { content: `remote-${entityId}`, updated_at_ms: detectedAt },
-      localUpdatedAtMs: detectedAt - 100,
-      remoteUpdatedAtMs: detectedAt,
+      localKey: { ms: detectedAt - 100, counter: 0, deviceId: 'dev-local' },
+      remoteKey: { ms: detectedAt, counter: 0, deviceId: 'dev-remote' },
       nowMs: detectedAt,
     });
   }
@@ -223,8 +223,8 @@ describe('conflicts routes (P5-c Step 13)', () => {
         losingSide: 'local',
         localPayload: { content: local, updated_at_ms: 100 },
         remotePayload: { content: remote, updated_at_ms: 200 },
-        localUpdatedAtMs: 100,
-        remoteUpdatedAtMs: 200,
+        localKey: { ms: 100, counter: 0, deviceId: 'dev-local' },
+        remoteKey: { ms: 200, counter: 0, deviceId: 'dev-remote' },
       });
       return { note, conflictId, baseline: note.updatedAt.getTime() };
     }
@@ -320,8 +320,8 @@ describe('conflicts routes (P5-c Step 13)', () => {
         losingSide: 'local',
         localPayload: { content: 'x' },
         remotePayload: { content: 'y' },
-        localUpdatedAtMs: 1,
-        remoteUpdatedAtMs: 2,
+        localKey: { ms: 1, counter: 0, deviceId: 'dev-local' },
+        remoteKey: { ms: 2, counter: 0, deviceId: 'dev-remote' },
       });
       const res = await app.inject({
         method: 'POST',
@@ -351,8 +351,8 @@ describe('conflicts routes (P5-c Step 13)', () => {
         losingSide: 'local',
         localPayload: { name: 'a' },
         remotePayload: { name: 'b' },
-        localUpdatedAtMs: 1,
-        remoteUpdatedAtMs: 2,
+        localKey: { ms: 1, counter: 0, deviceId: 'dev-local' },
+        remoteKey: { ms: 2, counter: 0, deviceId: 'dev-remote' },
       });
       const res = await app.inject({
         method: 'POST',

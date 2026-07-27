@@ -32,6 +32,10 @@ function row(id: string, entityId: string): ConflictRecord {
     remote_payload: '{}',
     local_updated_at_ms: 50,
     remote_updated_at_ms: 100,
+    local_lww_counter: 0,
+    remote_lww_counter: 0,
+    local_device_id: null,
+    remote_device_id: null,
   };
 }
 

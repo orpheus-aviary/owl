@@ -39,8 +39,8 @@ describe('conflicts — recordConflict / list / count / ignore', () => {
       losingSide: 'local',
       localPayload: { content: 'mine', updated_at_ms: 100 },
       remotePayload: { content: 'theirs', updated_at_ms: 200 },
-      localUpdatedAtMs: 100,
-      remoteUpdatedAtMs: 200,
+      localKey: { ms: 100, counter: 0, deviceId: 'dev-local' },
+      remoteKey: { ms: 200, counter: 0, deviceId: 'dev-remote' },
       nowMs: 1000,
     });
     assert.match(id, /^[0-9a-f-]{36}$/);
@@ -67,6 +67,49 @@ describe('conflicts — recordConflict / list / count / ignore', () => {
     });
   });
 
+  // ── 0011 (0.6.2 W1): the full LWW three-tuple round-trips ────────────
+
+  it('C1a: the full LWW key round-trips through recordConflict → list', () => {
+    const id = recordConflict(sqlite, {
+      entityType: 'note',
+      entityId: 'n-key',
+      losingSide: 'local',
+      localPayload: { content: 'mine' },
+      remotePayload: { content: 'theirs' },
+      localKey: { ms: 500, counter: 3, deviceId: 'dev-a' },
+      remoteKey: { ms: 500, counter: 3, deviceId: 'dev-b' },
+      nowMs: 1000,
+    });
+
+    const [row] = listUnresolvedConflicts(sqlite);
+    assert.equal(row.id, id);
+    assert.equal(row.local_updated_at_ms, 500);
+    assert.equal(row.remote_updated_at_ms, 500);
+    assert.equal(row.local_lww_counter, 3);
+    assert.equal(row.remote_lww_counter, 3);
+    assert.equal(row.local_device_id, 'dev-a');
+    assert.equal(row.remote_device_id, 'dev-b');
+  });
+
+  it("C1b: an empty deviceId (lww.ts's NULL stand-in) is stored back as NULL", () => {
+    recordConflict(sqlite, {
+      entityType: 'note',
+      entityId: 'n-nodev',
+      losingSide: 'local',
+      localPayload: { content: 'mine' },
+      remotePayload: { content: 'theirs' },
+      localKey: { ms: 1, counter: 0, deviceId: '' },
+      remoteKey: { ms: 2, counter: 1, deviceId: 'dev-remote' },
+      nowMs: 1000,
+    });
+
+    const [row] = listUnresolvedConflicts(sqlite);
+    assert.equal(row.local_device_id, null);
+    assert.equal(row.remote_device_id, 'dev-remote');
+    assert.equal(row.local_lww_counter, 0);
+    assert.equal(row.remote_lww_counter, 1);
+  });
+
   it('C2: countUnresolvedConflicts counts only resolved_at IS NULL rows', () => {
     recordConflict(sqlite, {
       entityType: 'note',
@@ -74,8 +117,8 @@ describe('conflicts — recordConflict / list / count / ignore', () => {
       losingSide: 'local',
       localPayload: {},
       remotePayload: {},
-      localUpdatedAtMs: 1,
-      remoteUpdatedAtMs: 2,
+      localKey: { ms: 1, counter: 0, deviceId: 'dev-local' },
+      remoteKey: { ms: 2, counter: 0, deviceId: 'dev-remote' },
     });
     recordConflict(sqlite, {
       entityType: 'note',
@@ -83,8 +126,8 @@ describe('conflicts — recordConflict / list / count / ignore', () => {
       losingSide: 'local',
       localPayload: {},
       remotePayload: {},
-      localUpdatedAtMs: 1,
-      remoteUpdatedAtMs: 2,
+      localKey: { ms: 1, counter: 0, deviceId: 'dev-local' },
+      remoteKey: { ms: 2, counter: 0, deviceId: 'dev-remote' },
     });
     assert.equal(countUnresolvedConflicts(sqlite), 2);
 
@@ -104,8 +147,8 @@ describe('conflicts — recordConflict / list / count / ignore', () => {
       losingSide: 'local',
       localPayload: {},
       remotePayload: {},
-      localUpdatedAtMs: 1,
-      remoteUpdatedAtMs: 2,
+      localKey: { ms: 1, counter: 0, deviceId: 'dev-local' },
+      remoteKey: { ms: 2, counter: 0, deviceId: 'dev-remote' },
       nowMs: 100,
     });
     recordConflict(sqlite, {
@@ -114,8 +157,8 @@ describe('conflicts — recordConflict / list / count / ignore', () => {
       losingSide: 'local',
       localPayload: {},
       remotePayload: {},
-      localUpdatedAtMs: 1,
-      remoteUpdatedAtMs: 2,
+      localKey: { ms: 1, counter: 0, deviceId: 'dev-local' },
+      remoteKey: { ms: 2, counter: 0, deviceId: 'dev-remote' },
       nowMs: 200,
     });
     const rows = listUnresolvedConflicts(sqlite);
@@ -132,8 +175,8 @@ describe('conflicts — recordConflict / list / count / ignore', () => {
         losingSide: 'local',
         localPayload: {},
         remotePayload: {},
-        localUpdatedAtMs: 1,
-        remoteUpdatedAtMs: 2,
+        localKey: { ms: 1, counter: 0, deviceId: 'dev-local' },
+        remoteKey: { ms: 2, counter: 0, deviceId: 'dev-remote' },
         nowMs: 100 + i,
       });
     }
@@ -161,8 +204,8 @@ describe('conflicts — recordConflict / list / count / ignore', () => {
       losingSide: 'local',
       localPayload: {},
       remotePayload: {},
-      localUpdatedAtMs: 1,
-      remoteUpdatedAtMs: 2,
+      localKey: { ms: 1, counter: 0, deviceId: 'dev-local' },
+      remoteKey: { ms: 2, counter: 0, deviceId: 'dev-remote' },
     });
 
     const changed = ignoreConflict(sqlite, id, { nowMs: 5000 });
@@ -188,8 +231,8 @@ describe('conflicts — recordConflict / list / count / ignore', () => {
       losingSide: 'local',
       localPayload: {},
       remotePayload: {},
-      localUpdatedAtMs: 1,
-      remoteUpdatedAtMs: 2,
+      localKey: { ms: 1, counter: 0, deviceId: 'dev-local' },
+      remoteKey: { ms: 2, counter: 0, deviceId: 'dev-remote' },
     });
     ignoreConflict(sqlite, id, { nowMs: 5000 });
 
@@ -218,8 +261,8 @@ describe('conflicts — recordConflict / list / count / ignore', () => {
       losingSide: 'remote',
       localPayload: { name: 'local' },
       remotePayload: { name: 'remote' },
-      localUpdatedAtMs: 1,
-      remoteUpdatedAtMs: 2,
+      localKey: { ms: 1, counter: 0, deviceId: 'dev-local' },
+      remoteKey: { ms: 2, counter: 0, deviceId: 'dev-remote' },
     });
     recordConflict(sqlite, {
       entityType: 'conversation',
@@ -227,8 +270,8 @@ describe('conflicts — recordConflict / list / count / ignore', () => {
       losingSide: 'local',
       localPayload: {},
       remotePayload: {},
-      localUpdatedAtMs: 1,
-      remoteUpdatedAtMs: 2,
+      localKey: { ms: 1, counter: 0, deviceId: 'dev-local' },
+      remoteKey: { ms: 2, counter: 0, deviceId: 'dev-remote' },
     });
     const rows = listUnresolvedConflicts(sqlite);
     const types = rows.map((r) => r.entity_type).sort();
@@ -273,8 +316,8 @@ describe('conflicts — resolveConflict (W7)', () => {
           ? opts.localPayload
           : { content: opts.local ?? 'local copy', updated_at_ms: 100 },
       remotePayload: { content: opts.remote, updated_at_ms: 200 },
-      localUpdatedAtMs: 100,
-      remoteUpdatedAtMs: 200,
+      localKey: { ms: 100, counter: 0, deviceId: 'dev-local' },
+      remoteKey: { ms: 200, counter: 0, deviceId: 'dev-remote' },
     });
     return { note, conflictId, baseline: note.updatedAt.getTime() };
   }
@@ -397,8 +440,8 @@ describe('conflicts — resolveConflict (W7)', () => {
       losingSide: 'local',
       localPayload: { content: 'x' },
       remotePayload: { content: 'y' },
-      localUpdatedAtMs: 1,
-      remoteUpdatedAtMs: 2,
+      localKey: { ms: 1, counter: 0, deviceId: 'dev-local' },
+      remoteKey: { ms: 2, counter: 0, deviceId: 'dev-remote' },
     });
     assert.throws(
       () => resolveConflict(db, sqlite, conflictId, { strategy: 'local', expectedUpdatedAtMs: 0 }),
@@ -431,8 +474,8 @@ describe('conflicts — resolveConflict (W7)', () => {
       losingSide: 'local',
       localPayload: { name: 'a' },
       remotePayload: { name: 'b' },
-      localUpdatedAtMs: 1,
-      remoteUpdatedAtMs: 2,
+      localKey: { ms: 1, counter: 0, deviceId: 'dev-local' },
+      remoteKey: { ms: 2, counter: 0, deviceId: 'dev-remote' },
     });
     assert.throws(
       () =>

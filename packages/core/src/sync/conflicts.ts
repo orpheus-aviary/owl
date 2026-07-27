@@ -19,6 +19,7 @@ import { randomUUID } from 'node:crypto';
 import type Database from 'better-sqlite3';
 import type { OwlDatabase } from '../db/index.js';
 import { type NoteWithTags, updateNote } from '../notes/index.js';
+import type { LwwKey } from './lww.js';
 
 export type ConflictLosingSide = 'local' | 'remote';
 
@@ -44,6 +45,14 @@ export interface ConflictRecord {
   remote_payload: string | null;
   local_updated_at_ms: number | null;
   remote_updated_at_ms: number | null;
+  // 0011 — the other two dimensions of the LWW key. Nullable because rows
+  // written before 0.6.2 genuinely don't have them (render as "老行" = ms only).
+  // `local_device_id` is also NULL when the losing local row had no device_id
+  // (lww.ts normalizes that to `''`; see recordConflict) → render 「未知设备」.
+  local_lww_counter: number | null;
+  remote_lww_counter: number | null;
+  local_device_id: string | null;
+  remote_device_id: string | null;
 }
 
 export interface RecordConflictArgs {
@@ -52,8 +61,10 @@ export interface RecordConflictArgs {
   losingSide: ConflictLosingSide;
   localPayload: unknown;
   remotePayload: unknown;
-  localUpdatedAtMs: number;
-  remoteUpdatedAtMs: number;
+  /** Full three-tuple of the losing (local) side — writers always have it. */
+  localKey: LwwKey;
+  /** Full three-tuple of the winning (remote) side. */
+  remoteKey: LwwKey;
   /** Override row id. Default `randomUUID()`. */
   id?: string;
   /** Override detected_at (Unix ms). Default `Date.now()`. */
@@ -82,8 +93,9 @@ export function recordConflict(sqlite: Database.Database, args: RecordConflictAr
          (id, entity_type, entity_id, local_seq, remote_seq, detected_at,
           resolved_at, resolution,
           losing_side, local_payload, remote_payload,
-          local_updated_at_ms, remote_updated_at_ms)
-       VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?)`,
+          local_updated_at_ms, remote_updated_at_ms,
+          local_lww_counter, remote_lww_counter, local_device_id, remote_device_id)
+       VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       id,
@@ -95,10 +107,20 @@ export function recordConflict(sqlite: Database.Database, args: RecordConflictAr
       args.losingSide,
       JSON.stringify(args.localPayload),
       JSON.stringify(args.remotePayload),
-      args.localUpdatedAtMs,
-      args.remoteUpdatedAtMs,
+      args.localKey.ms,
+      args.remoteKey.ms,
+      args.localKey.counter,
+      args.remoteKey.counter,
+      // `''` is lww.ts's stand-in for a NULL device_id (keeps the tuple totally
+      // ordered); store it back as NULL so the read side has one "unknown" shape.
+      emptyToNull(args.localKey.deviceId),
+      emptyToNull(args.remoteKey.deviceId),
     );
   return id;
+}
+
+function emptyToNull(deviceId: string): string | null {
+  return deviceId === '' ? null : deviceId;
 }
 
 /**
@@ -115,7 +137,9 @@ export function listUnresolvedConflicts(
       `SELECT id, entity_type, entity_id, local_seq, remote_seq,
               detected_at, resolved_at, resolution,
               losing_side, local_payload, remote_payload,
-              local_updated_at_ms, remote_updated_at_ms
+              local_updated_at_ms, remote_updated_at_ms,
+              local_lww_counter, remote_lww_counter,
+              local_device_id, remote_device_id
          FROM conflict_record
         WHERE resolved_at IS NULL
         ORDER BY detected_at DESC

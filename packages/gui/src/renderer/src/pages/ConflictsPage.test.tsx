@@ -64,6 +64,10 @@ function makeRow(over: Partial<ConflictRecord> = {}): ConflictRecord {
     remote_payload: JSON.stringify({ content: 'remote text' }),
     local_updated_at_ms: 1000,
     remote_updated_at_ms: 2000,
+    local_lww_counter: 0,
+    remote_lww_counter: 0,
+    local_device_id: 'dev-local-1234',
+    remote_device_id: 'dev-remote-5678',
     ...over,
   };
 }
@@ -138,6 +142,55 @@ describe('ConflictRow copy button (Feature A — 复制输方内容)', () => {
   it('hides the copy button when there is no local payload', () => {
     renderRow(makeRow({ local_payload: null }));
     expect(screen.queryByRole('button', { name: /复制/ })).toBeNull();
+  });
+});
+
+describe('ConflictRow LWW key display (0011 / 0.6.2 W1)', () => {
+  // Same ms on both sides — otherwise the timestamps already explain the winner.
+  const tie = { local_updated_at_ms: 5000, remote_updated_at_ms: 5000 };
+
+  it('shows only timestamps when the ms values differ', () => {
+    const { container } = renderRow(makeRow({ local_lww_counter: 4, remote_lww_counter: 9 }));
+    expect(container.textContent).not.toMatch(/#4|#9|同一毫秒/);
+  });
+
+  it('appends the counter when the ms tie is broken by lww_counter', () => {
+    const { container } = renderRow(
+      makeRow({ ...tie, local_lww_counter: 4, remote_lww_counter: 5 }),
+    );
+    expect(container.textContent).toMatch(/本地副本 \(.*· #4\)/);
+    expect(container.textContent).toMatch(/远端胜出 \(.*· #5\)/);
+    expect(container.textContent).not.toMatch(/同一毫秒/);
+  });
+
+  it('falls back to the device id when ms and counter both tie', () => {
+    const { container } = renderRow(
+      makeRow({ ...tie, local_lww_counter: 7, remote_lww_counter: 7 }),
+    );
+    expect(container.textContent).toMatch(/同一毫秒 · 计数相同，由设备 id 定序/);
+    expect(container.textContent).toMatch(/本地副本 \(.*· #7 · 设备 dev-loca\)/);
+    expect(container.textContent).toMatch(/远端胜出 \(.*· #7 · 设备 dev-remo\)/);
+  });
+
+  it('renders 未知设备 for a NULL device id instead of inventing one', () => {
+    const { container } = renderRow(
+      makeRow({ ...tie, local_lww_counter: 7, remote_lww_counter: 7, local_device_id: null }),
+    );
+    expect(container.textContent).toMatch(/本地副本 \(.*· #7 · 未知设备\)/);
+    expect(container.textContent).toMatch(/远端胜出 \(.*· #7 · 设备 dev-remo\)/);
+  });
+
+  it('adds nothing for a legacy row (both counters NULL)', () => {
+    const { container } = renderRow(
+      makeRow({
+        ...tie,
+        local_lww_counter: null,
+        remote_lww_counter: null,
+        local_device_id: null,
+        remote_device_id: null,
+      }),
+    );
+    expect(container.textContent).not.toMatch(/同一毫秒|未知设备|· #/);
   });
 });
 

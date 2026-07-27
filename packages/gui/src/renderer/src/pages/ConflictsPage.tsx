@@ -54,6 +54,46 @@ function formatTimestamp(ms: number | null): string {
   return new Date(ms).toLocaleString('zh-CN', { hour12: false });
 }
 
+/**
+ * 0011 (0.6.2 W1) — explain the LWW outcome when the timestamps alone can't.
+ * The winner is decided by the three-tuple `(updated_at_ms, lww_counter,
+ * device_id)`, so a same-millisecond conflict looks arbitrary unless we surface
+ * the other two dimensions:
+ *   - ms differ            → timestamps already explain it, add nothing
+ *   - ms tie, counter differs → append `· #<counter>` to each side
+ *   - ms + counter tie     → append the device and spell the rule out
+ *   - counters both NULL   → row predates 0011, add nothing
+ * A NULL device_id renders as「未知设备」— never invent a device name.
+ */
+interface LwwExplain {
+  localSuffix: string;
+  remoteSuffix: string;
+  hint: string | null;
+}
+
+const NO_LWW_EXPLAIN: LwwExplain = { localSuffix: '', remoteSuffix: '', hint: null };
+
+function deviceLabel(deviceId: string | null): string {
+  return deviceId ? `设备 ${deviceId.slice(0, 8)}` : '未知设备';
+}
+
+function explainLww(row: ConflictRecord): LwwExplain {
+  if (row.local_lww_counter === null && row.remote_lww_counter === null) return NO_LWW_EXPLAIN;
+  if (row.local_updated_at_ms !== row.remote_updated_at_ms) return NO_LWW_EXPLAIN;
+  if (row.local_lww_counter !== row.remote_lww_counter) {
+    return {
+      localSuffix: ` · #${row.local_lww_counter}`,
+      remoteSuffix: ` · #${row.remote_lww_counter}`,
+      hint: null,
+    };
+  }
+  return {
+    localSuffix: ` · #${row.local_lww_counter} · ${deviceLabel(row.local_device_id)}`,
+    remoteSuffix: ` · #${row.remote_lww_counter} · ${deviceLabel(row.remote_device_id)}`,
+    hint: '同一毫秒 · 计数相同，由设备 id 定序',
+  };
+}
+
 function parsePayloadContent(raw: string | null): string {
   if (!raw) return '(无副本)';
   try {
@@ -194,6 +234,7 @@ export function ConflictRow({
 }) {
   const local = parsePayloadContent(row.local_payload);
   const remote = parsePayloadContent(row.remote_payload);
+  const lww = explainLww(row);
   const openNote = useOpenNote();
   const isMobile = useIsMobile();
   const [copied, setCopied] = useState(false);
@@ -229,6 +270,7 @@ export function ConflictRow({
             {row.losing_side === 'local' ? '本地输' : (row.losing_side ?? '未知')}
           </Badge>
           <span className="text-[11px]">检测于 {formatTimestamp(row.detected_at)}</span>
+          {lww.hint && <span className="text-[11px]">· {lww.hint}</span>}
         </div>
         <div className={cn('flex items-center gap-1', isMobile ? 'flex-wrap' : 'shrink-0')}>
           <Button variant="ghost" size="sm" onClick={handleOpen} className="text-xs">
@@ -271,7 +313,8 @@ export function ConflictRow({
         <div>
           <div className="flex items-center justify-between gap-2 mb-1">
             <span className="font-medium text-muted-foreground">
-              本地副本 ({formatTimestamp(row.local_updated_at_ms)})
+              本地副本 ({formatTimestamp(row.local_updated_at_ms)}
+              {lww.localSuffix})
             </span>
             {row.local_payload && (
               <Button
@@ -298,7 +341,8 @@ export function ConflictRow({
         </div>
         <div>
           <div className="font-medium text-muted-foreground mb-1">
-            远端胜出 ({formatTimestamp(row.remote_updated_at_ms)})
+            远端胜出 ({formatTimestamp(row.remote_updated_at_ms)}
+            {lww.remoteSuffix})
           </div>
           <pre className="whitespace-pre-wrap break-words bg-muted/30 p-2 rounded text-foreground max-h-60 overflow-auto">
             {remote}

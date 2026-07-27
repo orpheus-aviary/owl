@@ -196,4 +196,14 @@ export interface ConflictRecord {
   remote_payload: string | null;
   local_updated_at_ms: number | null;
   remote_updated_at_ms: number | null;
+  /**
+   * 0011 (0.6.2 W1) — the other two dimensions of the LWW key
+   * `(updated_at_ms, lww_counter, device_id)`. All nullable: rows detected
+   * before 0.6.2 have none of them, and a NULL device_id means「未知设备」
+   * (core normalizes the `''` placeholder back to NULL on write).
+   */
+  local_lww_counter: number | null;
+  remote_lww_counter: number | null;
+  local_device_id: string | null;
+  remote_device_id: string | null;
 }

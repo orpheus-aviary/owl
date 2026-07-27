@@ -196,8 +196,8 @@ function maybeRecordNoteConflict(
   sqlite: Database.Database,
   c: ServerChangeLike,
   body: Extract<NoteApplyPayload, { op: 'update' }>['body'],
-  localTs: number,
-  remoteTs: number,
+  localKey: LwwKey,
+  remoteKey: LwwKey,
   conflictSink: ConflictSink,
 ): void {
   if (body.content === undefined) return;
@@ -233,8 +233,8 @@ function maybeRecordNoteConflict(
     losingSide: 'local',
     localPayload: localSnap,
     remotePayload: body,
-    localUpdatedAtMs: localTs,
-    remoteUpdatedAtMs: remoteTs,
+    localKey,
+    remoteKey,
     remoteSeq: c.serverSeq,
     nowMs: now(),
   });
@@ -281,9 +281,9 @@ function applyNoteChange(
 
   // P5-c §6.16: conflict detection runs before applyNoteUpdate overwrites
   // the losing local row. Other ops (create / trash / restore) skip the hook.
-  // conflict_record still stores bare ms (counter columns deferred, plan §4.1).
+  // 0011 (0.6.2 W1): the row stores the whole three-tuple, not just ms.
   if (conflictSink && payload.op === 'update' && localExists) {
-    maybeRecordNoteConflict(sqlite, c, payload.body, localKey.ms, remoteKey.ms, conflictSink);
+    maybeRecordNoteConflict(sqlite, c, payload.body, localKey, remoteKey, conflictSink);
   }
 
   if (payload.op === 'create') return applyNoteCreate(db, sqlite, c, payload.body);

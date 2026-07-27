@@ -665,7 +665,9 @@ describe('dual-profile core-only e2e (P5-b §8.3 D1-D10 + P5-c D14)', { skip: !g
     const conflicts = profileB.sqlite
       .prepare(
         `SELECT entity_type, entity_id, losing_side, local_payload, remote_payload,
-                local_updated_at_ms, remote_updated_at_ms, resolved_at
+                local_updated_at_ms, remote_updated_at_ms, resolved_at,
+                local_lww_counter, remote_lww_counter,
+                local_device_id, remote_device_id
            FROM conflict_record WHERE entity_id = ?`,
       )
       .all(d14NoteId) as Array<{
@@ -677,6 +679,10 @@ describe('dual-profile core-only e2e (P5-b §8.3 D1-D10 + P5-c D14)', { skip: !g
       local_updated_at_ms: number;
       remote_updated_at_ms: number;
       resolved_at: number | null;
+      local_lww_counter: number | null;
+      remote_lww_counter: number | null;
+      local_device_id: string | null;
+      remote_device_id: string | null;
     }>;
     assert.equal(conflicts.length, 1, 'exactly one conflict row for this note on B');
     const row = conflicts[0];
@@ -685,6 +691,12 @@ describe('dual-profile core-only e2e (P5-b §8.3 D1-D10 + P5-c D14)', { skip: !g
     assert.equal(row.resolved_at, null, 'fresh row is unresolved');
     assert.equal(row.local_updated_at_ms, bLocalAfterEdit.updated_at);
     assert.equal(row.remote_updated_at_ms, aLocalAfterEdit.updated_at);
+    // 0011 (W1): the full LWW three-tuple is persisted, not just the ms pair.
+    assert.equal(typeof row.local_lww_counter, 'number', 'local counter recorded');
+    assert.equal(typeof row.remote_lww_counter, 'number', 'remote counter recorded');
+    assert.ok(row.local_device_id, 'local device_id recorded');
+    assert.ok(row.remote_device_id, 'remote device_id recorded');
+    assert.notEqual(row.local_device_id, row.remote_device_id, 'two distinct devices');
 
     const localPayload = JSON.parse(row.local_payload) as {
       content: string;

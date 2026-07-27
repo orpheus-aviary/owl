@@ -1604,12 +1604,18 @@ describe('runSync — conflict detection (P5-c §6.16)', () => {
     remote_payload: string;
     local_updated_at_ms: number;
     remote_updated_at_ms: number;
+    local_lww_counter: number | null;
+    remote_lww_counter: number | null;
+    local_device_id: string | null;
+    remote_device_id: string | null;
     remote_seq: number;
   }> {
     return sqlite
       .prepare(
         `SELECT entity_id, losing_side, local_payload, remote_payload,
-                local_updated_at_ms, remote_updated_at_ms, remote_seq
+                local_updated_at_ms, remote_updated_at_ms,
+                local_lww_counter, remote_lww_counter,
+                local_device_id, remote_device_id, remote_seq
            FROM conflict_record ORDER BY detected_at`,
       )
       .all() as ReturnType<typeof readConflicts>;
@@ -1660,6 +1666,110 @@ describe('runSync — conflict detection (P5-c §6.16)', () => {
 
     // Local row overwritten with remote content (LWW apply still happens).
     assert.equal(readNote(sqlite, 'n-c')?.content, 'remote copy');
+  });
+
+  // ── 0011 (0.6.2 W1): the row records the whole LWW three-tuple, so the
+  // conflicts page can explain the outcome even when the ms values tie.
+
+  it('same ms, remote counter wins → both counters recorded', async () => {
+    seedNote(sqlite, 'n-c', { content: 'local copy', updatedAt: 2_000 });
+    sqlite.prepare('UPDATE notes SET lww_counter = 1 WHERE id = ?').run('n-c');
+    markLocalEdit(sqlite, 'n-c', 'cid-local-edit');
+    const client = new FakeSkybridgeClient();
+    client.enqueuePull({
+      changes: [
+        makeNoteChange({
+          serverSeq: 8,
+          entityId: 'n-c',
+          op: 'update',
+          payload: { updated_at_ms: 2_000, lww_counter: 2, content: 'remote copy' },
+        }),
+      ],
+      hasMore: false,
+    });
+    const result = await runSync({
+      db,
+      sqlite,
+      client,
+      workspaceId: WORKSPACE_ID,
+      serverUrl: SERVER_URL,
+      nowMs: fakeNow,
+    });
+
+    assert.equal(result.conflictsRecorded, 1);
+    const [row] = readConflicts();
+    assert.equal(row.local_updated_at_ms, 2_000);
+    assert.equal(row.remote_updated_at_ms, 2_000);
+    assert.equal(row.local_lww_counter, 1);
+    assert.equal(row.remote_lww_counter, 2);
+  });
+
+  it('same ms + same counter, device_id breaks the tie → both device ids recorded', async () => {
+    // 'dev-remote' > 'dev-local' lexicographically, so remote wins on the third
+    // dimension alone — the only thing that explains the outcome is device_id.
+    seedNote(sqlite, 'n-c', { content: 'local copy', updatedAt: 2_000, deviceId: 'dev-local' });
+    sqlite.prepare('UPDATE notes SET lww_counter = 3 WHERE id = ?').run('n-c');
+    markLocalEdit(sqlite, 'n-c', 'cid-local-edit');
+    const client = new FakeSkybridgeClient();
+    client.enqueuePull({
+      changes: [
+        makeNoteChange({
+          serverSeq: 9,
+          entityId: 'n-c',
+          op: 'update',
+          payload: { updated_at_ms: 2_000, lww_counter: 3, content: 'remote copy' },
+        }),
+      ],
+      hasMore: false,
+    });
+    const result = await runSync({
+      db,
+      sqlite,
+      client,
+      workspaceId: WORKSPACE_ID,
+      serverUrl: SERVER_URL,
+      nowMs: fakeNow,
+    });
+
+    assert.equal(result.conflictsRecorded, 1);
+    const [row] = readConflicts();
+    assert.equal(row.local_lww_counter, 3);
+    assert.equal(row.remote_lww_counter, 3);
+    assert.equal(row.local_device_id, 'dev-local');
+    assert.equal(row.remote_device_id, REMOTE_DEVICE);
+    assert.equal(readNote(sqlite, 'n-c')?.content, 'remote copy');
+  });
+
+  it('a NULL local device_id is stored as NULL, not the empty-string placeholder', async () => {
+    seedNote(sqlite, 'n-c', { content: 'local copy', updatedAt: 1_000 });
+    // seedNote defaults device_id to 'dev-local'; a genuinely device-less row
+    // (pre-0006 note that was never re-stamped) is what lww.ts reads as ''.
+    sqlite.prepare('UPDATE notes SET device_id = NULL WHERE id = ?').run('n-c');
+    markLocalEdit(sqlite, 'n-c', 'cid-local-edit');
+    const client = new FakeSkybridgeClient();
+    client.enqueuePull({
+      changes: [
+        makeNoteChange({
+          serverSeq: 10,
+          entityId: 'n-c',
+          op: 'update',
+          payload: { updated_at_ms: 2_000, content: 'remote copy' },
+        }),
+      ],
+      hasMore: false,
+    });
+    await runSync({
+      db,
+      sqlite,
+      client,
+      workspaceId: WORKSPACE_ID,
+      serverUrl: SERVER_URL,
+      nowMs: fakeNow,
+    });
+
+    const [row] = readConflicts();
+    assert.equal(row.local_device_id, null);
+    assert.equal(row.remote_device_id, REMOTE_DEVICE);
   });
 
   it('no conflict when content matches (LWW apply without conflict_record write)', async () => {
