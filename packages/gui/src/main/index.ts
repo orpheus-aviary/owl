@@ -14,9 +14,15 @@ import { registerMigrationIpc } from './migration-ipc.js';
 import type { StartupMode } from './migration-precheck.js';
 import { runMigrationPrecheck } from './migration-precheck.js';
 import { acquireSingleInstanceLock } from './single-instance.js';
+import { onTimerRefreshResult, recoverIfAuthRequired } from './sync-auth-recovery.js';
+import { setRefreshResultHandler } from './sync-auth-renewal.js';
 import { maybeRefreshNow, restoreSessionOnStartup } from './sync-auth.js';
 import { registerSyncIpc } from './sync-ipc.js';
 import { createWindow } from './window.js';
+
+// 0.6.2 W3 — a background renewal that refreshed but failed to hand the token
+// to the daemon feeds the recovery module's retry loop instead of vanishing.
+setRefreshResultHandler(onTimerRefreshResult);
 
 // Acquire the single-instance lock as early as possible (Phase 21, layer A). A
 // second launch quits here; the primary keeps booting and focuses its window on
@@ -237,11 +243,18 @@ app.whenReady().then(async () => {
   // timer renews ~1min before expiry; these cover the gap when the machine
   // slept past the timer or the user returns after a long idle. maybeRefreshNow
   // is a cheap no-op unless the token is actually at/near expiry.
+  //
+  // 0.6.2 W3 — the same two moments also ask the daemon whether sync is stuck
+  // on `auth_required` and kick off recovery. Renderer-driven recovery covers
+  // the normal case, but with every window closed there is no renderer to
+  // forward the status; this is the fallback that heals it anyway.
   powerMonitor.on('resume', () => {
     void maybeRefreshNow();
+    void recoverIfAuthRequired();
   });
   app.on('browser-window-focus', () => {
     void maybeRefreshNow();
+    void recoverIfAuthRequired();
   });
 
   app.on('activate', () => {

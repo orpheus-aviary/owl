@@ -71,8 +71,8 @@ export function registerSystemRoutes(app: FastifyInstance, ctx: AppContext): voi
         },
         {
           method: 'POST',
-          path: '/sync/logout-local',
-          description: 'Tear down daemon-side session + clearSyncIdentity (toml untouched)',
+          path: '/sync/auth-unrecoverable',
+          description: 'Credentials wiped by GUI main — stop syncing until re-login',
         },
       ],
     });

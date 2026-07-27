@@ -58,6 +58,7 @@ function defaultOwlAPI(): OwlAPI {
         }),
       ),
       revokeDevice: vi.fn(() => Promise.resolve({ ok: true as const, data: { revoked: true } })),
+      requestRecovery: vi.fn(),
       run: vi.fn(() =>
         Promise.resolve({
           ok: true as const,

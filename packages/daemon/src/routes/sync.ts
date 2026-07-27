@@ -8,16 +8,25 @@
  *                              with replace semantics (stop → clear → install →
  *                              restart background handles). 127.0.0.1 only.
  *                              Handler MUST NOT log req.body / token.
- *   POST /sync/logout-local — P5-d Phase 6: tear down background handles +
- *                              clear ctx.skybridgeSession + clearSyncIdentity
- *                              on sqlite. Does NOT touch toml or sync_cursor
- *                              (GUI main owns toml; cursor isolation is keyed
- *                              by syncEndpointKey, see v3 §3.6.2).
+ *   POST /sync/auth-unrecoverable
+ *                           — 0.6.2 W3: GUI main has just wiped credentials
+ *                              (refresh token dead). Converge the snapshot to
+ *                              `auth_required / credentials_missing` so the UI
+ *                              says「请重新登录」instead of「正在自动恢复」.
  *
  * Retired in P5-d Phase 6:
  *   POST /sync/login — daemon never writes toml; GUI main is the sole writer
  *                       via the Phase 7 keychain path. Until that ships, dev
  *                       drivers seed credentials directly via /sync/session.
+ *
+ * Retired in 0.6.2 W3:
+ *   POST /sync/logout-local — it never cleared credentials (the daemon doesn't
+ *                       write toml) and had no production caller: GUI logout
+ *                       goes through `/sync/switch local`. Under the W3 state
+ *                       machine it was actively harmful — clearing the session
+ *                       produced `missing_session`, which the renderer answers
+ *                       by re-installing the still-present stored token, i.e.
+ *                       undoing the logout.
  *
  * Error translation comes from `manual.ts` (`statusForError` /
  * `codeForError`) so the §5.4 error_code matrix lives in one place.
@@ -26,13 +35,14 @@
 import {
   LOCAL_PROFILE,
   SkybridgeAuthRequiredError,
-  clearSyncIdentity,
   isHexProfileId,
   readSkybridgeDeviceId,
 } from '@owl/core';
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import type { AppContext } from '../context.js';
+import type { AuthReason } from '../events/types.js';
 import { fail, ok } from '../response.js';
+import { signalAuthRequired } from '../sync/auth-signal.js';
 import { ensureBackgroundHandles, stopBackgroundHandles } from '../sync/bridge-lifecycle.js';
 import {
   codeForError,
@@ -48,7 +58,20 @@ import {
   installSkybridgeSession,
   invalidateSkybridgeSession,
 } from '../sync/session.js';
-import { evictSyncStatusBroadcaster } from '../sync/status-broadcaster.js';
+import { isApiError } from '../sync/skybridge-errors.js';
+import {
+  evictSyncStatusBroadcaster,
+  getSyncStatusBroadcaster,
+} from '../sync/status-broadcaster.js';
+
+/**
+ * 0.6.2 W3 — a raw SDK 401 means the token we hold was REJECTED (only a
+ * refresh helps); our own `SkybridgeAuthRequiredError` just means no session
+ * is installed (re-installing the stored token is enough).
+ */
+function authReasonFor(err: unknown): AuthReason {
+  return isApiError(err) && err.status === 401 ? 'token_rejected' : 'missing_session';
+}
 
 export function registerSyncRoutes(app: FastifyInstance, ctx: AppContext): void {
   app.post('/sync/run', async (_req, reply) => {
@@ -60,9 +83,21 @@ export function registerSyncRoutes(app: FastifyInstance, ctx: AppContext): void 
     }
   });
 
+  // 0.6.2 W3 — the response now carries the broadcaster's live overlay
+  // (`state` / `auth_reason` / `last_error`) on top of the sqlite truth. A
+  // renderer that cold-starts (or reconnects) has no other way to learn that
+  // sync is stopped waiting for a login: the daemon isn't running any rounds,
+  // so no failure event will ever arrive. Counts / cursors still come from the
+  // live query — the broadcaster only recomputes `pending_count` on success.
   app.get('/sync/status', async (_req, reply) => {
     try {
-      ok(reply, readSyncStatus(ctx));
+      const snapshot = getSyncStatusBroadcaster(ctx).snapshot();
+      ok(reply, {
+        ...readSyncStatus(ctx),
+        state: snapshot.state,
+        auth_reason: snapshot.auth_reason,
+        last_error: snapshot.last_error,
+      });
     } catch (err) {
       fail(reply, statusForError(err), messageForError(err), codeForError(err));
     }
@@ -99,6 +134,7 @@ export function registerSyncRoutes(app: FastifyInstance, ctx: AppContext): void 
       const translated = translateSkybridgeError(err);
       if (translated instanceof SkybridgeAuthRequiredError) {
         invalidateSkybridgeSession(ctx);
+        signalAuthRequired(ctx, authReasonFor(err), messageForError(translated));
       }
       fail(
         reply,
@@ -132,6 +168,7 @@ export function registerSyncRoutes(app: FastifyInstance, ctx: AppContext): void 
       const translated = translateSkybridgeError(err);
       if (translated instanceof SkybridgeAuthRequiredError) {
         invalidateSkybridgeSession(ctx);
+        signalAuthRequired(ctx, authReasonFor(err), messageForError(translated));
       }
       fail(
         reply,
@@ -205,6 +242,10 @@ export function registerSyncRoutes(app: FastifyInstance, ctx: AppContext): void 
       // below reflects the just-installed binding, not a stale one from a
       // prior session (mirrors the profile-switch eviction).
       evictSyncStatusBroadcaster(ctx);
+      // 0.6.2 W3 — evicting alone is silent: the renderer would sit on the
+      // `auth_required` it was told about until some other event happened.
+      // Broadcast the rebuilt (now `idle`) snapshot explicitly.
+      getSyncStatusBroadcaster(ctx).markSessionInstalled();
       await ensureBackgroundHandles(ctx, ctx.logger);
       ctx.logger.info(
         {
@@ -224,23 +265,39 @@ export function registerSyncRoutes(app: FastifyInstance, ctx: AppContext): void 
         workspace_id: session.workspaceId,
       });
     } catch (err) {
+      // The handler already stopped the handles and cleared the session above,
+      // so the snapshot would otherwise still claim the old `idle` binding.
+      getSyncStatusBroadcaster(ctx).markAuthRequired(
+        'missing_session',
+        'sync session install failed',
+      );
       fail(reply, statusForError(err), messageForError(err), codeForError(err));
     }
   });
 
-  // P5-d Phase 6 — tear down daemon-side session state. Caller (GUI main)
-  // is responsible for remote /auth/logout + toml rewrite. We never touch
-  // sync_cursor — cross-workspace cursor isolation is keyed by
-  // syncEndpointKey(serverUrl, workspaceId) so a same-workspace re-login
-  // resumes from the same `pulled_seq`.
-  app.post('/sync/logout-local', async (_req, reply) => {
+  // 0.6.2 W3 — GUI main calls this right after wiping the stored credentials
+  // (the refresh token is dead / the device was revoked). Without it the daemon
+  // would keep reporting `token_rejected`, i.e.「正在自动恢复登录…」forever:
+  // the broadcaster is cached in a WeakMap and its initial snapshot is only
+  // evaluated on create/evict, and the daemon has no toml file watcher, so
+  // wiping credentials on disk is invisible to it.
+  //
+  // Deliberately keeps the db identity and `sync_cursor` — this is not a
+  // logout, it's "the same account needs a fresh login".
+  app.post('/sync/auth-unrecoverable', async (_req, reply) => {
     if (cloudForbidden(ctx, reply)) return;
     try {
       stopBackgroundHandles(ctx);
       ctx.skybridgeSession = null;
-      clearSyncIdentity(ctx.sqlite);
-      ctx.logger.info({ kind: 'sync-session', op: 'logout-local' }, 'sync session cleared');
-      ok(reply, { cleared: true });
+      getSyncStatusBroadcaster(ctx).markAuthRequired(
+        'credentials_missing',
+        'skybridge 凭据已失效，请重新登录',
+      );
+      ctx.logger.info(
+        { kind: 'sync-session', op: 'auth-unrecoverable' },
+        'credentials cleared by GUI; sync stopped until re-login',
+      );
+      ok(reply, { acknowledged: true });
     } catch (err) {
       fail(reply, statusForError(err), messageForError(err), codeForError(err));
     }

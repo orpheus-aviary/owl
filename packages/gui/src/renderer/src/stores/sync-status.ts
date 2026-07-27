@@ -1,4 +1,5 @@
 import { type SyncStatusSnapshot, getSyncStatus } from '@/lib/api';
+import { getPlatform } from '@/platform';
 import { create } from 'zustand';
 import { currentGen, isStale } from './session-epoch';
 
@@ -8,12 +9,19 @@ import { currentGen, isStale } from './session-epoch';
  * Two sources feed this store:
  *   1. one-shot `GET /sync/status` on mount (covers the cold-start case
  *      where the daemon has been running before the renderer opened, so
- *      no `sync:status_changed` SSE event has fired yet). The GET shape
- *      lacks `state`/`last_error`, so we derive `state='idle'` from a
- *      successful fetch — SSE will overwrite with the live state when
- *      something actually flips.
+ *      no `sync:status_changed` SSE event has fired yet). Since 0.6.2 the
+ *      GET carries the live `state` / `auth_reason` / `last_error` overlay
+ *      too — a cold start is exactly when「需登录」matters most, and the
+ *      daemon isn't running any rounds that could fail into an SSE event.
  *   2. SSE `sync:status_changed` events from the existing `/events`
  *      channel (see `events-subscriber-core.ts`)
+ *
+ * 0.6.2 W3 — every write to `snapshot` goes through `commitSnapshot`. Before,
+ * three paths wrote independently (SSE `setSnapshot`, the GET's `applyNow`,
+ * and the deferred timer), so any check placed in one of them was blind to the
+ * other two — and the GET path is the one that carries `auth_required` on a
+ * cold start. `commitSnapshot` validates the state/reason invariant and is the
+ * single place that asks the host to recover.
  *
  * `snapshot === null` means "no snapshot yet" — distinct from "daemon says no
  * sync configured" (a snapshot with `server_url === null`). Whether that null is
@@ -77,9 +85,30 @@ export const useSyncStatus = create<SyncStatusStore>((set, get) => {
     set({ pendingTimer: null, pendingSnapshot: null });
   }
 
+  /**
+   * The only writer of `snapshot`. Rejects malformed frames, then asks the
+   * host to recover when we've just ENTERED a recoverable `auth_required`
+   * (staying in the same reason must not re-trigger — the host's own backoff
+   * owns the retry cadence).
+   */
+  function commitSnapshot(next: SyncStatusSnapshot): void {
+    const hasReason = next.auth_reason != null;
+    if ((next.state === 'auth_required') !== hasReason) {
+      console.warn('[sync-status] dropping snapshot with inconsistent auth_reason:', next);
+      return;
+    }
+    const previous = get().snapshot;
+    set({ snapshot: next });
+    if (next.state !== 'auth_required' || next.auth_reason === null) return;
+    // Terminal — the credentials are gone, only a human can fix it.
+    if (next.auth_reason === 'credentials_missing') return;
+    if (previous?.state === 'auth_required' && previous.auth_reason === next.auth_reason) return;
+    getPlatform().sync.requestRecovery?.(next.auth_reason);
+  }
+
   function applyNow(snap: SyncStatusSnapshot): void {
     clearPending();
-    set({ snapshot: snap });
+    commitSnapshot(snap);
   }
 
   return {
@@ -97,7 +126,8 @@ export const useSyncStatus = create<SyncStatusStore>((set, get) => {
         // a follow-up push round after a same-frame settle should still
         // hold the spinner visible long enough to see.
         clearPending();
-        set({ snapshot: snap, minDisplayUntilMs: now + SYNC_STATUS_MIN_DISPLAY_MS });
+        set({ minDisplayUntilMs: now + SYNC_STATUS_MIN_DISPLAY_MS });
+        commitSnapshot(snap);
         return;
       }
 
@@ -123,7 +153,8 @@ export const useSyncStatus = create<SyncStatusStore>((set, get) => {
       const timer = setTimeout(() => {
         const queued = get().pendingSnapshot;
         if (queued !== null) {
-          set({ snapshot: queued, pendingTimer: null, pendingSnapshot: null });
+          set({ pendingTimer: null, pendingSnapshot: null });
+          commitSnapshot(queued);
         } else {
           // Defensive: somehow the queued snapshot got cleared without us
           // clearing the timer — drop the timer ref and leave state as is.
@@ -144,8 +175,11 @@ export const useSyncStatus = create<SyncStatusStore>((set, get) => {
           // The daemon answered — reachable regardless of whether a snapshot
           // came back (an unconfigured daemon still returns 200).
           if (res.data) {
-            const { configured: _c, authenticated: _a, ...rest } = res.data;
-            applyNow({ ...rest, state: 'idle', last_error: null });
+            // 0.6.2 W3: `state` / `auth_reason` / `last_error` now come from
+            // the daemon. The old code faked `state:'idle'` here, which erased
+            // exactly the「需登录」a cold-starting renderer needs to see.
+            const { configured: _c, authenticated: _a, ...snapshot } = res.data;
+            applyNow(snapshot);
           }
           set({ probeStatus: 'ok' });
         } catch {

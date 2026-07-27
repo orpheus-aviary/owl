@@ -23,6 +23,7 @@ function makeSnapshot(overrides: Partial<SyncStatusSnapshot> = {}): SyncStatusSn
     pulled_seq: 5,
     pushed_seq: 5,
     last_sync_at: 1_700_000_000_000,
+    auth_reason: null,
     last_error: null,
     ...overrides,
   };

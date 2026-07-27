@@ -1,4 +1,4 @@
-import type { SyncStatusSnapshot } from '@/lib/api';
+import { SYNC_STATES, type SyncState, type SyncStatusSnapshot } from '@/lib/api';
 
 /**
  * Pure event-dispatch helper for the daemon → GUI reverse channel.
@@ -111,10 +111,12 @@ async function handleOpenNote(rawData: string, handlers: EventHandlers): Promise
  *   { type: 'sync:status_changed', status: SyncStatusSnapshot }
  * (see `packages/daemon/src/events/types.ts`).
  *
- * We only validate that `status.state` is one of the four known values
- * — every other field is plumbed straight into the snapshot. A bad
- * payload gets warned and dropped; we never throw because that would
- * surface as an unhandled rejection in the EventSource listener.
+ * We only validate that `status.state` is one of the known values (from the
+ * shared `SYNC_STATES` table — a hardcoded chain here silently dropped every
+ * `auth_required` frame when 0.6.2 added that state) — every other field is
+ * plumbed straight into the snapshot. A bad payload gets warned and dropped;
+ * we never throw because that would surface as an unhandled rejection in the
+ * EventSource listener.
  */
 function handleSyncStatusChanged(rawData: string, handlers: EventHandlers): void {
   let data: unknown;
@@ -134,7 +136,7 @@ function handleSyncStatusChanged(rawData: string, handlers: EventHandlers): void
     return;
   }
   const state = (status as { state?: unknown }).state;
-  if (state !== 'idle' && state !== 'syncing' && state !== 'error' && state !== 'offline') {
+  if (!SYNC_STATES.includes(state as SyncState)) {
     console.warn('[events] sync:status_changed unknown state:', state);
     return;
   }

@@ -46,7 +46,31 @@ export type OwlEvent =
   | { type: 'conflicts:changed' }
   | { type: 'notes:changed' };
 
-export type SyncState = 'idle' | 'syncing' | 'error' | 'offline';
+/**
+ * `auth_required` (0.6.2 W3) is the state that says "syncing is stopped until
+ * someone re-authenticates". It is deliberately a *state* and not a one-shot
+ * command event: the reason has to survive in the persistent snapshot so a
+ * daemon that restarts alone, or a renderer that cold-starts through
+ * `GET /sync/status`, still sees it. Mirrored in
+ * `packages/shared/src/types.ts` — change both.
+ */
+export type SyncState = 'idle' | 'syncing' | 'error' | 'offline' | 'auth_required';
+
+/**
+ * Why we're in `auth_required`. Ordered by priority — a weaker reason may
+ * never overwrite a stronger one (see `markAuthRequired`):
+ *
+ *   missing_session (1)     no session installed (cold start / daemon restart /
+ *                           post-switch) — re-installing the stored access
+ *                           token fixes it.
+ *   token_rejected (2)      the server answered 401 — the stored access token
+ *                           is dead, only a refresh can fix it. Downgrading
+ *                           this to `missing_session` would loop forever:
+ *                           reinstall the same rejected token → 401 → …
+ *   credentials_missing (3) an account profile whose credentials are gone
+ *                           (refresh died) — terminal, needs a human.
+ */
+export type AuthReason = 'missing_session' | 'token_rejected' | 'credentials_missing';
 
 /**
  * Aggregated sync state for the GUI. Extends `SyncStatusResult` (the
@@ -64,4 +88,6 @@ export interface SyncStatusSnapshot {
   pushed_seq: number;
   last_sync_at: number | null;
   last_error: string | null;
+  /** Non-null iff `state === 'auth_required'`. */
+  auth_reason: AuthReason | null;
 }

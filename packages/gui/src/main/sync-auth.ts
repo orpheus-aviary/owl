@@ -83,6 +83,7 @@ import {
   decryptB64,
   safeReadConfig,
 } from './sync-auth-crypto.js';
+import { bumpRecoveryGeneration } from './sync-auth-recovery.js';
 import {
   clearRefreshTimer,
   getCurrentExpiresAt,
@@ -96,6 +97,7 @@ import {
   bestEffortSwitchLocal,
   ensureOwlWorkspace,
   maybeClaimLocalInto,
+  postAuthUnrecoverable,
   postSyncSession,
   postSyncSwitch,
   postSyncSwitchStrict,
@@ -179,6 +181,10 @@ async function loginAndOpenSessionImpl(
   // of the prior account fires into the target's db during the switch window.
   const priorExpiresAt = getCurrentExpiresAt();
   clearRefreshTimer();
+  // 0.6.2 W3 — invalidate any in-flight / scheduled auth recovery: it belongs
+  // to the account we are leaving, and letting it land after the switch would
+  // refresh (or re-install) the wrong profile.
+  bumpRecoveryGeneration();
   let switched = false;
   // Acquired lazily right before the first /sync/switch (NOT around the claim
   // prompt above it), released in `finally` — covers the toml write + unwind.
@@ -284,6 +290,7 @@ export function logout(): Promise<void> {
 async function logoutImpl(): Promise<void> {
   // Stop renewing immediately — no timer should fire mid-logout.
   clearRefreshTimer();
+  bumpRecoveryGeneration(); // W3: and no recovery should resurrect the session
 
   const cfg = safeReadConfig();
 
@@ -352,6 +359,7 @@ async function switchToProfileImpl(targetId: string): Promise<void> {
 
   const priorExpiresAt = getCurrentExpiresAt(); // capture before clear (rollback/reschedule)
   clearRefreshTimer();
+  bumpRecoveryGeneration(); // W3: drop recovery aimed at the profile we leave
 
   if (targetId === LOCAL_PROFILE) {
     const releaseLock = acquireSwitchLockFile();
@@ -523,6 +531,7 @@ async function deleteProfileLocalCopyImpl(targetId: string): Promise<{ wasActive
   if (wasActive) {
     const activeExpiresAt = getCurrentExpiresAt();
     clearRefreshTimer();
+    bumpRecoveryGeneration(); // W3: the profile is about to stop existing
     // Critical section: the daemon swap → toml write. The remote revoke + db
     // delete below run after the daemon is consistently on local (no divergence).
     const releaseLock = acquireSwitchLockFile();
@@ -596,7 +605,12 @@ async function restoreSessionOnStartupImpl(): Promise<SyncSessionSummary | null>
       // Dead refresh token → drop the stale creds so the user gets a clean
       // re-login (the device memory in the db is kept). Network / unknown →
       // stay offline but keep the token; a focus/resume retries.
-      if (isRefreshDead(err)) clearSkybridgeAuth();
+      // 0.6.2 W3: also tell the daemon, or it keeps reporting whatever it had
+      // (and the UI keeps promising an automatic recovery that can't happen).
+      if (isRefreshDead(err)) {
+        clearSkybridgeAuth();
+        await postAuthUnrecoverable();
+      }
       return null;
     }
     persistRotated(rotated);

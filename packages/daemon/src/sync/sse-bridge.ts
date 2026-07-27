@@ -29,8 +29,10 @@
 
 import type { Logger } from '@owl/core';
 import type { AppContext } from '../context.js';
+import { signalAuthRequired } from './auth-signal.js';
 import { runManualSync } from './manual.js';
-import type { RealSkybridgeClient } from './session.js';
+import { type RealSkybridgeClient, invalidateSkybridgeSession } from './session.js';
+import { isApiError } from './skybridge-errors.js';
 import { getSyncStatusBroadcaster } from './status-broadcaster.js';
 
 export interface SseBridge {
@@ -195,6 +197,7 @@ export function createSseBridge(opts: SseBridgeOptions): SseBridge {
           });
         },
         onError: (err) => {
+          if (handleAuthFailure(err)) return;
           opts.logger.warn({ kind: 'sse', err: errorMessage(err) }, 'SSE error');
           broadcaster.markOffline(err);
           // P5-c §3.2: kick off the health probe so a transient disconnect
@@ -205,6 +208,7 @@ export function createSseBridge(opts: SseBridgeOptions): SseBridge {
         },
       });
     } catch (err) {
+      if (handleAuthFailure(err)) return;
       opts.logger.warn(
         { kind: 'sse', err: errorMessage(err) },
         'subscribeEvents threw; will retry',
@@ -212,6 +216,28 @@ export function createSseBridge(opts: SseBridgeOptions): SseBridge {
       broadcaster.markOffline(err);
       scheduleReconnect();
     }
+  }
+
+  /**
+   * 0.6.2 W3 — a 401 is not an outage, and retrying it forever is worse than
+   * useless. If subscribe itself is rejected, `onOpen` never fires, so its
+   * catch-up `runManualSync` never runs either: with `[sync].interval_min <= 0`
+   * there would be no REST round at all, and the bridge would sit reconnecting
+   * to a dead token while the UI showed「离线」.
+   *
+   * So: drop the session, put the state machine into `auth_required /
+   * token_rejected`, and STOP reconnecting. GUI main's recovery re-installs a
+   * session through `/sync/session`, whose `ensureBackgroundHandles` starts a
+   * fresh bridge. Returns true when it handled the error.
+   */
+  function handleAuthFailure(err: unknown): boolean {
+    if (!isApiError(err) || err.status !== 401) return false;
+    opts.logger.warn({ kind: 'sse', status: 401 }, 'SSE rejected: token no longer valid');
+    stopped = true;
+    clearWatchdog();
+    invalidateSkybridgeSession(opts.ctx);
+    signalAuthRequired(opts.ctx, 'token_rejected', 'skybridge token 已失效，请重新登录');
+    return true;
   }
 
   function scheduleReconnect(): void {

@@ -137,7 +137,25 @@ export interface AiPreviewSummary {
   expires_at: string;
 }
 
-export type SyncState = 'idle' | 'syncing' | 'error' | 'offline';
+/**
+ * Every sync state the daemon can broadcast. Exported as a const array so the
+ * renderer's SSE validator checks against one list instead of a hardcoded
+ * `state !== 'idle' && …` chain that silently drops new states.
+ * Mirrored in `packages/daemon/src/events/types.ts` — change both.
+ */
+export const SYNC_STATES = ['idle', 'syncing', 'error', 'offline', 'auth_required'] as const;
+
+export type SyncState = (typeof SYNC_STATES)[number];
+
+/**
+ * Why sync is in `auth_required`, in priority order (see the daemon copy for
+ * the full rationale): `missing_session` < `token_rejected` <
+ * `credentials_missing`. Only the last one is terminal — the other two are
+ * recovered automatically by GUI main.
+ */
+export const AUTH_REASONS = ['missing_session', 'token_rejected', 'credentials_missing'] as const;
+
+export type AuthReason = (typeof AUTH_REASONS)[number];
 
 /**
  * Wire shape pushed on SSE `sync:status_changed`. Daemon source of truth
@@ -156,14 +174,18 @@ export interface SyncStatusSnapshot {
   pushed_seq: number;
   last_sync_at: number | null;
   last_error: string | null;
+  /** 0.6.2 W3 — non-null iff `state === 'auth_required'`. */
+  auth_reason: AuthReason | null;
 }
 
 /**
  * Wire shape returned by `GET /sync/status`. Daemon source of truth is
  * `SyncStatusResult` in `packages/daemon/src/sync/manual.ts`. Mirrored here
  * (not imported from the daemon) so front-end type-graphs never drag Node /
- * core modules in. Reflects configured-ness + cursor truth from sqlite; does
- * NOT carry the live `state` / `last_error` overlay (broadcaster-only, SSE).
+ * core modules in. Reflects configured-ness + cursor truth from sqlite,
+ * plus (since 0.6.2 W3) the broadcaster's live `state` / `auth_reason` /
+ * `last_error` overlay — a cold-starting renderer has no other way to learn
+ * that sync is stopped waiting for a login.
  */
 export interface SyncStatusResult {
   configured: boolean;
@@ -175,6 +197,9 @@ export interface SyncStatusResult {
   pulled_seq: number;
   pushed_seq: number;
   last_sync_at: number | null;
+  state: SyncState;
+  auth_reason: AuthReason | null;
+  last_error: string | null;
 }
 
 /**

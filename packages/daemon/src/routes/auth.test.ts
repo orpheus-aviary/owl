@@ -313,7 +313,7 @@ describe('GET /auth/session', () => {
 });
 
 describe('cloud disables GUI-main plumbing (§4.3 ③)', () => {
-  for (const path of ['/sync/session', '/sync/switch', '/sync/logout-local']) {
+  for (const path of ['/sync/session', '/sync/switch', '/sync/auth-unrecoverable']) {
     it(`404s ${path} even with a valid bearer`, async () => {
       ctx = makeCtx(cloudConfig(), mockSdk({ logout: 0 }));
       const app = buildServer(ctx);

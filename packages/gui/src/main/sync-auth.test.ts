@@ -854,10 +854,46 @@ describe('proactive renewal (Phase 15b)', () => {
     expect(sdkState.refreshCalls).toBe(0);
   });
 
-  it('maybeRefreshNow renews once the token is at/near expiry', async () => {
-    sdkState.loginReturn.expiresAt = BASE + 1_000; // inside the 60s margin
+  it('maybeRefreshNow renews once the planned refresh time has passed', async () => {
+    // 0.6.2 W3: the trigger compares against the SAME `refreshAt` the timer
+    // uses (expiry − min(60s, ttl/2)), not a fixed 60s margin. A token that is
+    // already expired is unambiguously past it.
+    sdkState.loginReturn.expiresAt = BASE - 1_000;
     await loginFresh();
     await maybeRefreshNow();
+    expect(sdkState.refreshCalls).toBe(1);
+  });
+
+  it('a short-TTL token does not refresh on every focus (margin clamp)', async () => {
+    // With a fixed 60s lead this 1s token would be "at expiry" the instant it
+    // was installed, so every focus / resume — and the 1s-floor timer — would
+    // fire another refresh. Clamped to ttl/2 the refresh is due at +500ms.
+    sdkState.loginReturn.expiresAt = BASE + 1_000;
+    await loginFresh();
+    await maybeRefreshNow();
+    expect(sdkState.refreshCalls).toBe(0);
+
+    await vi.advanceTimersByTimeAsync(500);
+    await maybeRefreshNow();
+    expect(sdkState.refreshCalls).toBeGreaterThanOrEqual(1);
+  });
+
+  it('the renewal timer fires at expiry − min(60s, ttl/2)', async () => {
+    // 30s TTL → half of it, i.e. +15s (a fixed 60s lead would have meant "now").
+    sdkState.loginReturn.expiresAt = BASE + 30_000;
+    await loginFresh();
+    await vi.advanceTimersByTimeAsync(14_000);
+    expect(sdkState.refreshCalls).toBe(0);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(sdkState.refreshCalls).toBe(1);
+  });
+
+  it('a 120s token keeps the full 60s lead (the clamp only bites below it)', async () => {
+    sdkState.loginReturn.expiresAt = BASE + 120_000;
+    await loginFresh();
+    await vi.advanceTimersByTimeAsync(59_000);
+    expect(sdkState.refreshCalls).toBe(0);
+    await vi.advanceTimersByTimeAsync(1_000);
     expect(sdkState.refreshCalls).toBe(1);
   });
 

@@ -54,6 +54,10 @@ const STATE_INFO: Record<SyncState, StateInfo> = {
   syncing: { label: '同步中', dotClass: 'text-sky-500', spin: true },
   error: { label: '出错', dotClass: 'bg-red-500', spin: false },
   offline: { label: '离线', dotClass: 'bg-amber-500', spin: false },
+  // 0.6.2 W3 — red rather than amber: unlike「离线」this does not clear itself
+  // by waiting, and in the terminal (`credentials_missing`) case it needs the
+  // user. The popover copy below splits the two cases.
+  auth_required: { label: '需登录', dotClass: 'bg-red-500', spin: false },
 };
 
 // States that sit OUTSIDE the account-sync `SyncState` union: a purely-local
@@ -249,6 +253,18 @@ function SyncStatusDetails({
           </PopoverDescription>
         )}
         {state === 'syncing' && <PopoverDescription>正在与同步服务器交换变更。</PopoverDescription>}
+        {state === 'auth_required' &&
+          (snapshot.auth_reason === 'credentials_missing' ? (
+            <PopoverDescription>
+              登录已失效，请在{' '}
+              <Link to="/settings?tab=sync" className="underline">
+                设置 → 同步
+              </Link>{' '}
+              重新登录。
+            </PopoverDescription>
+          ) : (
+            <PopoverDescription>正在自动恢复登录…</PopoverDescription>
+          ))}
         {state === 'error' && snapshot.last_error && (
           <PopoverDescription className="text-destructive break-words">
             {snapshot.last_error}

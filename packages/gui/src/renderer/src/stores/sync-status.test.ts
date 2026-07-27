@@ -5,6 +5,13 @@ import { SYNC_STATUS_MIN_DISPLAY_MS, useSyncStatus } from './sync-status';
 
 vi.mock('@/lib/api', () => ({ getSyncStatus: vi.fn() }));
 
+// 0.6.2 W3 — the store asks the host to recover from `auth_required`; the web
+// adapter has no such capability, so it is an optional platform member.
+const requestRecovery = vi.hoisted(() => vi.fn());
+vi.mock('@/platform', () => ({
+  getPlatform: () => ({ sync: { requestRecovery } }),
+}));
+
 function snap(
   state: SyncStatusSnapshot['state'],
   extra: Partial<SyncStatusSnapshot> = {},
@@ -19,6 +26,7 @@ function snap(
     pushed_seq: 0,
     last_sync_at: null,
     last_error: null,
+    auth_reason: null,
     ...extra,
   };
 }
@@ -46,6 +54,9 @@ function okResult(over: Partial<SyncStatusResult> = {}) {
       pulled_seq: 0,
       pushed_seq: 0,
       last_sync_at: null,
+      state: 'idle' as const,
+      auth_reason: null,
+      last_error: null,
       ...over,
     },
   };
@@ -200,5 +211,87 @@ describe('useSyncStatus probe status (①)', () => {
     mockGet.mockResolvedValue(okResult());
     await useSyncStatus.getState().fetch();
     expect(mockGet).toHaveBeenCalledTimes(2);
+  });
+});
+
+// ─── 0.6.2 W3: commitSnapshot is the single funnel ───────────────────
+
+describe('commitSnapshot (0.6.2 W3)', () => {
+  const mockGet = vi.mocked(getSyncStatus);
+
+  beforeEach(() => {
+    mockGet.mockReset();
+    resetStore();
+    requestRecovery.mockClear();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('drops an auth_required snapshot with no reason', () => {
+    useSyncStatus.getState().setSnapshot(snap('auth_required'));
+    expect(useSyncStatus.getState().snapshot).toBe(null);
+    expect(requestRecovery).not.toHaveBeenCalled();
+  });
+
+  it('drops a non-auth snapshot that carries a reason', () => {
+    useSyncStatus.getState().setSnapshot(snap('idle', { auth_reason: 'token_rejected' }));
+    expect(useSyncStatus.getState().snapshot).toBe(null);
+  });
+
+  it('entering auth_required over SSE asks the host to recover', () => {
+    useSyncStatus.getState().setSnapshot(snap('idle'));
+    useSyncStatus.getState().setSnapshot(snap('auth_required', { auth_reason: 'token_rejected' }));
+    expect(requestRecovery).toHaveBeenCalledTimes(1);
+    expect(requestRecovery).toHaveBeenCalledWith('token_rejected');
+  });
+
+  it('the cold-start GET path goes through it too (the state is no longer faked)', async () => {
+    mockGet.mockResolvedValue(okResult({ state: 'auth_required', auth_reason: 'missing_session' }));
+    await useSyncStatus.getState().fetch();
+    expect(useSyncStatus.getState().snapshot?.state).toBe('auth_required');
+    expect(requestRecovery).toHaveBeenCalledWith('missing_session');
+  });
+
+  it('staying in the same reason does not re-trigger recovery', () => {
+    const s = useSyncStatus.getState();
+    s.setSnapshot(snap('auth_required', { auth_reason: 'token_rejected' }));
+    s.setSnapshot(snap('auth_required', { auth_reason: 'token_rejected', pending_count: 3 }));
+    expect(requestRecovery).toHaveBeenCalledTimes(1);
+  });
+
+  it('an escalated reason triggers again', () => {
+    const s = useSyncStatus.getState();
+    s.setSnapshot(snap('auth_required', { auth_reason: 'missing_session' }));
+    s.setSnapshot(snap('auth_required', { auth_reason: 'token_rejected' }));
+    expect(requestRecovery).toHaveBeenCalledTimes(2);
+  });
+
+  it('credentials_missing never triggers recovery (terminal)', () => {
+    useSyncStatus
+      .getState()
+      .setSnapshot(snap('auth_required', { auth_reason: 'credentials_missing' }));
+    expect(useSyncStatus.getState().snapshot?.auth_reason).toBe('credentials_missing');
+    expect(requestRecovery).not.toHaveBeenCalled();
+  });
+
+  it('the deferred (min-display) path also commits through it', async () => {
+    vi.useFakeTimers();
+    try {
+      const s = useSyncStatus.getState();
+      s.setSnapshot(snap('syncing'));
+      s.setSnapshot(snap('auth_required', { auth_reason: 'token_rejected' }));
+      // Still inside the min-display window → queued, not applied yet.
+      expect(useSyncStatus.getState().snapshot?.state).toBe('syncing');
+      expect(requestRecovery).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(SYNC_STATUS_MIN_DISPLAY_MS);
+      expect(useSyncStatus.getState().snapshot?.state).toBe('auth_required');
+      expect(requestRecovery).toHaveBeenCalledWith('token_rejected');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

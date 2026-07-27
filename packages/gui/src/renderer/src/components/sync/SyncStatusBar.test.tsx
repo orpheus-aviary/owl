@@ -53,6 +53,7 @@ import { ProfileSwitcher, SyncStatusBar, formatRelativeTime } from './SyncStatus
 
 function makeSnapshot(overrides: Partial<SyncStatusSnapshot> = {}): SyncStatusSnapshot {
   return {
+    auth_reason: null,
     state: 'idle',
     server_url: 'http://localhost:48080',
     device_id: '1f2a3b4c-aaaa-bbbb-cccc-dddddddddddd',
@@ -195,6 +196,39 @@ describe('SyncStatusBar popover content', () => {
     );
     const popover = screen.getByTestId('popover-content');
     expect(within(popover).getByText(/自动重试/)).toBeTruthy();
+  });
+
+  // 0.6.2 W3 — the two auth_required copies are NOT interchangeable: one
+  // promises an automatic fix, the other asks the user to act.
+  it('promises automatic recovery while the reason is recoverable', () => {
+    snapshotHolder.value = makeSnapshot({
+      state: 'auth_required',
+      auth_reason: 'token_rejected',
+    });
+    render(
+      <MemoryRouter>
+        <SyncStatusBar />
+      </MemoryRouter>,
+    );
+    expect(screen.getByRole('button', { name: /同步状态：需登录/ })).toBeTruthy();
+    const popover = screen.getByTestId('popover-content');
+    expect(within(popover).getByText(/正在自动恢复登录/)).toBeTruthy();
+  });
+
+  it('asks for a manual login once the credentials are gone', () => {
+    snapshotHolder.value = makeSnapshot({
+      state: 'auth_required',
+      auth_reason: 'credentials_missing',
+    });
+    render(
+      <MemoryRouter>
+        <SyncStatusBar />
+      </MemoryRouter>,
+    );
+    const popover = screen.getByTestId('popover-content');
+    expect(within(popover).getByText(/登录已失效/)).toBeTruthy();
+    expect(within(popover).getByText('设置 → 同步')).toBeTruthy();
+    expect(within(popover).queryByText(/正在自动恢复登录/)).toBeNull();
   });
 
   it('shows the daemon-未响应 banner in the popover when unreachable (D12)', () => {

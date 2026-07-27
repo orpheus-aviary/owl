@@ -8,6 +8,7 @@
 // web type-graph type-collapses the renderer build. All sync IPC types
 // come from `src/shared/`.
 
+import type { AuthReason } from '@orpheus-aviary/owl-shared';
 import type { LoginAndOpenSessionInput } from '../../../shared/sync-auth-types.js';
 import type { ClaimChoice, ClaimPromptInput } from '../../../shared/sync-claim-types.js';
 import type { SyncDevicesReply } from '../../../shared/sync-devices-types.js';
@@ -67,6 +68,13 @@ export interface OwlAPI {
     devices: () => Promise<SyncIpcReply<SyncDevicesReply>>;
     revokeDevice: (deviceId: string) => Promise<SyncIpcReply<{ revoked: boolean }>>;
     run: () => Promise<SyncIpcReply<RunSyncResult>>;
+    /**
+     * 0.6.2 W3 — ask main to re-authenticate after the daemon reported
+     * `auth_required`. Fire-and-forget: main owns rate limiting, backoff and
+     * generation guards, and reports the outcome through the normal
+     * `sync:status_changed` stream.
+     */
+    requestRecovery: (reason: AuthReason) => void;
     profiles: () => Promise<SyncIpcReply<SyncProfilesReply>>;
     switchProfile: (id: string) => Promise<SyncIpcReply<void>>;
     deleteProfile: (id: string) => Promise<SyncIpcReply<{ wasActive: boolean }>>;

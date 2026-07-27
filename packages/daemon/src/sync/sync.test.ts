@@ -39,6 +39,7 @@ import { ReminderScheduler } from '../scheduler.js';
 import { buildTestServer } from '../testing/build-test-server.js';
 import { __resetInflightSync } from './manual.js';
 import type { RealSkybridgeClient, SkybridgeSession } from './session.js';
+import { evictSyncStatusBroadcaster, getSyncStatusBroadcaster } from './status-broadcaster.js';
 
 const TEST_SERVER_URL = 'http://127.0.0.1:18443';
 
@@ -94,6 +95,10 @@ describe('sync routes (P5-a Step 7)', () => {
     sqlite.prepare('DELETE FROM sync_changes').run();
     sqlite.prepare('DELETE FROM sync_cursor').run();
     ctx.skybridgeSession = null;
+    // 0.6.2 W3 — the broadcaster is a per-ctx singleton that now carries sticky
+    // state (`auth_required`); without an evict each case would inherit the
+    // previous one's status overlay.
+    evictSyncStatusBroadcaster(ctx);
     __resetInflightSync();
   });
 
@@ -156,6 +161,24 @@ describe('sync routes (P5-a Step 7)', () => {
       assert.equal(status.pulled_seq, 0);
       assert.equal(status.pushed_seq, 0);
       assert.equal(status.last_sync_at, null);
+      // 0.6.2 W3 — the broadcaster overlay rides along, so a cold-starting
+      // renderer learns about `auth_required` from the GET alone.
+      assert.equal(status.state, 'idle');
+      assert.equal(status.auth_reason, null);
+      assert.equal(status.last_error, null);
+    });
+
+    it('carries the live auth_required overlay (0.6.2 W3)', async () => {
+      const broadcaster = getSyncStatusBroadcaster(ctx);
+      broadcaster.markAuthRequired('token_rejected', 'token 已失效');
+      try {
+        const status = (await app.inject({ method: 'GET', url: '/sync/status' })).json().data;
+        assert.equal(status.state, 'auth_required');
+        assert.equal(status.auth_reason, 'token_rejected');
+        assert.equal(status.last_error, 'token 已失效');
+      } finally {
+        evictSyncStatusBroadcaster(ctx);
+      }
     });
 
     it('authenticated=true for a per-profile config with only encrypted_token', async () => {
@@ -305,12 +328,11 @@ describe('sync routes (P5-a Step 7)', () => {
     });
   });
 
-  // ── POST /sync/logout-local (P5-d Phase 6) ──────────────────
+  // ── POST /sync/auth-unrecoverable (0.6.2 W3) ─────────────────
 
-  describe('POST /sync/logout-local', () => {
-    it('clears ctx.skybridgeSession + skybridge identity rows in local_metadata', async () => {
-      // Seed sqlite with the rows /sync/logout-local is supposed to delete,
-      // and a parked sync_cursor row that MUST survive (v3 §3.6.2).
+  describe('POST /sync/auth-unrecoverable', () => {
+    it('drops the session and pins the state at credentials_missing', async () => {
+      // Identity + cursor must survive: this is "log in again", not a logout.
       sqlite
         .prepare("INSERT INTO local_metadata (key, value) VALUES ('skybridge_device_id', 'dev-X')")
         .run();
@@ -319,33 +341,45 @@ describe('sync routes (P5-a Step 7)', () => {
           "INSERT INTO local_metadata (key, value) VALUES ('skybridge_workspace_id', 'ws-X')",
         )
         .run();
-      sqlite
-        .prepare("INSERT INTO local_metadata (key, value) VALUES ('skybridge_backfilled', '1')")
-        .run();
       upsertSyncCursor(sqlite, TEST_SERVER_URL, { pulledSeq: 42, nowMs: 1 });
+      ctx.skybridgeSession = {} as SkybridgeSession;
 
-      const res = await app.inject({ method: 'POST', url: '/sync/logout-local' });
+      const res = await app.inject({ method: 'POST', url: '/sync/auth-unrecoverable' });
       assert.equal(res.statusCode, 200);
-      assert.deepEqual(res.json().data, { cleared: true });
+      assert.deepEqual(res.json().data, { acknowledged: true });
+      assert.equal(ctx.skybridgeSession, null, 'session dropped');
+
+      const snapshot = getSyncStatusBroadcaster(ctx).snapshot();
+      assert.equal(snapshot.state, 'auth_required');
+      assert.equal(snapshot.auth_reason, 'credentials_missing');
 
       const keys = (
         sqlite.prepare('SELECT key FROM local_metadata ORDER BY key').all() as { key: string }[]
       ).map((r) => r.key);
-      assert.ok(!keys.includes('skybridge_device_id'), 'device id row removed');
-      assert.ok(!keys.includes('skybridge_workspace_id'), 'workspace id row removed');
-      assert.ok(!keys.includes('skybridge_backfilled'), 'backfill sentinel removed');
+      assert.ok(keys.includes('skybridge_device_id'), 'device id row kept');
+      assert.ok(keys.includes('skybridge_workspace_id'), 'workspace id row kept');
 
       const cursor = sqlite
         .prepare('SELECT pulled_seq FROM sync_cursor WHERE endpoint = ?')
         .get(TEST_SERVER_URL) as { pulled_seq: number } | undefined;
-      assert.equal(cursor?.pulled_seq, 42, 'sync_cursor must survive logout-local');
+      assert.equal(cursor?.pulled_seq, 42, 'sync_cursor must survive');
+
+      // Restore for the following tests.
+      sqlite
+        .prepare(
+          "DELETE FROM local_metadata WHERE key IN ('skybridge_device_id','skybridge_workspace_id')",
+        )
+        .run();
+      sqlite.prepare('DELETE FROM sync_cursor').run();
+      evictSyncStatusBroadcaster(ctx);
     });
 
-    it('is idempotent — a second call on already-clear state returns 200', async () => {
-      const first = await app.inject({ method: 'POST', url: '/sync/logout-local' });
+    it('is idempotent — a second call returns 200', async () => {
+      const first = await app.inject({ method: 'POST', url: '/sync/auth-unrecoverable' });
       assert.equal(first.statusCode, 200);
-      const second = await app.inject({ method: 'POST', url: '/sync/logout-local' });
+      const second = await app.inject({ method: 'POST', url: '/sync/auth-unrecoverable' });
       assert.equal(second.statusCode, 200);
+      evictSyncStatusBroadcaster(ctx);
     });
   });
 

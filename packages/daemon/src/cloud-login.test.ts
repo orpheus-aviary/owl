@@ -32,6 +32,7 @@ import {
   clearRefreshTimer,
   cloudLogin,
   computeOwnerProfileId,
+  computeRefreshDelayMs,
   refreshCloudSession,
 } from './cloud-login.js';
 import type { AppContext } from './context.js';
@@ -466,5 +467,26 @@ describe('computeOwnerProfileId (bootstrap helper)', () => {
         ),
       SkybridgeServerTooOldError,
     );
+  });
+});
+
+// ─── 0.6.2 W3 (D8): refresh-lead clamp ───────────────────────────────
+
+describe('computeRefreshDelayMs (0.6.2 W3 / D8)', () => {
+  const NOW = 1_700_000_000_000;
+
+  it('a long-lived token refreshes one minute before expiry', () => {
+    assert.equal(computeRefreshDelayMs(NOW + 30 * 86_400_000, NOW), 30 * 86_400_000 - 60_000);
+    assert.equal(computeRefreshDelayMs(NOW + 120_000, NOW), 60_000);
+  });
+
+  it('a short-lived token refreshes at its midpoint, not immediately', () => {
+    // Pre-fix: `max(0, ttl - 60s)` = 0 for any ttl <= 60s → a refresh storm.
+    assert.equal(computeRefreshDelayMs(NOW + 30_000, NOW), 15_000);
+    assert.equal(computeRefreshDelayMs(NOW + 2_000, NOW), 1_000);
+  });
+
+  it('an already-expired token still waits the 1s floor', () => {
+    assert.equal(computeRefreshDelayMs(NOW - 5_000, NOW), 1_000);
   });
 });

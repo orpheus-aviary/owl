@@ -129,6 +129,27 @@ export async function postSyncSession(payload: SyncSessionPayload): Promise<void
   }
 }
 
+/**
+ * 0.6.2 W3 — tell the daemon its credentials are gone for good, so it converges
+ * to `auth_required / credentials_missing` (「请重新登录」) instead of sitting on
+ * `token_rejected` (「正在自动恢复登录…」) forever. The daemon has no way to
+ * notice on its own: it never reads toml and has no file watcher.
+ *
+ * Best-effort — a daemon that is down will rebuild the same state from its
+ * initial snapshot on next boot.
+ */
+export async function postAuthUnrecoverable(): Promise<void> {
+  try {
+    await fetch(`${getDaemonUrl()}/sync/auth-unrecoverable`, {
+      method: 'POST',
+      headers: { ...daemonAuthHeaders(), 'Content-Type': 'application/json' },
+      body: '{}',
+    });
+  } catch {
+    // daemon down / restarting — its own initial snapshot covers this case
+  }
+}
+
 /** Switch the daemon onto a profile db; returns the remembered device id. */
 export async function postSyncSwitch(profileId: string): Promise<{ device_id: string | null }> {
   const res = await fetch(`${getDaemonUrl()}/sync/switch`, {

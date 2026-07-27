@@ -39,6 +39,7 @@ import {
 } from '@owl/core';
 import { refreshCloudSession } from '../cloud-login.js';
 import type { AppContext } from '../context.js';
+import { signalAuthRequired } from './auth-signal.js';
 import { ensureBackgroundHandles } from './bridge-lifecycle.js';
 import { createCoalescer } from './coalesce.js';
 import {
@@ -356,13 +357,22 @@ async function doRunManualSync(ctx: AppContext): Promise<RunSyncResult> {
   } catch (err) {
     // 401 / SkybridgeAuthRequired invalidates the cached session so the
     // next call re-bootstraps against the post-login toml.
+    //
+    // 0.6.2 W3: the two cases are NOT interchangeable. A 401 means the token
+    // we hold was rejected — only a refresh fixes that. A missing session just
+    // means nobody installed one yet, and re-installing the stored token is
+    // enough. Reporting both as `missing_session` would loop: reinstall the
+    // rejected token → 401 → reinstall → …
+    const translated = translateSkybridgeError(err);
     if (isApiError(err) && err.status === 401) {
       invalidateSkybridgeSession(ctx);
+      signalAuthRequired(ctx, 'token_rejected', messageForError(translated));
     } else if (err instanceof SkybridgeAuthRequiredError) {
       invalidateSkybridgeSession(ctx);
+      signalAuthRequired(ctx, 'missing_session', messageForError(translated));
+    } else {
+      broadcaster.markError(translated);
     }
-    const translated = translateSkybridgeError(err);
-    broadcaster.markError(translated);
     throw translated;
   }
 }

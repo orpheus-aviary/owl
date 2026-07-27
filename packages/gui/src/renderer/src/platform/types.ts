@@ -36,6 +36,10 @@ type OptionalSync = Partial<
     | 'onProfileSwitched'
     | 'onClaimPrompt'
     | 'respondClaim'
+    // 0.6.2 W3 — desktop-only: the credentials live in GUI main's keychain.
+    // A web client's session is owned by the cloud daemon, which recovers
+    // itself (refresh-on-401), so there is nothing for the browser to do.
+    | 'requestRecovery'
   >
 >;
 

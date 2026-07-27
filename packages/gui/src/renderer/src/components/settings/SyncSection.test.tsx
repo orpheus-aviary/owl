@@ -334,6 +334,9 @@ describe('SyncSection — W6 local-workspace banner', () => {
     pulled_seq: 0,
     pushed_seq: 0,
     last_sync_at: null as number | null,
+    state: 'idle' as const,
+    auth_reason: null,
+    last_error: null as string | null,
   };
   const statusWith = (snapshot: typeof LOCAL_SNAPSHOT | null) =>
     Promise.resolve({ ok: true as const, data: { session: null, snapshot } });

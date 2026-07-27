@@ -134,3 +134,102 @@ describe('getSyncStatusBroadcaster — WeakMap caching', () => {
     assert.notEqual(a, b);
   });
 });
+
+// ─── 0.6.2 W3: auth_required ─────────────────────────────────────────
+
+describe('SyncStatusBroadcaster — auth_required is sticky (0.6.2 W3)', () => {
+  let ctx: AppContext;
+  let bus: EventsBus;
+
+  beforeEach(() => {
+    const made = makeStubCtx();
+    ctx = made.ctx;
+    bus = made.bus;
+  });
+
+  it('markAuthRequired emits the state + reason', () => {
+    const { statuses } = captureEvents(bus);
+    const b = createSyncStatusBroadcaster(ctx);
+    b.markAuthRequired('token_rejected', '401');
+    assert.equal(statuses.at(-1)?.state, 'auth_required');
+    assert.equal(statuses.at(-1)?.auth_reason, 'token_rejected');
+    assert.equal(statuses.at(-1)?.last_error, '401');
+  });
+
+  it('the same reason twice emits once (dedupe lives in the broadcaster)', () => {
+    const { statuses } = captureEvents(bus);
+    const b = createSyncStatusBroadcaster(ctx);
+    b.markAuthRequired('token_rejected', '401');
+    const seen = statuses.length;
+    b.markAuthRequired('token_rejected', '401 again');
+    assert.equal(statuses.length, seen, 'no second emit for the same reason');
+  });
+
+  it('a weaker reason never overwrites a stronger one', () => {
+    const b = createSyncStatusBroadcaster(ctx);
+    b.markAuthRequired('token_rejected', 'rejected');
+    b.markAuthRequired('missing_session', 'no session');
+    assert.equal(b.snapshot().auth_reason, 'token_rejected');
+
+    b.markAuthRequired('credentials_missing', 'gone');
+    assert.equal(b.snapshot().auth_reason, 'credentials_missing', 'stronger wins');
+    b.markAuthRequired('token_rejected', 'rejected');
+    assert.equal(b.snapshot().auth_reason, 'credentials_missing');
+  });
+
+  it('markError / markOffline keep the state and only record the error', () => {
+    const b = createSyncStatusBroadcaster(ctx);
+    b.markAuthRequired('token_rejected', '401');
+
+    b.markError(new Error('boom'));
+    assert.equal(b.snapshot().state, 'auth_required');
+    assert.equal(b.snapshot().auth_reason, 'token_rejected');
+    assert.equal(b.snapshot().last_error, 'boom');
+
+    b.markOffline(new Error('net'));
+    assert.equal(b.snapshot().state, 'auth_required');
+    assert.equal(b.snapshot().last_error, 'net');
+  });
+
+  it('markConnected does not clear it (an open stream says nothing about auth)', () => {
+    const b = createSyncStatusBroadcaster(ctx);
+    b.markAuthRequired('token_rejected', '401');
+    b.markConnected();
+    assert.equal(b.snapshot().state, 'auth_required');
+  });
+
+  it('markSyncing with no session is a no-op (never strand the UI at 同步中)', () => {
+    const { statuses } = captureEvents(bus);
+    const b = createSyncStatusBroadcaster(ctx);
+    b.markAuthRequired('token_rejected', '401');
+    const seen = statuses.length;
+    b.markSyncing();
+    assert.equal(statuses.length, seen);
+    assert.equal(b.snapshot().state, 'auth_required');
+  });
+
+  it('markSyncing WITH a session is a real retry → syncing', () => {
+    const b = createSyncStatusBroadcaster(ctx);
+    b.markAuthRequired('missing_session', 'none');
+    ctx.skybridgeSession = {} as AppContext['skybridgeSession'];
+    b.markSyncing();
+    assert.equal(b.snapshot().state, 'syncing');
+    assert.equal(b.snapshot().auth_reason, null);
+    ctx.skybridgeSession = null;
+  });
+
+  it('markSuccess / markSessionInstalled clear it, priority included', () => {
+    const b = createSyncStatusBroadcaster(ctx);
+    b.markAuthRequired('credentials_missing', 'gone');
+    b.markSessionInstalled();
+    assert.equal(b.snapshot().state, 'idle');
+    assert.equal(b.snapshot().auth_reason, null);
+    // Priority is reset with the state — a later weak reason must land.
+    b.markAuthRequired('missing_session', 'none');
+    assert.equal(b.snapshot().auth_reason, 'missing_session');
+
+    b.markSuccess({});
+    assert.equal(b.snapshot().state, 'idle');
+    assert.equal(b.snapshot().auth_reason, null);
+  });
+});

@@ -257,7 +257,7 @@ describe('cloud auth e2e (in-process skybridge)', { skip: !gate }, () => {
     await built.ready();
     const login = await built.inject({ method: 'POST', url: '/auth/login', payload: OWNER });
     const token = login.json().data.session_token;
-    for (const path of ['/sync/session', '/sync/switch', '/sync/logout-local']) {
+    for (const path of ['/sync/session', '/sync/switch', '/sync/auth-unrecoverable']) {
       const res = await built.inject({
         method: 'POST',
         url: path,

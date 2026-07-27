@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import type { AuthReason } from '@orpheus-aviary/owl-shared';
 import { contextBridge, ipcRenderer } from 'electron';
 import type { LoginAndOpenSessionInput } from '../shared/sync-auth-types.js';
 import type { ClaimChoice, ClaimPromptInput } from '../shared/sync-claim-types.js';
@@ -157,6 +158,16 @@ contextBridge.exposeInMainWorld('owlAPI', {
      * the caller only needs success/failure. No profile change.
      */
     run: (): Promise<SyncIpcReply<RunSyncResult>> => ipcRenderer.invoke('sync:run'),
+    /**
+     * 0.6.2 W3: the daemon reported `auth_required` — ask main to fix it
+     * (re-install the stored session, or refresh a rejected token). Deliberately
+     * fire-and-forget: main rate-limits, backs off and cancels across profile
+     * switches; the renderer just learns the outcome from the next
+     * `sync:status_changed`.
+     */
+    requestRecovery: (reason: AuthReason): void => {
+      void ipcRenderer.invoke('sync:request-recovery', reason);
+    },
     /**
      * P5-d Phase 17 (W4): list saved profiles (local + accounts) for the
      * sidebar quick-switch list. Pure toml read — works even when the daemon

@@ -19,6 +19,7 @@
  * `../shared/`. Renderer can't import main; main reads shared.
  */
 
+import { AUTH_REASONS, type AuthReason } from '@orpheus-aviary/owl-shared';
 import { type ApiDevice, ApiError, NetworkError } from '@orpheus-aviary/skybridge-client';
 import {
   LOCAL_PROFILE,
@@ -41,6 +42,7 @@ import type {
 } from '../shared/sync-status-types.js';
 import { daemonAuthHeaders } from './daemon-auth.js';
 import { getDaemonUrl } from './daemon.js';
+import { requestRecovery } from './sync-auth-recovery.js';
 import {
   QuickSwitchNeedsLoginError,
   SafeStorageUnavailableError,
@@ -72,6 +74,13 @@ export function registerSyncIpc(): void {
     safe<{ revoked: boolean }>(() => revokeDevice(deviceId)),
   );
   ipcMain.handle('sync:run', async () => safe<RunSyncResult>(runSyncNow));
+  // 0.6.2 W3 — the renderer saw the daemon flip to `auth_required`. Recovery is
+  // fire-and-forget: main owns the rate limit, the backoff and the generation
+  // guard, and the renderer learns the outcome from `sync:status_changed`.
+  ipcMain.handle('sync:request-recovery', (_e, reason: AuthReason) => {
+    if (!AUTH_REASONS.includes(reason)) return;
+    requestRecovery(reason);
+  });
   // P5-d Phase 17 (W4) — saved-profile list (pure toml read, no daemon round
   // trip) + password-free quick switch (fires profile:switched on success so
   // the renderer reloads, exactly like login/logout).

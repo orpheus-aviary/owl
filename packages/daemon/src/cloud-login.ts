@@ -466,7 +466,10 @@ function defaultDeviceName(): string {
 
 // ─── Proactive refresh + recovery ────────────────────────────────────
 
-const REFRESH_LEAD_MS = 60_000; // refresh ~1min before expiry
+/** Upper bound on how early we refresh; the real lead is min(this, ttl/2). */
+const REFRESH_LEAD_MS = 60_000;
+/** Never schedule a zero/negative timeout (0.6.2 W3 / D8). */
+const REFRESH_MIN_DELAY_MS = 1_000;
 const MAX_TIMEOUT_MS = 2_147_483_647; // 2^31 - 1 (setTimeout 32-bit ceiling)
 
 /**
@@ -501,6 +504,18 @@ export interface RefreshResult {
  * server reported no expiry (relies on re-login). Re-arms itself for delays
  * beyond the 32-bit ceiling so a far-future expiry can't overflow to 1ms.
  */
+/**
+ * 0.6.2 W3 (D8) — same clamp as the desktop renewal timer, for the same
+ * reason: with a fixed 60s lead and a 0 floor, any TTL below 60s produced
+ * `delay = 0`, i.e. a refresh every tick. The lead can never exceed half the
+ * remaining life, and the delay never drops below 1s.
+ */
+export function computeRefreshDelayMs(expiresAt: number, now: number): number {
+  const ttl = Math.max(0, expiresAt - now);
+  const lead = Math.min(REFRESH_LEAD_MS, ttl / 2);
+  return Math.max(REFRESH_MIN_DELAY_MS, expiresAt - lead - now);
+}
+
 export function scheduleRefresh(
   ctx: AppContext,
   expiresAt: number | undefined,
@@ -509,7 +524,7 @@ export function scheduleRefresh(
   clearRefreshTimer(ctx);
   if (!expiresAt) return;
   const d = resolveDeps(deps);
-  const delay = Math.max(0, expiresAt - d.now() - REFRESH_LEAD_MS);
+  const delay = computeRefreshDelayMs(expiresAt, d.now());
   if (delay > MAX_TIMEOUT_MS) {
     ctx.refreshTimer = setTimeout(() => scheduleRefresh(ctx, expiresAt, deps), MAX_TIMEOUT_MS);
   } else {

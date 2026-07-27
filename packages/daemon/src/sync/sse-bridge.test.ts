@@ -1,6 +1,15 @@
 import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterEach, beforeEach, describe, it } from 'node:test';
-import { DEFAULT_CONFIG, type Logger, createDatabase, ensureDeviceId } from '@owl/core';
+import {
+  DEFAULT_CONFIG,
+  type Logger,
+  createDatabase,
+  ensureDeviceId,
+  persistSkybridgeIds,
+} from '@owl/core';
 import type { AppContext } from '../context.js';
 import { EventsBus } from '../events/bus.js';
 import { backoffFor, createSseBridge } from './sse-bridge.js';
@@ -473,5 +482,104 @@ describe('createSseBridge — idle watchdog (2026-06-06)', () => {
     client.fireOpen(); // new connection opens
     assert.equal(watchdogSched.pending.length, 1, 're-armed on the reconnect open');
     bridge.stop();
+  });
+});
+
+// ─── 0.6.2 W3: a 401 leaves the reconnect loop ───────────────────────
+
+describe('createSseBridge — 401 is auth, not an outage (0.6.2 W3)', () => {
+  function apiError(status: number): Error {
+    return Object.assign(new Error(`http ${status}`), { name: 'ApiError', status });
+  }
+
+  /** A ctx on a real profile db bound to an account (so it can报「需登录」). */
+  function makeAccountCtx(): { ctx: AppContext; cleanup: () => void } {
+    const dir = mkdtempSync(join(tmpdir(), 'owl-sse-401-'));
+    const { db, sqlite } = createDatabase({ dbPath: join(dir, 'owl.db') });
+    ensureDeviceId(db);
+    persistSkybridgeIds(sqlite, 'dev-1', 'ws-1');
+    const noop = { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} };
+    const ctx = {
+      db,
+      sqlite,
+      eventsBus: new EventsBus(),
+      logger: noop,
+      config: structuredClone(DEFAULT_CONFIG),
+      skybridgeSession: {},
+    } as unknown as AppContext;
+    return {
+      ctx,
+      cleanup: () => {
+        sqlite.close();
+        rmSync(dir, { recursive: true, force: true });
+      },
+    };
+  }
+
+  it('onError(401) → session dropped, state auth_required, NO reconnect scheduled', () => {
+    const { ctx, cleanup } = makeAccountCtx();
+    const client = new FakeRealClient();
+    const scheduler = new FakeScheduler();
+    const bridge = createSseBridge({
+      realClient: client as unknown as Parameters<typeof createSseBridge>[0]['realClient'],
+      workspaceId: 'ws-1',
+      ctx,
+      logger: silentLogger(),
+      schedule: scheduler.schedule,
+    });
+    bridge.start();
+    client.lastHandlers?.onError?.(apiError(401));
+
+    assert.equal(ctx.skybridgeSession, null, 'dead token dropped');
+    assert.equal(scheduler.pending.length, 0, 'no reconnect against a rejected token');
+    const snap = getSyncStatusBroadcaster(ctx).snapshot();
+    assert.equal(snap.state, 'auth_required');
+    assert.equal(snap.auth_reason, 'token_rejected');
+    bridge.stop();
+    cleanup();
+  });
+
+  it('a subscribe that throws 401 does the same (onOpen would never fire)', () => {
+    const { ctx, cleanup } = makeAccountCtx();
+    const scheduler = new FakeScheduler();
+    const throwing = {
+      subscribeEvents: () => {
+        throw apiError(401);
+      },
+    };
+    const bridge = createSseBridge({
+      realClient: throwing as unknown as Parameters<typeof createSseBridge>[0]['realClient'],
+      workspaceId: 'ws-1',
+      ctx,
+      logger: silentLogger(),
+      schedule: scheduler.schedule,
+    });
+    bridge.start();
+
+    assert.equal(scheduler.pending.length, 0);
+    assert.equal(getSyncStatusBroadcaster(ctx).snapshot().state, 'auth_required');
+    bridge.stop();
+    cleanup();
+  });
+
+  it('a non-401 error still marks offline and reconnects', () => {
+    const { ctx, cleanup } = makeAccountCtx();
+    const client = new FakeRealClient();
+    const scheduler = new FakeScheduler();
+    const bridge = createSseBridge({
+      realClient: client as unknown as Parameters<typeof createSseBridge>[0]['realClient'],
+      workspaceId: 'ws-1',
+      ctx,
+      logger: silentLogger(),
+      schedule: scheduler.schedule,
+    });
+    bridge.start();
+    client.lastHandlers?.onError?.(apiError(503));
+
+    assert.equal(scheduler.pending.length, 1, 'transient failures keep retrying');
+    assert.equal(getSyncStatusBroadcaster(ctx).snapshot().state, 'offline');
+    assert.notEqual(ctx.skybridgeSession, null, 'session untouched');
+    bridge.stop();
+    cleanup();
   });
 });
