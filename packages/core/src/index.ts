@@ -137,6 +137,10 @@ export type { SearchResult } from './search/index.js';
 export { emitSyncChange } from './sync/changes.js';
 export type { SyncEntityType, SyncOp, EmitSyncChangeArgs } from './sync/changes.js';
 
+// Sync outbox retention (0.6.2 W2 — prune acked, non-replayable rows)
+export { pruneSyncedChanges, ensureRetentionWatermark } from './sync/retention.js';
+export type { PruneOptions, PruneResult, PruneSkipReason } from './sync/retention.js';
+
 // W3 (Phase 16c) — HLC-lite LWW stamping
 export {
   serverNormalizedStamp,

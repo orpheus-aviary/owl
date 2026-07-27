@@ -36,6 +36,7 @@ import {
   SkybridgeAuthRequiredError,
   type SkybridgeClientLike,
   type SkybridgeConfig,
+  ensureRetentionWatermark,
   persistSkybridgeIds,
 } from '@owl/core';
 import type { AppContext } from '../context.js';
@@ -340,6 +341,10 @@ export async function installSkybridgeSession(
   );
 
   persistSkybridgeIds(ctx.sqlite, input.device.id, input.workspace.id);
+  // 0.6.2 W2 — freeze the retention watermark on first install: every
+  // `sync_changes` row emitted from here on is attributable to this endpoint,
+  // so only those may ever be pruned. Idempotent (first write wins).
+  ensureRetentionWatermark(ctx.sqlite);
 
   const session: SkybridgeSession = {
     realClient,

@@ -25,11 +25,14 @@
  */
 
 import {
+  type PruneResult,
+  type PruneSkipReason,
   type RunSyncResult,
   SkybridgeAuthRequiredError,
   type SkybridgeConfig,
   SkybridgeNotConfiguredError,
   SkybridgeServerUrlMissingError,
+  pruneSyncedChanges,
   readSkybridgeConfig,
   runSync,
   skybridgeConfigPath,
@@ -230,7 +233,7 @@ async function attemptSyncRound(ctx: AppContext): Promise<RunSyncResult> {
       'ensureBackgroundHandles failed mid-session',
     );
   });
-  return runSync({
+  const result = await runSync({
     db: ctx.db,
     sqlite: ctx.sqlite,
     client: adaptClient(session.realClient),
@@ -241,6 +244,78 @@ async function attemptSyncRound(ctx: AppContext): Promise<RunSyncResult> {
       warn: (...a) => emitSyncLog(ctx.logger.warn.bind(ctx.logger), a),
     },
   });
+  maybePruneOutbox(ctx, session.serverUrl);
+  return result;
+}
+
+// ─── Outbox retention (0.6.2 W2) ──────────────────────────────────────
+
+/** Minimum gap between two prune attempts on the same database. */
+const PRUNE_INTERVAL_MS = 60 * 60 * 1000;
+
+// A profile switch mutates the SAME AppContext in place, so this map is really
+// process-scoped; `resetOutboxPruneThrottle` is called from the switch teardown
+// to restore the intended "once an hour per database" meaning.
+const lastPruneAt = new WeakMap<AppContext, number>();
+
+/** Warn once per process per reason — a blocked gate is a standing condition. */
+const loggedPruneSkips = new Set<PruneSkipReason>();
+
+/** P5-d Phase 14 hook: a switch swapped the db under this ctx. */
+export function resetOutboxPruneThrottle(ctx: AppContext): void {
+  lastPruneAt.delete(ctx);
+}
+
+/** Injectable for tests; production uses `pruneSyncedChanges` on `ctx.sqlite`. */
+export type OutboxPruner = (ctx: AppContext, endpoint: string) => PruneResult;
+
+const defaultPruner: OutboxPruner = (ctx, endpoint) => pruneSyncedChanges(ctx.sqlite, { endpoint });
+
+/**
+ * Prune acked outbox rows at most once an hour, after a successful round.
+ * Never affects the sync result: a throw is warned and swallowed, and the
+ * timestamp advances either way so a failing prune can't run every round.
+ */
+export function maybePruneOutbox(
+  ctx: AppContext,
+  endpoint: string,
+  prune: OutboxPruner = defaultPruner,
+  clock: () => number = Date.now,
+): void {
+  const now = clock();
+  const last = lastPruneAt.get(ctx);
+  // No entry = never pruned on this db (boot / post-switch) → run now.
+  if (last !== undefined && now - last < PRUNE_INTERVAL_MS) return;
+  try {
+    const result = prune(ctx, endpoint);
+    if (result.pruned) {
+      if (result.deleted > 0) {
+        ctx.logger.info(
+          {
+            kind: 'sync-retention',
+            deleted: result.deleted,
+            cutoff: result.cutoff,
+            pulled_seq: result.pulledSeq,
+            safe_after: result.safeAfter,
+          },
+          'pruned acked sync_changes rows',
+        );
+      }
+    } else if (!loggedPruneSkips.has(result.reason)) {
+      loggedPruneSkips.add(result.reason);
+      ctx.logger.warn(
+        { kind: 'sync-retention', reason: result.reason },
+        'sync_changes pruning skipped',
+      );
+    }
+  } catch (err) {
+    ctx.logger.warn(
+      { kind: 'sync-retention', err: errorMessageForLog(err) },
+      'sync_changes pruning failed',
+    );
+  } finally {
+    lastPruneAt.set(ctx, now);
+  }
 }
 
 async function doRunManualSync(ctx: AppContext): Promise<RunSyncResult> {

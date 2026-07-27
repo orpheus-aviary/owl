@@ -35,7 +35,7 @@ import { PreviewStore } from '../ai/preview-store.js';
 import type { AppContext } from '../context.js';
 import { ReminderScheduler } from '../scheduler.js';
 import { ensureBackgroundHandles, stopBackgroundHandles } from './bridge-lifecycle.js';
-import { drainManualSync, messageForError } from './manual.js';
+import { drainManualSync, messageForError, resetOutboxPruneThrottle } from './manual.js';
 import { evictSyncStatusBroadcaster } from './status-broadcaster.js';
 import { ensureSwitchGate } from './switch-gate.js';
 
@@ -89,6 +89,9 @@ export async function switchProfile(
     }
     ctx.conversationStore = new ConversationStore(newSqlite);
     evictSyncStatusBroadcaster(ctx);
+    // 0.6.2 W2 — the retention throttle is keyed on this (in-place mutated)
+    // ctx, so the new database would otherwise inherit the old one's clock.
+    resetOutboxPruneThrottle(ctx);
     return w;
   });
 
