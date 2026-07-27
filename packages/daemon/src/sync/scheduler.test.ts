@@ -45,14 +45,25 @@ function silentLogger(): Logger {
   return { info: noop, warn: noop, error: noop, debug: noop } as unknown as Logger;
 }
 
-function makeCtx(syncInterval: number | undefined): AppContext {
+/**
+ * `session: false` models a daemon with no installed skybridge session — the
+ * local profile, or one whose session a 401 dropped. Cloud mode with no
+ * credential store keeps `syncRecoveryCapability` off the filesystem, so these
+ * tests never read the developer's real skybridge config.
+ */
+function makeCtx(syncInterval: number | undefined, opts: { session?: boolean } = {}): AppContext {
   const config: OwlConfig = {
     ...DEFAULT_CONFIG,
+    daemon: { ...DEFAULT_CONFIG.daemon, mode: 'cloud' },
     sync: { interval_min: syncInterval ?? DEFAULT_CONFIG.sync.interval_min },
   };
-  // The scheduler only touches ctx.config.sync; everything else can be a stub.
-  // biome-ignore lint/suspicious/noExplicitAny: minimal stub
-  return { config } as any;
+  // The scheduler only touches ctx.config + ctx.skybridgeSession; the rest can
+  // be a stub.
+  return {
+    config,
+    skybridgeSession: opts.session === false ? null : { workspaceId: 'ws-1' },
+    // biome-ignore lint/suspicious/noExplicitAny: minimal stub
+  } as any;
 }
 
 // ─── tests ────────────────────────────────────────────────────────────
@@ -196,6 +207,68 @@ describe('createSyncScheduler (P5-c Step 9)', () => {
     await new Promise((r) => setImmediate(r));
 
     assert.equal(runCalls, 2, 'second tick fires despite first rejection');
+    handle.stop();
+  });
+
+  // Problem A / Phase 3. Pre-fix, a session-less daemon still called
+  // runManualSync on every tick and logged `sync scheduler tick rejected`
+  // each time — 163 of them in the 2026-07-23 log, which hid the real failures.
+  it('skips ticks entirely when no sync session is installed', async () => {
+    let runCalls = 0;
+    const handle = createSyncScheduler({
+      ctx: makeCtx(5, { session: false }),
+      logger: silentLogger(),
+      setInterval: timers.setInterval,
+      clearInterval: timers.clearInterval,
+      runSync: async () => {
+        runCalls += 1;
+      },
+    });
+
+    for (let i = 0; i < 3; i++) {
+      timers.fireOnce();
+      await new Promise((r) => setImmediate(r));
+    }
+    assert.equal(runCalls, 0, 'no doomed rounds started');
+    handle.stop();
+  });
+
+  it('logs the readiness transition once, not once per tick', async () => {
+    const lines: string[] = [];
+    const logger = {
+      info: (_obj: unknown, msg?: string) => {
+        if (msg) lines.push(msg);
+      },
+      warn: () => {},
+      error: () => {},
+      debug: () => {},
+    } as unknown as Logger;
+
+    const ctx = makeCtx(5, { session: false });
+    const handle = createSyncScheduler({
+      ctx,
+      logger,
+      setInterval: timers.setInterval,
+      clearInterval: timers.clearInterval,
+      runSync: async () => {},
+    });
+
+    for (let i = 0; i < 3; i++) {
+      timers.fireOnce();
+      await new Promise((r) => setImmediate(r));
+    }
+    const idleLines = lines.filter((l) => l.includes('scheduler ticks idle'));
+    assert.equal(idleLines.length, 1, 'idle state logged once, not per tick');
+
+    // A session shows up → one transition line back to active.
+    ctx.skybridgeSession = { workspaceId: 'ws-1' } as unknown as typeof ctx.skybridgeSession;
+    timers.fireOnce();
+    await new Promise((r) => setImmediate(r));
+    assert.equal(
+      lines.filter((l) => l.includes('scheduler active')).length,
+      1,
+      'recovery logged once',
+    );
     handle.stop();
   });
 });

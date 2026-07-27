@@ -35,6 +35,7 @@ import type { Logger } from '@owl/core';
 import { type SkybridgeConfig, readSkybridgeConfig as defaultReadSkybridgeConfig } from '@owl/core';
 import type { AppContext } from '../context.js';
 import { type HealthProbe, createHealthProbe as defaultCreateHealthProbe } from './health-probe.js';
+import { createOutboxWatcher as defaultCreateOutboxWatcher } from './outbox-watcher.js';
 import {
   type SyncSchedulerHandle,
   createSyncScheduler as defaultCreateSyncScheduler,
@@ -188,6 +189,8 @@ export async function startSseBridgeIfBootstrapped(
  */
 export interface EnsureBackgroundDeps extends BridgeLifecycleDeps {
   createSyncScheduler?: typeof defaultCreateSyncScheduler;
+  /** Problem A / Phase 1 — override the outbox watcher factory for tests. */
+  createOutboxWatcher?: typeof defaultCreateOutboxWatcher;
 }
 
 export async function ensureBackgroundHandles(
@@ -211,6 +214,7 @@ export async function ensureBackgroundHandles(
   const stale = (): boolean => Boolean(gate?.isSwitching()) || (gate?.generation() ?? 0) !== epoch;
 
   const buildScheduler = deps.createSyncScheduler ?? defaultCreateSyncScheduler;
+  const buildWatcher = deps.createOutboxWatcher ?? defaultCreateOutboxWatcher;
 
   if (!ctx.sseBridge) {
     const handle = await startSseBridgeIfBootstrapped(ctx, logger, deps);
@@ -225,6 +229,15 @@ export async function ensureBackgroundHandles(
     if (stale()) return;
     ctx.syncScheduler = buildScheduler({ ctx, logger });
   }
+
+  // Problem A / Phase 1. Unlike the bridge, this starts unconditionally: it
+  // gates itself on `syncTriggerReady` per tick, so a daemon that boots with no
+  // session (or on the local profile) just idles instead of needing a restart
+  // once a session shows up.
+  if (!ctx.outboxWatcher) {
+    if (stale()) return;
+    ctx.outboxWatcher = buildWatcher({ ctx, logger });
+  }
 }
 
 /**
@@ -234,8 +247,10 @@ export async function ensureBackgroundHandles(
 export function stopBackgroundHandles(ctx: AppContext): void {
   ctx.sseBridge?.stop();
   ctx.syncScheduler?.stop();
+  ctx.outboxWatcher?.stop();
   ctx.sseBridge = null;
   ctx.syncScheduler = null;
+  ctx.outboxWatcher = null;
 }
 
 function errorMessage(err: unknown): string {

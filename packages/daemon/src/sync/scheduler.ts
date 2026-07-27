@@ -1,6 +1,7 @@
 import { type Logger, effectiveSyncIntervalMin } from '@owl/core';
 import type { AppContext } from '../context.js';
 import { runManualSync } from './manual.js';
+import { syncRecoveryCapability, syncTriggerReady } from './trigger-gate.js';
 
 export interface SyncSchedulerOptions {
   ctx: AppContext;
@@ -63,7 +64,33 @@ export function createSyncScheduler(opts: SyncSchedulerOptions): SyncSchedulerHa
   logger.info({ interval_min: minutes }, 'sync scheduler started');
 
   let running = false;
+  let lastReady: boolean | null = null;
   const timer = setIntervalFn(() => {
+    // Problem A / Phase 3 — don't start a round that cannot authenticate.
+    // Without this, a daemon on the local profile (or one whose session was
+    // dropped by a 401) logs `sync scheduler tick rejected` on every single
+    // tick: the 2026-07-23 daemon.log had 163 of them, which buried the real
+    // failures. Log the transitions instead, with enough context to tell
+    // "waiting for auto-recovery" from "the user must log in again".
+    const ready = syncTriggerReady(ctx);
+    if (ready !== lastReady) {
+      lastReady = ready;
+      if (ready) {
+        logger.info({ kind: 'sync-scheduler' }, 'sync session available, scheduler active');
+      } else {
+        const cap = syncRecoveryCapability(ctx);
+        logger.info(
+          {
+            kind: 'sync-scheduler',
+            can_reinstall: cap.canReinstall,
+            can_refresh: cap.canRefresh,
+          },
+          'no sync session, scheduler ticks idle',
+        );
+      }
+    }
+    if (!ready) return;
+
     if (running) {
       // Previous round still in flight — skip this tick. The F3 coalescer
       // would absorb the duplicate at the HTTP layer, but skipping here

@@ -9,6 +9,7 @@ import type { CredentialStore } from './credential-store.js';
 import type { EventsBus } from './events/bus.js';
 import type { ReminderScheduler } from './scheduler.js';
 import type { BridgeHandle } from './sync/bridge-lifecycle.js';
+import type { OutboxWatcherHandle } from './sync/outbox-watcher.js';
 import type { SyncSchedulerHandle } from './sync/scheduler.js';
 import type { SkybridgeClientModule } from './sync/session.js';
 import type { SkybridgeSession } from './sync/session.js';
@@ -70,6 +71,13 @@ export interface AppContext {
    * before re-creating.
    */
   syncScheduler?: SyncSchedulerHandle | null;
+  /**
+   * Problem A / Phase 1: push-on-mutation watcher. Polls the committed outbox
+   * and starts a debounced sync round when local changes are pending. Lives
+   * alongside `sseBridge` / `syncScheduler` so `stopBackgroundHandles` and the
+   * profile-switch quiesce sequence cover it without special-casing.
+   */
+  outboxWatcher?: OutboxWatcherHandle | null;
   /**
    * P5-d Phase 14: serialises profile switches + quiesces the daemon during
    * the db-replace window. Populated at daemon boot (cli.ts) and lazily by
