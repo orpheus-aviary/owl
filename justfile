@@ -80,6 +80,13 @@ shared-no-node-electron:
 cloud-creds-no-disk:
     bash scripts/check-cloud-creds-no-disk.sh
 
+# 0.6.2 W2 — read-only health report for outbox pruning. Takes a db path so it
+# works on a local profile db or a copy pulled off the cloud box.
+#   just sync-retention-report ~/orpheus-aviary-nest/owl/profiles/<id>/owl.db
+[group('dev')]
+sync-retention-report DB:
+    bash scripts/sync-retention-report.sh {{DB}}
+
 # 0.6.3 V3 — the cloud session watchdog must be started/stopped by boot and
 # must stay OUT of stopBackgroundHandles (teardownCloudSession calls that and
 # never restarts, which would silence the alarm when the session is lost).

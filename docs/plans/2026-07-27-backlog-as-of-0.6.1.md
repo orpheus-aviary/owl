@@ -51,6 +51,10 @@ access/refresh token、笔记正文全部明文过网。
 息屏/休眠唤醒、token 到期跨越（access token 默认 30 天 —— 需要人为缩短 TTL 或用测试账号，
 否则 24h 覆盖不到续期路径）、profile 切换。
 
+**0.6.3 起省力很多**：`msg:'sync round done'` 一行就有整轮的游标 + 7 个计数 + 触发来源，
+不必再从逐条日志里拼（那些已降 debug）。判据可以直接写成「所有轮次 `cursor_before` 等于
+上一轮 `cursor_after`」「`pulled` 不出现整表量级」。
+
 **盯什么**：
 - `daemon.log` 里 `kind:'outbox-watcher'` / `kind:'sync'` / `kind:'cloud-refresh'` 的错误率与退避是否收敛。
 - 内存/句柄是否线性增长（SSE 长连接 + 1s 轮询 watcher 是新引入的，重点看这两条）。
