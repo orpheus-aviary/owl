@@ -197,6 +197,11 @@ SSE 订阅者。所以部署**必须单实例 fork**，这条已写进 `docs/dep
 
 ### C5. 云端重启后同步静默停摆（2026-08-11 复盘新增）
 
+> ✅ **已完成（0.6.3 V3）** —— 选了「方案 2 + 3」：`sync/session-watchdog.ts` 独立进程级看门狗
+> （10 分钟首报 + 每小时）+ `GET /status` 的 `sync` 健康投影 + 两份 runbook 写死「重启后必须登录」。
+> 明确**不做**方案 1（云端落盘 refresh token），安全前提不动。
+
+
 **现状**：cloud 模式凭据是 **RAM-only**（`daemon/src/credential-store.ts`，Phase A 的安全选择：
 服务器没有 keychain，不落盘 refresh token）。owl-server 进程一重启就退回 local 库、无 session，
 **直到有人从网页端登录才恢复同步**。

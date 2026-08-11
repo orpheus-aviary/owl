@@ -1,6 +1,50 @@
 # 开发进度
 
-## 当前阶段：**🎉 0.6.2 已发版（2026-07-27）→ 下一步长期使用测试 + Stage 2 收尾**
+## 当前阶段：**🎉 0.6.3 已发版（2026-08-11）→ 云端部署 + 补验 V3/V4 → Stage 2 收尾**
+
+0.6.3 = 0.6.2 长期使用测试复盘挖出的一批同步问题，**无 migration**（`user_version` 仍 11）。
+计划 + 详细现象记录 + 三轮审阅修订见 `docs/plans/2026-08-11-0.6.3-plan.md`，
+用户可见说明 `docs/history/0.6.3-release-notes.md`。
+
+| 包 | 版本 | 渠道 |
+|---|---|---|
+| 桌面 | `Owl-0.6.3-arm64.dmg` | GitHub Release `v0.6.3` |
+| owl-server | `@orpheus-aviary/owl-server@0.6.3` | npm（`latest`）|
+| owl-cli | `@orpheus-aviary/owl-cli@0.6.3` | npm |
+
+### 0.6.3 修了什么
+
+- **V1 `sync_cursor` pull/push 游标互相清零** —— `engine.ts` 的 upsert 里两个 `COALESCE` 打架，
+  `excluded.pulled_seq` 拿到的是 0 而非 NULL，于是 push 冲掉 pull 游标、pull 冲掉 push 游标。
+  后果：**每次本地写入后的下一轮全量重放整条变更日志**（真机一天 49 轮 / 6.5MB 日志）·
+  `/sync/status` 的 `pushed_seq` 恒为 0 · **W2 裁剪在任何推送过的轮次里一行都删不掉**。
+  修法 = DO UPDATE 引用命名参数而非 `excluded`。
+- **V2 轮次可观测性** —— 新增 `sync round done`（游标前后 + 9 个计数 + `triggers` 来源集合，
+  按 coalescer 槽累积而非单个全局字段）；`apply.ts` 逐条变更日志 info → debug。
+  V1 能藏三周的直接原因就是「每轮都写着 cursor_before: 0，但没人看得见」。
+- **V4 pin / reorder 跨设备** —— 接收侧此前直接丢弃。现在按到达顺序应用，**不进行级 LWW**
+  （否则一次置顶会压过另一台的正文编辑）。⚠️ 只保证 0.6.3 之后新产生的 op，历史状态不自动对齐。
+- **V3 云端 session watchdog** —— cloud 无会话满 10 分钟 warn + 每小时一条；
+  `GET /status` 加 `sync` 健康投影（`session_ready`/`login_required` + `last_success_at`）。
+  健康判据只能是 `syncTriggerReady`（401 后凭据还在、session 没了）；watchdog 属**进程**生命周期，
+  不能进 `stopBackgroundHandles`（`teardownCloudSession` 会调它且不重启）。第 10 个守卫钉住接线。
+
+### 真机验收（2026-08-11，桌面侧全过）
+
+push 轮 `cursor 1023→1023 pushed=1` → 紧接 sse 轮 `cursor_before=1023 pulled=1`（旧代码是
+`cursor_before:0 pulled:1024`）· 连续 5 次写入游标严格单调 `1025/1025→1029/1029` ·
+`pushed_seq` 不再恒 0 · info 级 per-change 日志 0 条 · pin 自身 echo `applied=1`（旧版 `skipped=1`）
+且 `pinned_at ≠ updated_at` · 裁剪在健康游标下跑通（`deleted:27, pulled_seq:1023`）。
+
+### 🔴 发版后待办
+
+1. **云端升 0.6.3 + 登录一次**（命令见 release notes 文末）—— 0.6.2 就是漏了这步白跑 15 天。
+2. 云端上线后补验 **V3 watchdog**（cloud-only，本机不启动）和 **V4 完整跨设备**（云端 0.6.2 收不到）。
+3. **2026-08-19 左右**复验云端 W2 裁剪（08-11 才装上水位，要等 7 天窗）。
+
+---
+
+## 上一阶段：**🎉 0.6.2 已发版（2026-07-27）**
 
 0.6.2 = backlog 的 **B1 / B2 / C2** 三项（桌面 token 自愈 + conflict LWW key + outbox 裁剪）。
 计划 + 实施记录 + 真机验收记录见 `docs/plans/2026-07-27-0.6.2-plan.md`（§11），
