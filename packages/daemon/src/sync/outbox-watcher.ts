@@ -80,7 +80,7 @@ export function createOutboxWatcher(opts: OutboxWatcherOptions): OutboxWatcherHa
   const clearIntervalFn = opts.clearInterval ?? globalThis.clearInterval;
   const now = opts.now ?? Date.now;
   const random = opts.random ?? Math.random;
-  const runSync = opts.runSync ?? runManualSync;
+  const runSync = opts.runSync ?? ((c: AppContext) => runManualSync(c, 'outbox'));
 
   let stopped = false;
   /** A round started BY THIS WATCHER is in flight. */

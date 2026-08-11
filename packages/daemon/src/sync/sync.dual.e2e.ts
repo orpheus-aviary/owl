@@ -221,6 +221,7 @@ function silentLogger() {
   return {
     info: () => {},
     warn: () => {},
+    debug: () => {},
   };
 }
 

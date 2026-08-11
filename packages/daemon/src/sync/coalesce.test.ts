@@ -153,3 +153,104 @@ describe('createCoalescer', () => {
     assert.equal(calls, 2);
   });
 });
+
+// ─── 0.6.3 V2: trigger attribution ───────────────────────────────────
+//
+// The round-summary log names what kicked a round off. Since callers
+// coalesce, a round can have several causes at once — the set has to
+// accumulate per slot. A single "last caller wins" field would mislabel
+// exactly the interesting case (SSE + outbox + scheduler racing).
+
+describe('createCoalescer — trigger sets', () => {
+  it('hands the starting caller its own trigger', async () => {
+    const seen: string[][] = [];
+    const c = createCoalescer<number, string>(async (triggers) => {
+      seen.push(triggers);
+      return 0;
+    });
+    await c.run('manual');
+    assert.deepEqual(seen, [['manual']]);
+  });
+
+  it('coalesced callers accumulate into the follow-up, none overwritten', async () => {
+    const gates: Gate[] = [];
+    const seen: string[][] = [];
+    const c = createCoalescer<number, string>(async (triggers) => {
+      seen.push(triggers);
+      const g = gate();
+      gates.push(g);
+      await g.promise;
+      return gates.length - 1;
+    });
+
+    const first = c.run('sse');
+    await drainMicrotasks();
+    assert.deepEqual(seen, [['sse']], 'first round labelled immediately');
+
+    // Three more callers while the first round is still in flight: they all
+    // share ONE follow-up, and that follow-up must carry all three labels.
+    const b = c.run('outbox');
+    const d = c.run('scheduler');
+    const e = c.run('manual');
+
+    gates[0]!.release();
+    await first;
+    await drainMicrotasks();
+    gates[1]!.release();
+    await Promise.all([b, d, e]);
+
+    assert.equal(seen.length, 2, 'exactly two rounds ran');
+    assert.deepEqual(
+      [...seen[1]!].sort(),
+      ['manual', 'outbox', 'scheduler'],
+      'follow-up carries every coalesced trigger',
+    );
+  });
+
+  it('a round does not inherit the previous round triggers', async () => {
+    const seen: string[][] = [];
+    const c = createCoalescer<number, string>(async (triggers) => {
+      seen.push(triggers);
+      return 0;
+    });
+    await c.run('sse');
+    await c.run('scheduler');
+    assert.deepEqual(seen, [['sse'], ['scheduler']]);
+  });
+
+  it('duplicate triggers collapse', async () => {
+    const gates: Gate[] = [];
+    const seen: string[][] = [];
+    const c = createCoalescer<number, string>(async (triggers) => {
+      seen.push(triggers);
+      const g = gate();
+      gates.push(g);
+      await g.promise;
+      return 0;
+    });
+
+    const first = c.run('outbox');
+    await drainMicrotasks();
+    const b = c.run('outbox');
+    const d = c.run('outbox');
+    gates[0]!.release();
+    await first;
+    await drainMicrotasks();
+    gates[1]!.release();
+    await Promise.all([b, d]);
+
+    assert.deepEqual(seen[1], ['outbox'], 'set semantics, not a list');
+  });
+
+  it('reset() drops pending triggers', async () => {
+    const seen: string[][] = [];
+    const c = createCoalescer<number, string>(async (triggers) => {
+      seen.push(triggers);
+      return 0;
+    });
+    await c.run('sse');
+    c.reset();
+    await c.run();
+    assert.deepEqual(seen[1], [], 'no leftover label from before the reset');
+  });
+});

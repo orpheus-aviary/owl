@@ -213,6 +213,11 @@ function collectingLogger(): RunSyncLogger & { lines: string[] } {
     warn: (...a: unknown[]) => {
       lines.push(a.map(String).join(' '));
     },
+    // Per-change lines moved to debug in 0.6.3 V2; collect them all the same
+    // so the existing "was this skip logged" assertions keep their meaning.
+    debug: (...a: unknown[]) => {
+      lines.push(a.map(String).join(' '));
+    },
   };
 }
 

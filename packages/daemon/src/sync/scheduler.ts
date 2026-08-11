@@ -50,7 +50,7 @@ export function createSyncScheduler(opts: SyncSchedulerOptions): SyncSchedulerHa
   const minutes = effectiveSyncIntervalMin(ctx.config.sync);
   const setIntervalFn = opts.setInterval ?? globalThis.setInterval;
   const clearIntervalFn = opts.clearInterval ?? globalThis.clearInterval;
-  const runSync = opts.runSync ?? runManualSync;
+  const runSync = opts.runSync ?? ((c: AppContext) => runManualSync(c, 'scheduler'));
 
   if (minutes === 0) {
     logger.info(

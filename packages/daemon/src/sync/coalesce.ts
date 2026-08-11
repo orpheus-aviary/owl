@@ -14,12 +14,18 @@
  * sees a round that began *after* their call returned. (P5-a follow-up F3.)
  */
 
-export interface Coalescer<R> {
+export interface Coalescer<R, T = never> {
   /**
    * Trigger a round. If none is in flight, starts one immediately.
    * Otherwise schedules / reuses the single follow-up.
+   *
+   * `trigger` is attributed to whichever slot ends up serving this call, and
+   * the whole set is handed to the runner when that slot starts. Coalesced
+   * callers must accumulate rather than overwrite: a single "last caller wins"
+   * field would mislabel the round whenever SSE / outbox / scheduler fire
+   * together, which is exactly when the label matters.
    */
-  run(): Promise<R>;
+  run(trigger?: T): Promise<R>;
   /**
    * Resolve once the currently in-flight round (and any already-scheduled
    * follow-up) has settled, ignoring its result/rejection. Does NOT start a
@@ -33,12 +39,19 @@ export interface Coalescer<R> {
   reset(): void;
 }
 
-export function createCoalescer<R>(runner: () => Promise<R>): Coalescer<R> {
+export function createCoalescer<R, T = never>(
+  runner: (triggers: T[]) => Promise<R>,
+): Coalescer<R, T> {
   let inflight: Promise<R> | null = null;
   let followUp: Promise<R> | null = null;
+  // Triggers waiting for the next `start()`. Drained into the round it opens,
+  // so a slot never inherits the previous round's labels.
+  let pending = new Set<T>();
 
   function start(): Promise<R> {
-    const p = runner().finally(() => {
+    const triggers = [...pending];
+    pending = new Set<T>();
+    const p = runner(triggers).finally(() => {
       if (inflight === p) inflight = null;
     });
     inflight = p;
@@ -46,7 +59,8 @@ export function createCoalescer<R>(runner: () => Promise<R>): Coalescer<R> {
   }
 
   return {
-    run() {
+    run(trigger?: T) {
+      if (trigger !== undefined) pending.add(trigger);
       if (!inflight) return start();
       if (followUp) return followUp;
       // Swallow rejection in the chain join: the follow-up must still run
@@ -68,6 +82,7 @@ export function createCoalescer<R>(runner: () => Promise<R>): Coalescer<R> {
     reset() {
       inflight = null;
       followUp = null;
+      pending = new Set<T>();
     },
   };
 }

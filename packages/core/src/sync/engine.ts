@@ -94,9 +94,17 @@ export interface SkybridgeClientLike {
   pushChanges(workspaceId: string, changes: LocalChangeLike[]): Promise<PushResultLike>;
 }
 
+/**
+ * `debug` is where every per-change line goes (apply / skip). Those are
+ * O(changes) and drown the round-level signal at info — the 0.6.2 soak logs
+ * were 24785 per-change lines against 9 retention records in a single day.
+ * Required rather than optional so a logger that forgets it fails to compile
+ * instead of silently swallowing the lines.
+ */
 export interface RunSyncLogger {
   info: (...a: unknown[]) => void;
   warn: (...a: unknown[]) => void;
+  debug: (...a: unknown[]) => void;
 }
 
 export interface RunSyncDeps {
@@ -203,6 +211,7 @@ interface OutboxRow {
 const NOOP_LOGGER: RunSyncLogger = {
   info: () => {},
   warn: () => {},
+  debug: () => {},
 };
 
 /**

@@ -163,7 +163,7 @@ export function createSseBridge(opts: SseBridgeOptions): SseBridge {
       unsubscribe = opts.realClient.subscribeEvents(opts.workspaceId, {
         onChange: (latestSeq) => {
           opts.logger.info({ kind: 'sse', latestSeq }, 'change event');
-          runManualSync(opts.ctx).catch((err) => {
+          runManualSync(opts.ctx, 'sse').catch((err) => {
             opts.logger.warn(
               { kind: 'sse', err: errorMessage(err) },
               'runManualSync from SSE failed',
@@ -189,7 +189,7 @@ export function createSseBridge(opts: SseBridgeOptions): SseBridge {
           opts.onOpenHook?.();
           // Catch-up: server SSE does not replay history. Pull anything
           // accumulated while we were disconnected.
-          runManualSync(opts.ctx).catch((err) => {
+          runManualSync(opts.ctx, 'sse-reconnect').catch((err) => {
             opts.logger.warn(
               { kind: 'sse', err: errorMessage(err) },
               'reconnect catch-up sync failed',

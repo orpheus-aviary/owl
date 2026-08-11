@@ -176,7 +176,7 @@ function applyNoteDelete(
 ): ApplyOutcome {
   // Local strictly newer (three-tuple) → keep the row; tie or older → delete.
   if (cmpLww(localKey, remoteKey) > 0) {
-    logger.info(
+    logger.debug(
       `[sync] apply note ${c.entityId} delete — local newer (${localKey.ms}/${localKey.counter} > ${remoteKey.ms}/${remoteKey.counter}), skipped`,
     );
     return 'skipped';
@@ -264,7 +264,7 @@ function applyNoteChange(
   // update / trash / restore on missing local note → out-of-order, skip;
   // create on missing local falls through to INSERT.
   if (!localExists && payload.op !== 'create') {
-    logger.info(
+    logger.debug(
       `[sync] apply note ${c.entityId} ${payload.op} — local row missing, skipped (P5-a)`,
     );
     return 'skipped';
@@ -273,7 +273,7 @@ function applyNoteChange(
   // W3 three-tuple LWW gate: remote must strictly outrank local
   // (tie or older → skip; equal → idempotent self-replay safety).
   if (localExists && cmpLww(remoteKey, localKey) <= 0) {
-    logger.info(
+    logger.debug(
       `[sync] apply note ${c.entityId} ${payload.op} — LWW skip (local=${localKey.ms}/${localKey.counter} >= remote=${remoteKey.ms}/${remoteKey.counter})`,
     );
     return 'skipped';
@@ -374,7 +374,7 @@ function applyFolderDelete(
   logger: RunSyncLogger,
 ): ApplyOutcome {
   if (cmpLww(localKey, remoteKey) > 0) {
-    logger.info(
+    logger.debug(
       `[sync] apply folder ${c.entityId} delete — local newer (${localKey.ms}/${localKey.counter} > ${remoteKey.ms}/${remoteKey.counter}), skipped`,
     );
     return 'skipped';
@@ -402,12 +402,12 @@ function applyFolderChange(
   }
 
   if (!localExists && payload.op !== 'create') {
-    logger.info(`[sync] apply folder ${c.entityId} ${payload.op} — local row missing, skipped`);
+    logger.debug(`[sync] apply folder ${c.entityId} ${payload.op} — local row missing, skipped`);
     return 'skipped';
   }
 
   if (localExists && cmpLww(remoteKey, localKey) <= 0) {
-    logger.info(
+    logger.debug(
       `[sync] apply folder ${c.entityId} ${payload.op} — LWW skip (local=${localKey.ms}/${localKey.counter} >= remote=${remoteKey.ms}/${remoteKey.counter})`,
     );
     return 'skipped';
@@ -531,7 +531,7 @@ export function applyOneChange(
       // `applied_at_ms` instead. Both are fine; we don't gate on updated_at_ms here.
       return applyOneConversationChange(sqlite, change);
     default:
-      logger.info(
+      logger.debug(
         `[sync] pull skip unknown entity type=${change.entityType} id=${change.entityId} seq=${change.serverSeq}`,
       );
       return 'skipped';
@@ -547,7 +547,7 @@ function applyOneNoteChange(
 ): ApplyOutcome {
   if (!hasUpdatedAtMs(change.payload)) {
     // metadata op (pin / reorder) — apply is out of P5-b scope
-    logger.info(
+    logger.debug(
       `[sync] pull skip note metadata op (no updated_at_ms) id=${change.entityId} op=${change.op} seq=${change.serverSeq}`,
     );
     return 'skipped';
@@ -571,7 +571,7 @@ function applyOneFolderChange(
   if (!hasUpdatedAtMs(change.payload)) {
     // Folder reorder rows go through op='update' but don't include
     // updated_at_ms in some legacy paths; defensive skip mirrors note path.
-    logger.info(
+    logger.debug(
       `[sync] pull skip folder metadata op (no updated_at_ms) id=${change.entityId} op=${change.op} seq=${change.serverSeq}`,
     );
     return 'skipped';

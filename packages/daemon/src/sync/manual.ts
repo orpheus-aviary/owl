@@ -194,19 +194,30 @@ export function translateSkybridgeError(err: unknown): Error {
 // The runner closes over `ctx` — `AppContext` is a long-lived singleton
 // per daemon process so re-binding on every call would be wasteful.
 
+/**
+ * What kicked a round off. Purely for the round-summary log — nothing branches
+ * on it. `sse-reconnect` is the catch-up round the bridge runs on `onOpen`,
+ * kept distinct from a `change` frame because the two mean different things
+ * when reading a log after an outage.
+ */
+export type SyncTrigger = 'sse' | 'sse-reconnect' | 'scheduler' | 'outbox' | 'manual';
+
 let currentCtx: AppContext | null = null;
-const syncCoalescer = createCoalescer<RunSyncResult>(() => {
+const syncCoalescer = createCoalescer<RunSyncResult, SyncTrigger>((triggers) => {
   if (!currentCtx) throw new Error('runManualSync called without ctx');
-  return doRunManualSync(currentCtx);
+  return doRunManualSync(currentCtx, triggers);
 });
 
 /**
- * Trigger one manual sync round (CLI / GUI / future background poll).
+ * Trigger one manual sync round (CLI / GUI / background triggers).
  * See `createCoalescer` for the dedupe semantics.
  */
-export function runManualSync(ctx: AppContext): Promise<RunSyncResult> {
+export function runManualSync(
+  ctx: AppContext,
+  trigger: SyncTrigger = 'manual',
+): Promise<RunSyncResult> {
   currentCtx = ctx;
-  return syncCoalescer.run();
+  return syncCoalescer.run(trigger);
 }
 
 /**
@@ -243,6 +254,7 @@ async function attemptSyncRound(ctx: AppContext): Promise<RunSyncResult> {
     logger: {
       info: (...a) => emitSyncLog(ctx.logger.info.bind(ctx.logger), a),
       warn: (...a) => emitSyncLog(ctx.logger.warn.bind(ctx.logger), a),
+      debug: (...a) => emitSyncLog(ctx.logger.debug.bind(ctx.logger), a),
     },
   });
   maybePruneOutbox(ctx, session.serverUrl);
@@ -319,7 +331,10 @@ export function maybePruneOutbox(
   }
 }
 
-async function doRunManualSync(ctx: AppContext): Promise<RunSyncResult> {
+async function doRunManualSync(
+  ctx: AppContext,
+  triggers: SyncTrigger[] = [],
+): Promise<RunSyncResult> {
   const broadcaster = getSyncStatusBroadcaster(ctx);
   broadcaster.markSyncing();
   try {
@@ -334,6 +349,30 @@ async function doRunManualSync(ctx: AppContext): Promise<RunSyncResult> {
       if (!(await maybeRecoverCloudSession(ctx, err))) throw err;
       result = await attemptSyncRound(ctx);
     }
+    // 0.6.3 V2 — the one line that describes a whole round. `runSync` has
+    // always returned every number here; nothing logged them, which is why
+    // the V1 cursor bug (`cursor_before: 0` on every round) went unnoticed
+    // for three weeks while 20k per-change lines a day scrolled past.
+    //
+    // One line per *successful coalescer round*, not per `attemptSyncRound`:
+    // a 401 recovery runs the round twice below and that is still one round.
+    // Failures don't reach here — they surface through the catch below.
+    ctx.logger.info(
+      {
+        kind: 'sync',
+        triggers,
+        cursor_before: result.cursorBefore,
+        cursor_after: result.cursorAfter,
+        pulled: result.pulledTotal,
+        applied: result.appliedTotal,
+        skipped: result.skippedTotal,
+        pushed: result.pushedTotal,
+        duplicates: result.duplicatesTotal,
+        server_seq_high: result.serverSeqHigh,
+        conflicts: result.conflictsRecorded,
+      },
+      'sync round done',
+    );
     // P5-b §6.3: success path emits status + reloads the in-memory
     // reminder scheduler from the post-apply reminder_status truth.
     broadcaster.markSuccess({
