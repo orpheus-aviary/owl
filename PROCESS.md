@@ -34,6 +34,28 @@
   冷启动无 session 都进状态机；GUI main 自动 refresh 或重装 session；凭据真的死了才让用户重登。
 - 顺带修掉从 0.6.1 起就挂在 `before` 钩子里的 `profile-chain.e2e`（与本轮无关的历史遗留）。
 
+### 长期使用测试 —— 首次复盘（2026-08-11）
+
+完整数据 `docs/plans/2026-07-27-0.6.2-plan.md` §7.1。三句话版：
+
+- **W2 桌面已闭环** —— 15 天裁掉 346/709 行（49%），「该裁未裁 = 0」，`pruned:false` warn 0 条，
+  存活行 = 干净的 7 天滑动窗 + 18 行升级前冻结行。**`RETENTION_MS = 7 天` 默认值合适，不提成配置项。**
+- **云端当天才补升 0.6.2** —— 发版时 `/www/owl-server/package.json` 锁在 `^0.6.1-rc.2` 漏升了，
+  以致云端从 7-23 起一行没裁（293 行里 213 行早该裁）。已升（`user_version 10→11`、水位 293），
+  **第一次真正裁剪待 2026-08-19 复验**。
+- **两条新账进 backlog**：**C5** 云端重启后同步静默停摆（RAM-only 凭据，必须手动登录，无告警）·
+  **C6** 闸 2 对升级前存量行永久冻结且无一次性清理路径（当前不急）。
+- 🔴 **同一轮复盘挖出一个更重的 bug**：`sync_cursor` 的 pull / push 游标**互相清零**
+  （`engine.ts:164` 的 `VALUES (?, COALESCE(?,0), …)` 让 `excluded.pulled_seq` 变成 0 而非 NULL，
+  DO UPDATE 的 `COALESCE(excluded.…, sync_cursor.…)` 于是冲掉老值）→ **每次本地写入之后的
+  下一轮同步都全量重放整条变更日志**（真机一天 49 轮、日志 6.5MB/天）。根因已最小复现。
+  → **0.6.3 计划 = `docs/plans/2026-08-11-0.6.3-plan.md`**（V1 游标 / V2 可观测性 /
+  V3 云端重启失联 / V4 pin+reorder 跨设备；无 migration）。
+
+⚠️ **验证 W2 装没装要看 db，不能看日志**：水位由 `installSkybridgeSession` 直接写（不打日志），
+且无可裁行时 `deleted:0` 也不打日志 —— 「日志里没有 `sync-retention`」是健康态，不是异常。
+查 `pragma_user_version` + `local_metadata` 的 `sync_retention_safe_after_local_seq` 才作数。
+
 ---
 
 ## 上一阶段：**🎉 0.6.1 已发版（2026-07-27）**
@@ -84,10 +106,10 @@
 
 - [ ] **Stage 2 收尾 → 🎯1.0.0**：**TLS / 反代**（现在明文 HTTP；改 https = 换 sync endpoint key，注意游标会从 0 重来）· **真·24h soak** · **P6 多设备 GA**（skybridge Phase 5，跨仓）。
 - [x] ~~**Phase 2A / B1**：desktop token 过期自愈~~ —— 0.6.2 W3 已做（`auth_required` 加了）。
-- [ ] **长期使用测试（= backlog A2 soak）**：盯 W2 是否真把 `sync_changes` 压住
-      （`count(*)` 走势 + `kind:'sync-retention'` 的 deleted 累计 + 有没有意外落进 `pruned:false`）·
+- [ ] **长期使用测试（= backlog A2 soak）**：~~W2 桌面侧~~（2026-08-11 已验证闭环，见上）·
+      **W2 云端待 2026-08-19 复验**（08-11 才补升 0.6.2，届时看「推算已裁行数 > 0」）·
       W3 是否真自愈（跨过一次真实吊销/到期后有无手动登录记录）· 0.6.1 的修复有无回归。
-- [ ] **技术债**：skybridge EventBus 换跨进程总线（跨仓，解除单实例约束）· ~~`sync_changes` 无裁剪策略~~（0.6.2 W2 已做，默认 7 天窗待长期测试验证）· **D9 未拍板**：含同步痕迹的 local 库要不要禁止 claim merge（计划 §4.4，已知会带旧 cursor + 旧 synced_at 进新账号）。
+- [ ] **技术债**：skybridge EventBus 换跨进程总线（跨仓，解除单实例约束）· ~~`sync_changes` 无裁剪策略~~（0.6.2 W2 已做，2026-08-11 桌面侧验证有效，7 天窗默认值定了）· **C5 云端重启后同步静默停摆**（RAM-only 凭据 → 必须手动登录且无告警；倾向「日志升级 + `/status` 暴露状态 + 写进 runbook」）· **C6 闸 2 存量行永久冻结**（当前不急）· **D9 未拍板**：含同步痕迹的 local 库要不要禁止 claim merge（计划 §4.4，已知会带旧 cursor + 旧 synced_at 进新账号）。
 - [ ] **1.0.0 后**：跨 profile 统一视图（需 spike）· 跨账号导入 · 完整 RN 移动 app（C→D→E）· P8 非核心池。
 
 ---
