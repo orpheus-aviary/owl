@@ -87,6 +87,20 @@ curl -s -o /dev/null -w '%{http_code}\n' http://THIS-SERVER-IP:47020/notes  # �
 - 纯 IP + http 非安全上下文：浏览器 Service Worker / secure-cookie 能力受限（当前 token 走内存态 bearer，不依赖 cookie，可接受）。
 - **TLS / 反代（Caddy/nginx 443）留 0.6**。
 
+## 6.5 ⚠️ 每次重启后必须登录一次
+
+skybridge 凭据是 **RAM-only**（服务器无 keychain，refresh token 不落盘）。重启 = 无 session =
+**同步静默停摆**，直到有人从网页端登录。桌面端此时看起来完全正常，只有云端掉队。
+
+```bash
+curl -s http://127.0.0.1:47020/status | jq .data.sync
+# {"session_installed": true, "state": "session_ready", "last_success_at": 1786...}
+```
+
+判活要 `state == "session_ready"` **且** `last_success_at` 在合理窗口内 —— 前者只表示
+session 装上了，不代表 skybridge 可达或最近同步成功。忘了登录时，daemon 在满 10 分钟后打一条
+`{"kind":"session-watchdog","reason":"no_session"}` 的 warn，之后每小时一条。
+
 ## 7. 升级 / 拆除
 ```bash
 sudo npm i -g @orpheus-aviary/owl-server@latest && sudo systemctl restart owl-server   # 升级

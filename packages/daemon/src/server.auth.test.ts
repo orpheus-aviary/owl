@@ -247,6 +247,71 @@ describe('GET /status shape (A6)', () => {
     await app.close();
     sqlite.close();
   });
+
+  // 0.6.3 V3 — cloud sync health for an external monitor.
+  it('cloud mode reports login_required with no session installed', async () => {
+    const { ctx, sqlite, scheduler } = buildCtx(cloudConfig());
+    const app = buildServer(ctx);
+    await app.ready();
+    const data = (await app.inject({ method: 'GET', url: '/status' })).json().data;
+    assert.deepEqual(data.sync, {
+      session_installed: false,
+      state: 'login_required',
+      last_success_at: null,
+    });
+    scheduler.stop();
+    await app.close();
+    sqlite.close();
+  });
+
+  it('cloud mode flips to session_ready once a session is installed', async () => {
+    const { ctx, sqlite, scheduler } = buildCtx(cloudConfig());
+    // biome-ignore lint/suspicious/noExplicitAny: stub session
+    ctx.skybridgeSession = { serverUrl: 'http://x', workspaceId: 'w' } as any;
+    const app = buildServer(ctx);
+    await app.ready();
+    const data = (await app.inject({ method: 'GET', url: '/status' })).json().data;
+    assert.equal(data.sync.session_installed, true);
+    assert.equal(data.sync.state, 'session_ready');
+    scheduler.stop();
+    await app.close();
+    sqlite.close();
+  });
+
+  // /status is unauthenticated in both modes, so the field set is closed on
+  // purpose. An allowlist (not a blocklist) — a future field carrying a token,
+  // email, profile id, workspace or server url must fail this test loudly
+  // rather than ship to an open endpoint.
+  it('the public payload exposes exactly the documented fields', async () => {
+    const cloud = buildCtx(cloudConfig());
+    const cloudApp = buildServer(cloud.ctx);
+    await cloudApp.ready();
+    const cloudData = (await cloudApp.inject({ method: 'GET', url: '/status' })).json().data;
+    assert.deepEqual(Object.keys(cloudData).sort(), ['mode', 'status', 'sync', 'uptime']);
+    assert.deepEqual(Object.keys(cloudData.sync).sort(), [
+      'last_success_at',
+      'session_installed',
+      'state',
+    ]);
+    cloud.scheduler.stop();
+    await cloudApp.close();
+    cloud.sqlite.close();
+
+    const local = buildCtx(structuredClone(DEFAULT_CONFIG));
+    const localApp = buildServer(local.ctx);
+    await localApp.ready();
+    const localData = (await localApp.inject({ method: 'GET', url: '/status' })).json().data;
+    assert.deepEqual(Object.keys(localData).sort(), [
+      'local_auth_version',
+      'mode',
+      'pid',
+      'status',
+      'uptime',
+    ]);
+    local.scheduler.stop();
+    await localApp.close();
+    local.sqlite.close();
+  });
 });
 
 describe('local-auth helpers (A6)', () => {

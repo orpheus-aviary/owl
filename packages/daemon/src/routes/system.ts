@@ -2,6 +2,41 @@ import { LOCAL_AUTH_VERSION } from '@orpheus-aviary/owl-shared';
 import type { FastifyInstance } from 'fastify';
 import type { AppContext } from '../context.js';
 import { ok } from '../response.js';
+import { readLastSyncSuccessAt } from '../sync/last-success.js';
+import { syncTriggerReady } from '../sync/trigger-gate.js';
+
+/**
+ * 0.6.3 V3 — the cloud sync health a monitor can poll without a token.
+ *
+ * A deliberately separate projection, NOT the internal `SyncState`. After a
+ * restart a cloud daemon holds neither credentials nor session, so
+ * `isAccountProfile` is false and the broadcaster's initial state is `idle` —
+ * publishing that would tell a monitor everything is fine while nothing is
+ * syncing.
+ *
+ * `session_ready` means exactly "a session is installed", nothing more: not
+ * that skybridge is reachable, not that the last round succeeded. Liveness
+ * checks must combine it with `last_success_at`, which is why the field is
+ * here and why the runbook says to look at both.
+ *
+ * Field set is closed on purpose — `/status` is unauthenticated in both modes,
+ * so nothing identifying (token, email, profile id, workspace, device, server
+ * url) may appear here. A route test asserts the exact key set.
+ */
+interface SyncHealth {
+  session_installed: boolean;
+  state: 'session_ready' | 'login_required';
+  last_success_at: number | null;
+}
+
+function cloudSyncHealth(ctx: AppContext): SyncHealth {
+  const ready = syncTriggerReady(ctx);
+  return {
+    session_installed: ready,
+    state: ready ? 'session_ready' : 'login_required',
+    last_success_at: readLastSyncSuccessAt(ctx),
+  };
+}
 
 export function registerSystemRoutes(app: FastifyInstance, ctx: AppContext): void {
   // GET /status — health check. Public in both modes (GUI/CLI probe it before
@@ -16,10 +51,13 @@ export function registerSystemRoutes(app: FastifyInstance, ctx: AppContext): voi
       mode: 'local' | 'cloud';
       pid?: number;
       local_auth_version?: number;
+      sync?: SyncHealth;
     } = { status: 'ok', uptime: process.uptime(), mode };
     if (mode === 'local') {
       payload.pid = process.pid;
       payload.local_auth_version = LOCAL_AUTH_VERSION;
+    } else {
+      payload.sync = cloudSyncHealth(ctx);
     }
     ok(reply, payload, 'daemon is running');
   });

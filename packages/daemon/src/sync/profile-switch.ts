@@ -35,6 +35,7 @@ import { PreviewStore } from '../ai/preview-store.js';
 import type { AppContext } from '../context.js';
 import { ReminderScheduler } from '../scheduler.js';
 import { ensureBackgroundHandles, stopBackgroundHandles } from './bridge-lifecycle.js';
+import { resetSyncSuccess } from './last-success.js';
 import { drainManualSync, messageForError, resetOutboxPruneThrottle } from './manual.js';
 import { evictSyncStatusBroadcaster } from './status-broadcaster.js';
 import { ensureSwitchGate } from './switch-gate.js';
@@ -92,6 +93,10 @@ export async function switchProfile(
     // 0.6.2 W2 — the retention throttle is keyed on this (in-place mutated)
     // ctx, so the new database would otherwise inherit the old one's clock.
     resetOutboxPruneThrottle(ctx);
+    // 0.6.3 V3 — same reason: the WeakMap is keyed on this in-place mutated
+    // ctx, so without an explicit reset the new account would report the old
+    // account's last successful sync on GET /status.
+    resetSyncSuccess(ctx);
     return w;
   });
 

@@ -42,6 +42,7 @@ import type { AppContext } from '../context.js';
 import { signalAuthRequired } from './auth-signal.js';
 import { ensureBackgroundHandles } from './bridge-lifecycle.js';
 import { createCoalescer } from './coalesce.js';
+import { recordSyncSuccess } from './last-success.js';
 import {
   type RealSkybridgeClient,
   SkybridgeNotInstalledError,
@@ -373,6 +374,9 @@ async function doRunManualSync(
       },
       'sync round done',
     );
+    // 0.6.3 V3 — process-local "last actually succeeded", for GET /status.
+    // Not the cursor's updated_at: empty rounds don't move that.
+    recordSyncSuccess(ctx);
     // P5-b §6.3: success path emits status + reloads the in-memory
     // reminder scheduler from the post-apply reminder_status truth.
     broadcaster.markSuccess({

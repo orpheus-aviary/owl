@@ -11,6 +11,7 @@ import type { ReminderScheduler } from './scheduler.js';
 import type { BridgeHandle } from './sync/bridge-lifecycle.js';
 import type { OutboxWatcherHandle } from './sync/outbox-watcher.js';
 import type { SyncSchedulerHandle } from './sync/scheduler.js';
+import type { SessionWatchdogHandle } from './sync/session-watchdog.js';
 import type { SkybridgeClientModule } from './sync/session.js';
 import type { SkybridgeSession } from './sync/session.js';
 import type { SwitchGate } from './sync/switch-gate.js';
@@ -78,6 +79,14 @@ export interface AppContext {
    * profile-switch quiesce sequence cover it without special-casing.
    */
   outboxWatcher?: OutboxWatcherHandle | null;
+  /**
+   * 0.6.3 V3: cloud-only "nobody has logged in" alarm. Deliberately NOT part
+   * of the `stopBackgroundHandles` set — `teardownCloudSession` stops those
+   * and never restarts them, which would kill the watchdog exactly when the
+   * session became permanently lost. Process lifecycle: boot starts it,
+   * graceful shutdown stops it, nothing else touches it.
+   */
+  sessionWatchdog?: SessionWatchdogHandle | null;
   /**
    * P5-d Phase 14: serialises profile switches + quiesces the daemon during
    * the db-replace window. Populated at daemon boot (cli.ts) and lazily by

@@ -28,6 +28,7 @@ import { DaemonStartupError, assertDaemonStartupSafe } from './startup-guard.js'
 import { ensureBackgroundHandles, stopBackgroundHandles } from './sync/bridge-lifecycle.js';
 import { DevTokenInProductionError, tryConsumeDevSession } from './sync/dev-bootstrap.js';
 import { type ParentProbeHandle, startParentProbe } from './sync/parent-probe.js';
+import { startSessionWatchdog } from './sync/session-watchdog.js';
 import { installSkybridgeSession } from './sync/session.js';
 import { createSwitchGate } from './sync/switch-gate.js';
 import { assertWebRootValid, resolveWebRoot } from './web-host.js';
@@ -195,6 +196,7 @@ export async function boot(options: BootOptions = {}): Promise<void> {
     // post-boot login). Shutdown reads from ctx.
     sseBridge: null,
     syncScheduler: null,
+    sessionWatchdog: null,
     // P5-d Phase 14 — serialises profile switches + quiesces mutating HTTP
     // during a db swap (no live switch trigger until Phase 15).
     switchGate: createSwitchGate(),
@@ -217,6 +219,9 @@ export async function boot(options: BootOptions = {}): Promise<void> {
     // P5-c §2.2-bis: bridge + sync scheduler live on ctx so mid-session
     // restart can swap them; stopBackgroundHandles reads + clears both.
     stopBackgroundHandles(ctx);
+    // 0.6.3 V3 — stopped here and nowhere else. It is deliberately outside
+    // stopBackgroundHandles so a cloud session teardown can't silence it.
+    ctx.sessionWatchdog?.stop();
     // Phase A A2 — stop the Layer-2 session sweep timer (cloud only).
     ctx.sessionStore?.stopSweep();
     // Phase A A3 — stop the Layer-1 refresh timer (cloud only).
@@ -304,6 +309,12 @@ export async function boot(options: BootOptions = {}): Promise<void> {
     // mid-session after a post-boot /sync/session install transitions
     // ctx to authenticated.
     await ensureBackgroundHandles(ctx, logger);
+
+    // 0.6.3 V3 — cloud only; returns null on a local daemon. Started after
+    // the background handles so a dev-bootstrapped session is already in
+    // place and the first tick doesn't start counting against a session
+    // that is about to arrive.
+    ctx.sessionWatchdog = startSessionWatchdog(ctx, logger);
   } catch (err) {
     logger.error({ err }, 'Failed to start daemon');
     console.error('Failed to start daemon:', err);

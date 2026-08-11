@@ -80,8 +80,15 @@ shared-no-node-electron:
 cloud-creds-no-disk:
     bash scripts/check-cloud-creds-no-disk.sh
 
+# 0.6.3 V3 — the cloud session watchdog must be started/stopped by boot and
+# must stay OUT of stopBackgroundHandles (teardownCloudSession calls that and
+# never restarts, which would silence the alarm when the session is lost).
 [group('lint')]
-check: lint typecheck typecheck-web core-convergence token-not-templated daemon-no-electron-storage no-prod-env-token session-body-not-logged daemon-no-toml-write renderer-owlapi-confined shared-no-node-electron cloud-creds-no-disk
+session-watchdog-wired:
+    bash scripts/check-session-watchdog-wired.sh
+
+[group('lint')]
+check: lint typecheck typecheck-web core-convergence token-not-templated daemon-no-electron-storage no-prod-env-token session-body-not-logged daemon-no-toml-write renderer-owlapi-confined shared-no-node-electron cloud-creds-no-disk session-watchdog-wired
     @echo "All checks passed."
 
 # ─── Test ───────────────────────────────────────────────

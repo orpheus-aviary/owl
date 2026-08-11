@@ -260,6 +260,30 @@ pm2 startup                    # 生成开机自启命令（按它打印的 sudo
 > 改了 `/www/owl-nest/owl/owl_config.toml` → `pm2 restart owl-server`。
 > 改了 `/www/skybridge/server.toml` → `pm2 restart skybridge`。
 
+### ⚠️ 重启 owl-server 之后**必须从网页端登录一次**
+
+owl-server 的 skybridge 凭据是 **RAM-only**（服务器没有 keychain，refresh token 不落盘）。
+进程一重启就退回 local 库、没有 session，**同步会静默停摆直到有人登录** ——
+桌面端此时一切正常，只有云端这一路默默掉队。2026-08-11 就是这么发现云端漏升了两个版本的。
+
+重启后开 `http://<公网IP>:47020` 用 owner 账号登录一次即可。自检：
+
+```fish
+curl -s http://127.0.0.1:47020/status | jq .data.sync
+# {"session_installed": true, "state": "session_ready", "last_success_at": 1786...}
+```
+
+**判活要两个条件都看**：`state == "session_ready"` **且** `last_success_at` 在合理窗口内。
+`session_ready` 只说明 session 装上了，不代表 skybridge 可达、也不代表最近一轮同步成功。
+（`last_success_at` 是进程内计数，重启后为 `null`，这是诚实的答案而不是异常。）
+
+忘了登录的话，daemon 会在无 session 满 10 分钟时打一条 warn，之后每小时一条：
+
+```fish
+grep session-watchdog /www/owl-nest/owl/logs/daemon.log*
+# {"level":40,...,"kind":"session-watchdog","reason":"no_session","minutes":11,...}
+```
+
 ---
 
 ## 更新版本
