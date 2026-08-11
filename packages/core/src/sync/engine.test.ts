@@ -908,7 +908,10 @@ describe('runSync — pull skip non-note + metadata ops', () => {
     assert.equal(folderCount.n, 0);
   });
 
-  it('note pin op (payload without updated_at_ms) skipped + cursor advances', async () => {
+  // 0.6.3 V4 replaced the old "pin op must be skipped" expectation — see the
+  // dedicated suite below. What stays true here is that an *unrecognised*
+  // metadata shape is still skipped and still advances the cursor.
+  it('note metadata op with an unrecognised payload shape is skipped + cursor advances', async () => {
     seedNote(sqlite, 'n-p', { updatedAt: 1_000 });
     const client = new FakeSkybridgeClient();
     client.enqueuePull({
@@ -917,7 +920,8 @@ describe('runSync — pull skip non-note + metadata ops', () => {
           serverSeq: 3,
           entityId: 'n-p',
           op: 'pin',
-          payload: { pinned_at_ms: 5_000 },
+          // pin carries `pinned_at_ms`; this is some future/foreign shape
+          payload: { pinned_by: 'someone' },
         }),
       ],
       hasMore: false,
@@ -932,11 +936,232 @@ describe('runSync — pull skip non-note + metadata ops', () => {
     });
     assert.equal(result.skippedTotal, 1);
     assert.equal(result.cursorAfter, 3);
-    // Local pinned_at must NOT be set by P5-a apply
     const row = sqlite.prepare('SELECT pinned_at FROM notes WHERE id = ?').get('n-p') as {
       pinned_at: number | null;
     };
     assert.equal(row.pinned_at, null);
+  });
+});
+
+// ─── 0.6.3 V4: note metadata ops cross devices ───────────────────────
+
+describe('runSync — note metadata ops (0.6.3 V4)', () => {
+  interface MetaRow {
+    pinned_at: number | null;
+    position: number | null;
+    updated_at: number;
+    lww_counter: number;
+    device_id: string | null;
+  }
+
+  function readMeta(id: string): MetaRow {
+    return sqlite
+      .prepare(
+        'SELECT pinned_at, position, updated_at, lww_counter, device_id FROM notes WHERE id = ?',
+      )
+      .get(id) as MetaRow;
+  }
+
+  function readHlc(): { ms: string | null; counter: string | null } {
+    const get = (key: string): string | null =>
+      (
+        sqlite.prepare('SELECT value FROM local_metadata WHERE key = ?').get(key) as
+          | { value: string | null }
+          | undefined
+      )?.value ?? null;
+    return { ms: get('hlc_last_ms'), counter: get('hlc_last_counter') };
+  }
+
+  async function pullOne(change: ServerChangeLike): Promise<number> {
+    const client = new FakeSkybridgeClient();
+    client.enqueuePull({ changes: [change], hasMore: false });
+    const result = await runSync({
+      db,
+      sqlite,
+      client,
+      workspaceId: WORKSPACE_ID,
+      serverUrl: SERVER_URL,
+      nowMs: fakeNow,
+    });
+    return result.appliedTotal;
+  }
+
+  it('pin applies to notes.pinned_at without disturbing the LWW columns', async () => {
+    seedNote(sqlite, 'n-p', { updatedAt: 1_000, deviceId: 'dev-local' });
+    const before = readMeta('n-p');
+    const hlcBefore = readHlc();
+
+    const applied = await pullOne(
+      makeNoteChange({
+        serverSeq: 3,
+        entityId: 'n-p',
+        op: 'pin',
+        payload: { pinned_at_ms: 5_000 },
+      }),
+    );
+
+    assert.equal(applied, 1);
+    const after = readMeta('n-p');
+    assert.equal(after.pinned_at, 5_000);
+    // A pin is metadata: it must not look like an edit to anyone downstream.
+    assert.equal(after.updated_at, before.updated_at);
+    assert.equal(after.lww_counter, before.lww_counter);
+    assert.equal(after.device_id, before.device_id);
+    // …and it must not advance this device's HLC.
+    assert.deepEqual(readHlc(), hlcBefore);
+    // …and it must not queue anything for push (no echo loop).
+    assert.equal(readChanges(sqlite).length, 0);
+  });
+
+  it('unpin (pinned_at_ms: null) clears the column', async () => {
+    seedNote(sqlite, 'n-u', { updatedAt: 1_000 });
+    sqlite.prepare('UPDATE notes SET pinned_at = 5000 WHERE id = ?').run('n-u');
+
+    const applied = await pullOne(
+      makeNoteChange({ serverSeq: 4, entityId: 'n-u', op: 'pin', payload: { pinned_at_ms: null } }),
+    );
+
+    assert.equal(applied, 1);
+    assert.equal(readMeta('n-u').pinned_at, null);
+  });
+
+  it('reorder applies to notes.position', async () => {
+    seedNote(sqlite, 'n-r', { updatedAt: 1_000 });
+    const before = readMeta('n-r');
+
+    const applied = await pullOne(
+      makeNoteChange({ serverSeq: 5, entityId: 'n-r', op: 'update', payload: { position: 2_000 } }),
+    );
+
+    assert.equal(applied, 1);
+    const after = readMeta('n-r');
+    assert.equal(after.position, 2_000);
+    assert.equal(after.updated_at, before.updated_at);
+    assert.equal(readChanges(sqlite).length, 0);
+  });
+
+  it('metadata op for a note that does not exist locally is a no-op skip', async () => {
+    const client = new FakeSkybridgeClient();
+    client.enqueuePull({
+      changes: [
+        makeNoteChange({
+          serverSeq: 6,
+          entityId: 'n-absent',
+          op: 'pin',
+          payload: { pinned_at_ms: 5_000 },
+        }),
+      ],
+      hasMore: false,
+    });
+    const result = await runSync({
+      db,
+      sqlite,
+      client,
+      workspaceId: WORKSPACE_ID,
+      serverUrl: SERVER_URL,
+      nowMs: fakeNow,
+    });
+    assert.equal(result.appliedTotal, 0);
+    assert.equal(result.skippedTotal, 1);
+    assert.equal(result.cursorAfter, 6, 'cursor still advances past it');
+  });
+
+  it('rejects malformed metadata payloads instead of guessing', async () => {
+    seedNote(sqlite, 'n-bad', { updatedAt: 1_000 });
+    for (const [i, payload] of [
+      { pinned_at_ms: Number.NaN },
+      { pinned_at_ms: 5_000, extra: 1 },
+      { position: Number.POSITIVE_INFINITY },
+      {},
+    ].entries()) {
+      const applied = await pullOne(
+        makeNoteChange({
+          serverSeq: 100 + i,
+          entityId: 'n-bad',
+          op: 'pin',
+          payload: payload as Record<string, unknown>,
+        }),
+      );
+      assert.equal(applied, 0, `payload ${JSON.stringify(payload)} must not apply`);
+    }
+    assert.equal(readMeta('n-bad').pinned_at, null);
+  });
+
+  // The invariant from apply.ts: a device must apply the echo of its OWN
+  // metadata op, or it strands itself on the value it pulled mid-round.
+  it('applies its own echo — pull-old, push-new, echo converges', async () => {
+    seedNote(sqlite, 'n-e', { updatedAt: 1_000 });
+    // A already moved the note locally and has not pushed yet.
+    sqlite.prepare('UPDATE notes SET position = 3000 WHERE id = ?').run('n-e');
+    const cid = emitSyncChange(sqlite, {
+      entityType: 'note',
+      entityId: 'n-e',
+      op: 'update',
+      payload: { position: 3_000 },
+      nowMs: 2_000,
+    });
+
+    // Round 1: pulls B's older ordering first, then pushes A's.
+    const client1 = new FakeSkybridgeClient();
+    client1.enqueuePull({
+      changes: [
+        makeNoteChange({
+          serverSeq: 7,
+          entityId: 'n-e',
+          op: 'update',
+          payload: { position: 1_000 },
+        }),
+      ],
+      hasMore: false,
+    });
+    client1.enqueuePush({ accepted: [{ clientChangeId: cid, serverSeq: 8 }], duplicates: [] });
+    const r1 = await runSync({
+      db,
+      sqlite,
+      client: client1,
+      workspaceId: WORKSPACE_ID,
+      serverUrl: SERVER_URL,
+      nowMs: fakeNow,
+    });
+    assert.equal(r1.pushedTotal, 1);
+    assert.equal(readMeta('n-e').position, 1_000, 'B ordering landed mid-round');
+    // Precondition that gives the next assertion its teeth: the pushed row is
+    // now a synced outbox row, so `isSelfReplay` WOULD match the echo below.
+    // If the metadata branch ever moves under that check, round 2 goes to
+    // 'skipped' and this test fails — which is the whole point.
+    const pushedRow = readChanges(sqlite).find((r) => r.client_change_id === cid);
+    assert.ok(pushedRow?.synced_at, 'echo cid is a synced outbox row');
+
+    // Round 2: A pulls its own change back. Skipping it as a self-replay
+    // would leave A on 1000 while the server and B are on 3000.
+    const client2 = new FakeSkybridgeClient();
+    client2.enqueuePull({
+      changes: [
+        {
+          serverSeq: 8,
+          clientChangeId: cid,
+          deviceId: 'dev-local',
+          entityType: 'note',
+          entityId: 'n-e',
+          op: 'update',
+          payload: { position: 3_000 },
+        },
+      ],
+      hasMore: false,
+    });
+    await runSync({
+      db,
+      sqlite,
+      client: client2,
+      workspaceId: WORKSPACE_ID,
+      serverUrl: SERVER_URL,
+      nowMs: fakeNow,
+    });
+    assert.equal(
+      readMeta('n-e').position,
+      3_000,
+      'own echo must be applied, not self-replay-skipped',
+    );
   });
 });
 

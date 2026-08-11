@@ -47,7 +47,9 @@ import {
   deleteFolder,
   ensureDeviceId,
   persistSkybridgeIds,
+  reorderNotesInFolder,
   runSync,
+  setNotePinned,
   updateNote,
 } from '@owl/core';
 import type Database from 'better-sqlite3';
@@ -730,6 +732,87 @@ describe('dual-profile core-only e2e (P5-b §8.3 D1-D10 + P5-c D14)', { skip: !g
       countRows(profileB.sqlite) - bConflictsBefore,
       1,
       'B’s conflict count grew by exactly 1',
+    );
+  });
+
+  // 0.6.3 V4 — pin / reorder used to be dropped on the receiving side, so
+  // neither ever crossed devices. They carry no `updated_at_ms` and are
+  // applied in arrival order rather than by LWW.
+  it('D15 — pin and reorder cross devices; last write to reach the server wins', async () => {
+    const readMeta = (
+      sqlite: Database.Database,
+      id: string,
+    ): { pinned_at: number | null; position: number | null; updated_at: number } =>
+      sqlite.prepare('SELECT pinned_at, position, updated_at FROM notes WHERE id = ?').get(id) as {
+        pinned_at: number | null;
+        position: number | null;
+        updated_at: number;
+      };
+
+    // Two notes in the root folder so a reorder has something to order.
+    const first = createNote(profileA.db, profileA.sqlite, {
+      content: 'D15 first',
+      folderId: null,
+      tags: [],
+    });
+    const second = createNote(profileA.db, profileA.sqlite, {
+      content: 'D15 second',
+      folderId: null,
+      tags: [],
+    });
+    await runSyncOn(profileA);
+    await runSyncOn(profileB);
+    assert.ok(selectNote(profileB.sqlite, first.id), 'B pulled the baseline notes');
+
+    const bBefore = readMeta(profileB.sqlite, first.id);
+
+    // A pins one note and reverses the root ordering. `reorderNotesInFolder`
+    // demands the complete live set for the folder, and earlier cases have
+    // left their own notes unfiled — so derive it rather than assume.
+    setNotePinned(profileA.db, profileA.sqlite, first.id, true);
+    const unfiled = profileA.sqlite
+      .prepare(
+        'SELECT id FROM notes WHERE folder_id IS NULL AND trash_level = 0 ORDER BY position, created_at',
+      )
+      .all() as { id: string }[];
+    assert.ok(
+      unfiled.some((r) => r.id === first.id) && unfiled.some((r) => r.id === second.id),
+      'both D15 notes are unfiled',
+    );
+    reorderNotesInFolder(profileA.db, profileA.sqlite, null, unfiled.map((r) => r.id).reverse());
+    await runSyncOn(profileA);
+    await runSyncOn(profileB);
+
+    const aAfter = readMeta(profileA.sqlite, first.id);
+    const bAfter = readMeta(profileB.sqlite, first.id);
+    assert.ok(aAfter.pinned_at, 'A pinned locally');
+    assert.equal(bAfter.pinned_at, aAfter.pinned_at, 'pin crossed to B');
+    assert.equal(bAfter.position, aAfter.position, 'ordering crossed to B');
+    assert.equal(
+      bAfter.updated_at,
+      bBefore.updated_at,
+      'metadata must not masquerade as a content edit on B',
+    );
+
+    // B unpins. A pulls and follows — arrival order decides, and nothing
+    // about the earlier pin makes A's copy "win".
+    setNotePinned(profileB.db, profileB.sqlite, first.id, false);
+    await runSyncOn(profileB);
+    await runSyncOn(profileA);
+    assert.equal(readMeta(profileA.sqlite, first.id).pinned_at, null, 'B’s unpin reached A');
+
+    // A re-pins and syncs: the round pushes A's change and pulls its own echo
+    // back on the next round. A must end where the server is, not stranded.
+    setNotePinned(profileA.db, profileA.sqlite, first.id, true);
+    await runSyncOn(profileA);
+    await runSyncOn(profileA);
+    await runSyncOn(profileB);
+    const aFinal = readMeta(profileA.sqlite, first.id);
+    assert.ok(aFinal.pinned_at, 'A kept its own pin across the echo round');
+    assert.equal(
+      readMeta(profileB.sqlite, first.id).pinned_at,
+      aFinal.pinned_at,
+      'both devices converge',
     );
   });
 });

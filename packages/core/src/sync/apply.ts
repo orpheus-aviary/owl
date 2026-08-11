@@ -546,11 +546,7 @@ function applyOneNoteChange(
   conflictSink?: ConflictSink,
 ): ApplyOutcome {
   if (!hasUpdatedAtMs(change.payload)) {
-    // metadata op (pin / reorder) — apply is out of P5-b scope
-    logger.debug(
-      `[sync] pull skip note metadata op (no updated_at_ms) id=${change.entityId} op=${change.op} seq=${change.serverSeq}`,
-    );
-    return 'skipped';
+    return applyNoteMetadataChange(sqlite, change, logger);
   }
   // Validator throws NotePayloadInvalidError → rolls back the batch
   const parsed = parseNotePayload(change.op, change.payload);
@@ -561,6 +557,107 @@ function applyOneNoteChange(
     counter: parsed.body.lww_counter ?? 0,
   });
   return applyNoteChange(db, sqlite, change, parsed, logger, conflictSink);
+}
+
+// ─── note metadata ops (0.6.3 V4) ────────────────────────────────────
+//
+// `pin` carries `{pinned_at_ms}` and reorder carries `{position}` — neither
+// has an `updated_at_ms`, so neither can take part in the row-level LWW that
+// every content op goes through. Until 0.6.3 they were simply dropped on the
+// receiving side, which meant pinning and drag-to-reorder never crossed
+// devices at all (P5-b scoped them out and nobody came back for them).
+//
+// They are applied in arrival order (server_seq) instead: two devices
+// reordering concurrently resolve to whichever reached the server last.
+// Deliberately NOT given a synthetic `updated_at_ms`: that would fold them
+// into the row's LWW key, so a pin could outrank a concurrent *content* edit
+// from another device and silently drop it. Losing a reorder is cheap;
+// losing an edit is not.
+//
+// ⚠️ INVARIANT — this branch must stay ABOVE the `isSelfReplay` check in
+// `applyNoteChange`, i.e. a device MUST apply the echo of its own metadata
+// op. Sync pulls before it pushes (engine.ts Step 1 then Step 2), so:
+//   1. A holds an unpushed reorder X
+//   2. the round pulls B's older Y and overwrites A's local value
+//   3. the round then pushes X, which lands at a higher server_seq
+//   4. next round A pulls its own X back — applying it restores A to the
+//      value the server and B already agree on.
+// Skipping the echo as a self-replay would strand A on Y forever.
+
+type NoteMetadataOp =
+  | { kind: 'pin'; pinnedAtMs: number | null }
+  | { kind: 'position'; position: number };
+
+/**
+ * Strict shape check. An op is only recognised when the payload is *exactly*
+ * the one key it should carry — anything else (extra keys, NaN, a future op
+ * shape we don't understand) falls through to the skip, which is the safe
+ * direction for a change we can't interpret.
+ */
+function parseNoteMetadataOp(op: string, payload: unknown): NoteMetadataOp | null {
+  if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) return null;
+  const keys = Object.keys(payload);
+  if (keys.length !== 1) return null;
+  const p = payload as Record<string, unknown>;
+
+  if (op === 'pin' && keys[0] === 'pinned_at_ms') {
+    const v = p.pinned_at_ms;
+    if (v === null) return { kind: 'pin', pinnedAtMs: null };
+    if (typeof v === 'number' && Number.isFinite(v)) return { kind: 'pin', pinnedAtMs: v };
+    return null;
+  }
+  // Reorder ships as op='update' with only `position` (notes/index.ts emits
+  // one row per note in the reordered list).
+  if (op === 'update' && keys[0] === 'position') {
+    const v = p.position;
+    if (typeof v === 'number' && Number.isFinite(v)) return { kind: 'position', position: v };
+    return null;
+  }
+  return null;
+}
+
+/**
+ * Write just the one metadata column. Never touches `updated_at`,
+ * `lww_counter` or `device_id`, and never calls `observeRemoteLwwKey` — a
+ * remote pin must not advance this device's HLC. No outbox row is emitted
+ * either: `sync_changes` is appended by the business layer, and the only
+ * triggers on `notes` are the content-FTS sync (`AFTER UPDATE OF content`)
+ * and the `local_device_uuid` NOT NULL guard, so there is no echo loop.
+ */
+function applyNoteMetadataChange(
+  sqlite: Database.Database,
+  change: ServerChangeLike,
+  logger: RunSyncLogger,
+): ApplyOutcome {
+  const meta = parseNoteMetadataOp(change.op, change.payload);
+  if (!meta) {
+    logger.debug(
+      `[sync] pull skip note metadata op (unrecognised shape) id=${change.entityId} op=${change.op} seq=${change.serverSeq}`,
+    );
+    return 'skipped';
+  }
+
+  const result =
+    meta.kind === 'pin'
+      ? sqlite
+          .prepare('UPDATE notes SET pinned_at = ? WHERE id = ?')
+          .run(meta.pinnedAtMs, change.entityId)
+      : sqlite
+          .prepare('UPDATE notes SET position = ? WHERE id = ?')
+          .run(meta.position, change.entityId);
+
+  if (result.changes === 0) {
+    // Legacy stream: a note's `pin` can predate its backfilled `create`
+    // (migration 0008), and `create` carries neither field. Nothing to do.
+    logger.debug(
+      `[sync] apply note ${change.entityId} ${change.op} metadata — local row missing, skipped`,
+    );
+    return 'skipped';
+  }
+  logger.debug(
+    `[sync] apply note ${change.entityId} ${change.op} metadata — ${meta.kind} applied (seq=${change.serverSeq})`,
+  );
+  return 'applied';
 }
 
 function applyOneFolderChange(
