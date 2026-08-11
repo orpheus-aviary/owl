@@ -19,6 +19,7 @@ import {
   type ServerChangeLike,
   SkybridgeProtocolError,
   runSync,
+  upsertSyncCursor,
 } from './engine.js';
 
 // ─── helpers ─────────────────────────────────────────────────────────
@@ -1116,6 +1117,189 @@ describe('runSync — second-run cursor update', () => {
       n: number;
     };
     assert.equal(allCursors.n, 1);
+  });
+});
+
+// ─── 0.6.3 V1: the two cursors must not zero each other ──────────────
+//
+// Regression for the bug that made every push reset `pulled_seq` to 0 (and
+// every pull reset `pushed_seq`), so the next round re-pulled the entire
+// change log. The pre-0.6.3 suite only ever exercised one direction at a
+// time on a fresh db, which is exactly why it never showed up.
+// See docs/plans/2026-08-11-0.6.3-plan.md §2.
+
+describe('upsertSyncCursor — column independence', () => {
+  it('push-only write preserves pulled_seq', () => {
+    upsertSyncCursor(sqlite, SERVER_URL, { pulledSeq: 1002, nowMs: 1 });
+    upsertSyncCursor(sqlite, SERVER_URL, { pushedSeq: 1011, nowMs: 2 });
+
+    const row = readCursor(sqlite, SERVER_URL);
+    assert.equal(row?.pulled_seq, 1002);
+    assert.equal(row?.pushed_seq, 1011);
+    assert.equal(row?.updated_at, 2);
+  });
+
+  it('pull-only write preserves pushed_seq', () => {
+    upsertSyncCursor(sqlite, SERVER_URL, { pushedSeq: 42, nowMs: 1 });
+    upsertSyncCursor(sqlite, SERVER_URL, { pulledSeq: 7, nowMs: 2 });
+
+    const row = readCursor(sqlite, SERVER_URL);
+    assert.equal(row?.pushed_seq, 42);
+    assert.equal(row?.pulled_seq, 7);
+  });
+
+  it('first write inserts, absent column defaults to 0', () => {
+    upsertSyncCursor(sqlite, SERVER_URL, { pushedSeq: 5, nowMs: 3 });
+
+    const row = readCursor(sqlite, SERVER_URL);
+    assert.equal(row?.pulled_seq, 0);
+    assert.equal(row?.pushed_seq, 5);
+  });
+
+  it('both columns in one call', () => {
+    upsertSyncCursor(sqlite, SERVER_URL, { pulledSeq: 3, pushedSeq: 4, nowMs: 1 });
+    upsertSyncCursor(sqlite, SERVER_URL, { pulledSeq: 30, pushedSeq: 40, nowMs: 2 });
+
+    const row = readCursor(sqlite, SERVER_URL);
+    assert.equal(row?.pulled_seq, 30);
+    assert.equal(row?.pushed_seq, 40);
+  });
+
+  // 0 is a real value, not "not supplied" — this is why the fix reads the
+  // bound parameters instead of `NULLIF(excluded.x, 0)`.
+  it('an explicit 0 is written, not treated as a sentinel', () => {
+    upsertSyncCursor(sqlite, SERVER_URL, { pulledSeq: 1002, pushedSeq: 7, nowMs: 1 });
+    upsertSyncCursor(sqlite, SERVER_URL, { pulledSeq: 0, nowMs: 2 });
+
+    const row = readCursor(sqlite, SERVER_URL);
+    assert.equal(row?.pulled_seq, 0, 'explicit 0 must overwrite');
+    assert.equal(row?.pushed_seq, 7, 'the other column still survives');
+  });
+});
+
+describe('runSync — cursor survives across round directions', () => {
+  it('pull round then push round → pulled_seq is not reset', async () => {
+    {
+      const client = new FakeSkybridgeClient();
+      client.enqueuePull({
+        changes: [
+          makeNoteChange({
+            serverSeq: 7,
+            entityId: 'n-pull',
+            op: 'create',
+            payload: {
+              id: 'n-pull',
+              content: 'from remote',
+              folder_id: null,
+              trash_level: 0,
+              created_at_ms: 1_000,
+              updated_at_ms: 1_000,
+              tags: [],
+            },
+          }),
+        ],
+        hasMore: false,
+      });
+      await runSync({
+        db,
+        sqlite,
+        client,
+        workspaceId: WORKSPACE_ID,
+        serverUrl: SERVER_URL,
+        nowMs: fakeNow,
+      });
+      assert.equal(readCursor(sqlite, SERVER_URL)?.pulled_seq, 7);
+    }
+
+    // A local mutation → this round pulls nothing and only pushes.
+    const cid = emitSyncChange(sqlite, {
+      entityType: 'note',
+      entityId: 'n-local',
+      op: 'create',
+      payload: { content: 'local', updated_at_ms: 2_000 },
+      nowMs: 2_000,
+    });
+    const client = new FakeSkybridgeClient();
+    client.enqueuePull({ changes: [], hasMore: false });
+    client.enqueuePush({
+      accepted: [{ clientChangeId: cid, serverSeq: 42 }],
+      duplicates: [],
+    });
+
+    const result = await runSync({
+      db,
+      sqlite,
+      client,
+      workspaceId: WORKSPACE_ID,
+      serverUrl: SERVER_URL,
+      nowMs: fakeNow,
+    });
+
+    // The pull half of this round must have started from 7, not from 0.
+    assert.equal(result.cursorBefore, 7);
+    const row = readCursor(sqlite, SERVER_URL);
+    assert.equal(row?.pulled_seq, 7, 'push must not zero the pull cursor');
+    assert.equal(row?.pushed_seq, 42);
+  });
+
+  it('push round then pull round → pushed_seq is not reset', async () => {
+    {
+      const cid = emitSyncChange(sqlite, {
+        entityType: 'note',
+        entityId: 'n-local',
+        op: 'create',
+        payload: { content: 'local', updated_at_ms: 1_000 },
+        nowMs: 1_000,
+      });
+      const client = new FakeSkybridgeClient();
+      client.enqueuePull({ changes: [], hasMore: false });
+      client.enqueuePush({
+        accepted: [{ clientChangeId: cid, serverSeq: 42 }],
+        duplicates: [],
+      });
+      await runSync({
+        db,
+        sqlite,
+        client,
+        workspaceId: WORKSPACE_ID,
+        serverUrl: SERVER_URL,
+        nowMs: fakeNow,
+      });
+      assert.equal(readCursor(sqlite, SERVER_URL)?.pushed_seq, 42);
+    }
+
+    const client = new FakeSkybridgeClient();
+    client.enqueuePull({
+      changes: [
+        makeNoteChange({
+          serverSeq: 50,
+          entityId: 'n-pull',
+          op: 'create',
+          payload: {
+            id: 'n-pull',
+            content: 'from remote',
+            folder_id: null,
+            trash_level: 0,
+            created_at_ms: 3_000,
+            updated_at_ms: 3_000,
+            tags: [],
+          },
+        }),
+      ],
+      hasMore: false,
+    });
+    await runSync({
+      db,
+      sqlite,
+      client,
+      workspaceId: WORKSPACE_ID,
+      serverUrl: SERVER_URL,
+      nowMs: fakeNow,
+    });
+
+    const row = readCursor(sqlite, SERVER_URL);
+    assert.equal(row?.pushed_seq, 42, 'pull must not zero the push cursor');
+    assert.equal(row?.pulled_seq, 50);
   });
 });
 

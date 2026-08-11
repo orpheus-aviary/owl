@@ -148,10 +148,21 @@ export class SkybridgeProtocolError extends Error {
 /**
  * Idempotent write into `sync_cursor`. First call for an endpoint inserts
  * with zeros for the column that isn't being updated; subsequent calls
- * preserve the opposite column via `COALESCE(excluded.*, sync_cursor.*)`.
+ * leave the opposite column untouched.
  *
- * Schema v4 columns are `NOT NULL DEFAULT 0`, but INSERT-ing a literal
- * NULL still violates the constraint — `COALESCE(?, 0)` covers that.
+ * ⚠️ The DO UPDATE arms MUST read the bound parameters (`@pulled` / `@pushed`),
+ * never `excluded.*`. Schema v4 columns are `NOT NULL DEFAULT 0`, so the
+ * INSERT arm has to launder NULL through `COALESCE(@x, 0)` — which means
+ * `excluded.pulled_seq` is **0, not NULL**, for a push-only write. Reading it
+ * there makes `COALESCE(excluded.pulled_seq, sync_cursor.pulled_seq)` collapse
+ * to 0 and wipe the other cursor.
+ *
+ * That was the 0.6.3 V1 bug: every push zeroed `pulled_seq`, so the next round
+ * re-pulled the whole change log (49 full replays/day on the 0.6.2 soak
+ * machine), and every pull zeroed `pushed_seq`, which is why `/sync/status`
+ * always reported `pushed_seq: 0`. See docs/plans/2026-08-11-0.6.3-plan.md §2.
+ *
+ * 0 is a real value here, not a sentinel — passing `pulledSeq: 0` writes 0.
  */
 export function upsertSyncCursor(
   sqlite: Database.Database,
@@ -161,13 +172,18 @@ export function upsertSyncCursor(
   sqlite
     .prepare(
       `INSERT INTO sync_cursor (endpoint, pulled_seq, pushed_seq, updated_at)
-         VALUES (?, COALESCE(?, 0), COALESCE(?, 0), ?)
+         VALUES (@endpoint, COALESCE(@pulled, 0), COALESCE(@pushed, 0), @now)
        ON CONFLICT(endpoint) DO UPDATE SET
-         pulled_seq = COALESCE(excluded.pulled_seq, sync_cursor.pulled_seq),
-         pushed_seq = COALESCE(excluded.pushed_seq, sync_cursor.pushed_seq),
-         updated_at = excluded.updated_at`,
+         pulled_seq = COALESCE(@pulled, sync_cursor.pulled_seq),
+         pushed_seq = COALESCE(@pushed, sync_cursor.pushed_seq),
+         updated_at = @now`,
     )
-    .run(endpoint, fields.pulledSeq ?? null, fields.pushedSeq ?? null, fields.nowMs);
+    .run({
+      endpoint,
+      pulled: fields.pulledSeq ?? null,
+      pushed: fields.pushedSeq ?? null,
+      now: fields.nowMs,
+    });
 }
 
 // ─── outbox row shape (read-only) ───────────────────────────────────
