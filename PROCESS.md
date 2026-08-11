@@ -36,11 +36,27 @@ push 轮 `cursor 1023→1023 pushed=1` → 紧接 sse 轮 `cursor_before=1023 pu
 `pushed_seq` 不再恒 0 · info 级 per-change 日志 0 条 · pin 自身 echo `applied=1`（旧版 `skipped=1`）
 且 `pinned_at ≠ updated_at` · 裁剪在健康游标下跑通（`deleted:27, pulled_seq:1023`）。
 
-### 🔴 发版后待办
+### 云端验收（2026-08-11 同日完成，四项全闭环）
 
-1. **云端升 0.6.3 + 登录一次**（命令见 release notes 文末）—— 0.6.2 就是漏了这步白跑 15 天。
-2. 云端上线后补验 **V3 watchdog**（cloud-only，本机不启动）和 **V4 完整跨设备**（云端 0.6.2 收不到）。
-3. **2026-08-19 左右**复验云端 W2 裁剪（08-11 才装上水位，要等 7 天窗）。
+云端已升 0.6.3（`/www/owl-server`）并登录。
+
+- **V3** —— `/status` 投影登录前 `{session_installed:false, state:"login_required", last_success_at:null}`、
+  登录后 `{true, "session_ready", 1786434082603}`；日志有
+  `{"kind":"session-watchdog","pollMs":60000,"firstReportAfterMs":600000,"msg":"started"}`
+  （**接线是否生效只能这样验**，单测看不到）。10 分钟告警的时序由 fake clock 单测覆盖，
+  真机不值得为它停 11 分钟同步。
+- **V4 完整跨设备** —— 桌面置顶一条笔记 → 云端 `pinned_at` 逐字节一致（`1786434258017`）、
+  `updated_at` 保持创建时间不变（`1786434254170`）；云端那一轮 `cursor 1037→1038 pulled=1 **applied=1**`。
+  0.6.2 时代这里是 `skipped=1` + `pinned_at IS NULL`。
+- **V1 / V2 云端同样成立** —— 三轮 `cursor_before` 依次 1036→1037→1038 无一从 0 起，
+  每轮一条 9 数字 summary。
+
+### 🔴 剩余待办
+
+1. **2026-08-19 左右**复验云端 W2 裁剪（08-11 才装上水位 293，要等 7 天窗）。
+   体检 SQL 见 `docs/plans/2026-07-27-0.6.2-plan.md` §7.1。
+2. 云端 `pushed_seq` 目前仍为 0 —— 升级后云端只拉过没推过，属正常；等它推第一条即脱离 0，
+   顺手确认一下。
 
 ---
 
