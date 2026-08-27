@@ -123,6 +123,8 @@ export interface RealSkybridgeClient {
       clientVersion: string | null;
       createdAt: number;
       lastSeenAt: number;
+      /** Soft-revoke stamp (skybridge 0.1.4+). `null` = still usable. */
+      revokedAt: number | null;
     }[]
   >;
   /**

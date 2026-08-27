@@ -56,7 +56,11 @@ interface Spies {
 
 function mockClient(
   spies: Spies,
-  opts: { registerId?: string; ensureWorkspace?: () => never } = {},
+  opts: {
+    registerId?: string;
+    ensureWorkspace?: () => never;
+    knownDevices?: { id: string; revokedAt: number | null }[];
+  } = {},
 ): RealSkybridgeClient {
   return {
     registerDevice: async () => {
@@ -70,7 +74,17 @@ function mockClient(
     pushChanges: async () => ({ accepted: [], duplicates: [], latestSeq: 0, serverTime: 0 }),
     pullChanges: async () => ({ changes: [], hasMore: false, latestSeq: 0, serverTime: 0 }),
     subscribeEvents: () => () => {},
-    listDevices: async () => [],
+    listDevices: async () =>
+      (opts.knownDevices ?? [{ id: 'dev-new', revokedAt: null }]).map((d) => ({
+        id: d.id,
+        name: 'mock-device',
+        platform: null,
+        appVersion: null,
+        clientVersion: null,
+        createdAt: 0,
+        lastSeenAt: 0,
+        revokedAt: d.revokedAt,
+      })),
     revokeDevice: async () => {},
     logout: async () => {
       spies.logout++;
@@ -88,6 +102,12 @@ interface MockOpts {
   refreshThrowsTransient?: boolean;
   refreshToken?: string;
   ensureWorkspaceThrows?: boolean;
+  /**
+   * What `listDevices` reports. Defaults to "the server still knows `dev-new`",
+   * which is what the first login registered — a return visit must find it and
+   * reuse it. Override to model a revoked or forgotten registration.
+   */
+  knownDevices?: { id: string; revokedAt: number | null }[];
 }
 
 /**
@@ -123,6 +143,7 @@ function mockSdk(spies: Spies, opts: MockOpts = {}): SkybridgeClientModule {
     createSkybridgeClient: () =>
       mockClient(spies, {
         registerId: opts.registerId,
+        knownDevices: opts.knownDevices,
         ensureWorkspace: opts.ensureWorkspaceThrows
           ? () => {
               throw new Error('ensureWorkspace failed');
@@ -273,6 +294,54 @@ describe('cloudLogin', () => {
     );
     assert.equal(res.deviceId, 'dev-new', 'reused the persisted device id');
     assert.equal(spies.register, 0, 'return visit must not register a new device');
+  });
+
+  // The failure this prevents: `/workspaces` is authOnly, so a login carrying a
+  // revoked device id SUCCEEDS and only the device-bound sync calls fail, with
+  // 403 — outside every 401 self-healing path.
+  it('return visit re-registers when the server revoked the device', async () => {
+    ctx = makeCtx(cloudConfig());
+    await cloudLogin(
+      ctx,
+      { email: 'a@test', password: 'pw' },
+      loader(mockSdk({ register: 0, logout: 0 })),
+    );
+    ctx.sqlite.close();
+
+    ctx = makeCtx(cloudConfig());
+    const spies: Spies = { register: 0, logout: 0 };
+    const res = await cloudLogin(
+      ctx,
+      { email: 'a@test', password: 'pw' },
+      loader(
+        mockSdk(spies, {
+          registerId: 'dev-fresh',
+          knownDevices: [{ id: 'dev-new', revokedAt: 1_700_000_000_000 }],
+        }),
+      ),
+    );
+    assert.equal(res.deviceId, 'dev-fresh', 'a revoked device must not be reused');
+    assert.equal(spies.register, 1);
+  });
+
+  it('return visit re-registers when the server no longer knows the device', async () => {
+    ctx = makeCtx(cloudConfig());
+    await cloudLogin(
+      ctx,
+      { email: 'a@test', password: 'pw' },
+      loader(mockSdk({ register: 0, logout: 0 })),
+    );
+    ctx.sqlite.close();
+
+    ctx = makeCtx(cloudConfig());
+    const spies: Spies = { register: 0, logout: 0 };
+    const res = await cloudLogin(
+      ctx,
+      { email: 'a@test', password: 'pw' },
+      loader(mockSdk(spies, { registerId: 'dev-fresh', knownDevices: [] })),
+    );
+    assert.equal(res.deviceId, 'dev-fresh');
+    assert.equal(spies.register, 1);
   });
 
   it('multi-device: a second login to the same bound account rotates, no re-register', async () => {

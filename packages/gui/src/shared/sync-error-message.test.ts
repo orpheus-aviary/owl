@@ -11,7 +11,7 @@ describe('syncErrorMessage', () => {
     ['TOKEN_MISSING', '登录凭证缺失，请重新登录'],
     ['TOKEN_INVALID', '登录已失效，请重新登录'],
     ['DEVICE_HEADER_MISSING', '设备信息缺失，请重新登录'],
-    ['DEVICE_FORBIDDEN', '当前设备无权限访问该账号'],
+    ['DEVICE_FORBIDDEN', '这台设备已被移出该账号，请退出登录后重新登录（会重新注册一台设备）'],
     ['DEVICE_ALREADY_REGISTERED', '该设备已在此账号注册'],
     ['WORKSPACE_NOT_FOUND', '找不到对应的工作区'],
     ['WORKSPACE_EXISTS', '工作区已存在'],

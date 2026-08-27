@@ -309,9 +309,7 @@ async function resolveBindingAndSwitch(
     await switchToProfileId(ctx, profileId, ctx.logger);
     markSwitched();
     const remembered = readSkybridgeDeviceId(ctx.sqlite);
-    const device = remembered
-      ? synthDevice(sb, remembered)
-      : await registerNewDevice(sb, authContext);
+    const device = await resolveDevice(ctx, sb, authContext, remembered);
     const workspace = await ensureOwlWorkspace(sb, authContext, device.id);
     return { device, workspace };
   }
@@ -388,6 +386,47 @@ export async function logoutAllCloudSessions(ctx: AppContext): Promise<void> {
     }
   }
   teardownCloudSession(ctx);
+}
+
+/**
+ * Reuse this install's registration only while the server still honours it.
+ *
+ * Reusing it blindly is how a revoked device got stuck: `/workspaces` is
+ * authOnly, so the login SUCCEEDS with a dead device id, and then every
+ * `/changes` and `/events` — both authAndDevice — answers 403 DEVICE_FORBIDDEN
+ * forever. 403 is not 401, so none of the token self-healing (W3) applies and
+ * there is no path back short of editing `local_metadata` by hand.
+ *
+ * A device that is gone or revoked gets a NEW registration rather than a
+ * retry: revoking is a deliberate act, and quietly handing the same id back
+ * would reopen a door somebody just closed. The cost is one extra row on the
+ * account per revoke (`changes.device_id` is ON DELETE RESTRICT, so a device
+ * that ever pushed cannot be deleted) and a new third element for the LWW key
+ * — which only ever breaks ties between edits sharing a millisecond AND a
+ * counter, so existing rows keep their old id without consequence.
+ *
+ * lark does the same thing in `coordinator/login.ts:resolveDevice`; the two
+ * should not drift.
+ */
+async function resolveDevice(
+  ctx: AppContext,
+  sb: SkybridgeClientModule,
+  authContext: SkybridgeAuthContext,
+  remembered: string | null,
+): Promise<DeviceSection> {
+  if (remembered === null) return registerNewDevice(sb, authContext);
+
+  // Only registerDevice and listDevices are callable without a device id.
+  const probe = sb.createSkybridgeClient({ authContext }) as RealSkybridgeClient;
+  const devices = await probe.listDevices();
+  const hit = devices.find((d) => d.id === remembered);
+  if (hit !== undefined && hit.revokedAt === null) return synthDevice(sb, remembered);
+
+  ctx.logger.info(
+    { kind: 'cloud-login', device_id: remembered, known: hit !== undefined },
+    'stored sync device is gone or revoked — registering a new one',
+  );
+  return registerNewDevice(sb, authContext);
 }
 
 async function registerNewDevice(
