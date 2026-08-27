@@ -23,6 +23,7 @@ const DEVICE_CURRENT: SyncDeviceEntry = {
   client_version: '0.1.3',
   created_at: 1700000000000,
   last_seen_at: 1700000100000,
+  revoked_at: null,
   is_current: true,
 };
 const DEVICE_OTHER: SyncDeviceEntry = {
@@ -33,6 +34,30 @@ const DEVICE_OTHER: SyncDeviceEntry = {
   client_version: '0.1.3',
   created_at: 1700000200000,
   last_seen_at: 1700000300000,
+  revoked_at: null,
+  is_current: false,
+};
+
+const DEVICE_LARK: SyncDeviceEntry = {
+  id: 'dev-lark',
+  name: 'vivo V2408A',
+  platform: 'android',
+  app_version: 'lark 0.4.1',
+  client_version: '0.1.4',
+  created_at: 1700000400000,
+  last_seen_at: 1700000500000,
+  revoked_at: null,
+  is_current: false,
+};
+const DEVICE_REVOKED: SyncDeviceEntry = {
+  id: 'dev-gone',
+  name: 'mac-old (owl)',
+  platform: 'darwin',
+  app_version: 'owl 0.5.0',
+  client_version: '0.1.3',
+  created_at: 1600000000000,
+  last_seen_at: 1600000100000,
+  revoked_at: 1650000000000,
   is_current: false,
 };
 
@@ -113,11 +138,11 @@ describe('DevicesCard — render shape', () => {
     await waitFor(() => screen.getByText(/管理我的设备 \(2\)/));
   });
 
-  it('empty devices list renders 未发现任何设备', async () => {
+  it('empty devices list says the account has no owl device', async () => {
     window.owlAPI.sync.devices = vi.fn(() => okDevices([]));
     render(<DevicesCard />);
     fireEvent.click(screen.getByRole('button', { name: /管理我的设备/ }));
-    await waitFor(() => screen.getByText('未发现任何设备'));
+    await waitFor(() => screen.getByText('这个账号下还没有 owl 的设备'));
   });
 });
 
@@ -212,5 +237,54 @@ describe('formatRelative', () => {
     expect(formatRelative(NOW - 5 * 86400_000, NOW)).toMatch(/天/);
     expect(formatRelative(NOW - 90 * 86400_000, NOW)).toMatch(/月/);
     expect(formatRelative(NOW - 800 * 86400_000, NOW)).toMatch(/年/);
+  });
+});
+
+// C7 — devices are per ACCOUNT, so lark's registrations arrive in the same
+// response, and revoked ones never go away (skybridge revokes soft).
+describe('DevicesCard — other tools and tombstones', () => {
+  const expand = () => fireEvent.click(screen.getByRole('button', { name: /管理我的设备/ }));
+
+  it("hides another tool's device but says how many", async () => {
+    window.owlAPI.sync.devices = vi.fn(() => okDevices([DEVICE_CURRENT, DEVICE_LARK]));
+    render(<DevicesCard />);
+    expand();
+
+    await waitFor(() => screen.getByText('mac-a (owl)'));
+    expect(screen.queryByText('vivo V2408A')).toBeNull();
+    expect(screen.getByText(/另有 1 台设备属于同一账号的其它工具/)).toBeTruthy();
+  });
+
+  it('counts only what it shows in the header', async () => {
+    window.owlAPI.sync.devices = vi.fn(() =>
+      okDevices([DEVICE_CURRENT, DEVICE_LARK, DEVICE_REVOKED]),
+    );
+    render(<DevicesCard />);
+    expand();
+
+    await waitFor(() => screen.getByRole('button', { name: /管理我的设备 \(1\)/ }));
+  });
+
+  it('folds revoked devices away and reveals them on demand', async () => {
+    window.owlAPI.sync.devices = vi.fn(() => okDevices([DEVICE_CURRENT, DEVICE_REVOKED]));
+    render(<DevicesCard />);
+    expand();
+
+    await waitFor(() => screen.getByText('mac-a (owl)'));
+    expect(screen.queryByText('mac-old (owl)')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: '显示已撤销的 1 台' }));
+    await waitFor(() => screen.getByText('mac-old (owl)'));
+    expect(screen.getByText('已撤销')).toBeTruthy();
+    // Revoking a tombstone again would just look broken.
+    expect(screen.queryByRole('button', { name: '移除' })).toBeNull();
+  });
+
+  it('says so when the account has no owl device at all', async () => {
+    window.owlAPI.sync.devices = vi.fn(() => okDevices([DEVICE_LARK]));
+    render(<DevicesCard />);
+    expand();
+
+    await waitFor(() => screen.getByText('这个账号下还没有 owl 的设备'));
   });
 });

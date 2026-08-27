@@ -269,6 +269,7 @@ async function buildDevices(): Promise<SyncDevicesReply> {
       client_version: d.clientVersion,
       created_at: d.createdAt,
       last_seen_at: d.lastSeenAt,
+      revoked_at: d.revokedAt,
       is_current: currentDeviceId !== null && d.id === currentDeviceId,
     })),
   };

@@ -17,6 +17,8 @@ export interface SyncDeviceEntry {
   client_version: string | null;
   created_at: number;
   last_seen_at: number;
+  /** 软撤销时间戳；`null` = 仍可用。服务端从不过滤，列表自己折叠。 */
+  revoked_at: number | null;
   is_current: boolean;
 }
 

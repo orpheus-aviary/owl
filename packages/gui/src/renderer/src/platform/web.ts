@@ -34,6 +34,7 @@ interface RawDevice {
   clientVersion: string | null;
   createdAt: number;
   lastSeenAt: number;
+  revokedAt: number | null;
 }
 
 /** Map a thrown transport error to a user-ready message. */
@@ -128,6 +129,7 @@ const webSync: SyncCapability = {
         client_version: d.clientVersion,
         created_at: d.createdAt,
         last_seen_at: d.lastSeenAt,
+        revoked_at: d.revokedAt,
         is_current: currentDeviceId !== null && d.id === currentDeviceId,
       }));
       return { ok: true, data: { devices } };

@@ -1,8 +1,15 @@
 import { Button } from '@/components/ui/button';
 import { getPlatform } from '@/platform';
 import { ChevronDownIcon, ChevronRightIcon, Loader2, RefreshCw } from 'lucide-react';
-import { useCallback, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import type { SyncDeviceEntry } from '../../../../shared/sync-devices-types.js';
+import {
+  REVOKED_DEVICES_NOTE,
+  hiddenDevicesNote,
+  revokedDevicesLabel,
+  splitOwlDevices,
+  splitRevokedDevices,
+} from '../../../../shared/sync-devices.js';
 
 /**
  * P5-d Phase 10 — Settings → 同步 tab → 「管理我的设备」collapsible
@@ -18,6 +25,11 @@ import type { SyncDeviceEntry } from '../../../../shared/sync-devices-types.js';
  *    an explicit re-fetch
  *  - current device (matches toml [device].id via main's is_current
  *    flag) is highlighted with a green dot + `[当前]` chip
+ *
+ * C7 (2026-08-27) — the list is now filtered and folded, because devices are
+ * per ACCOUNT: lark's registrations sit in the same response, and revoked ones
+ * never go away (skybridge revokes soft — see `shared/sync-devices.ts` for
+ * both rules and why they are worded the way they are).
  */
 
 type Phase =
@@ -51,7 +63,33 @@ export function DevicesCard() {
     }
   };
 
-  const headerCount = phase.kind === 'loaded' ? ` (${phase.devices.length})` : '';
+  const [showRevoked, setShowRevoked] = useState(false);
+  const devices = phase.kind === 'loaded' ? phase.devices : null;
+
+  const owlOnly = useMemo(
+    () => (devices === null ? null : splitOwlDevices(devices, (d) => d.app_version)),
+    [devices],
+  );
+  const byRevoked = useMemo(
+    () => (owlOnly === null ? null : splitRevokedDevices(owlOnly.shown, (d) => d.revoked_at)),
+    [owlOnly],
+  );
+
+  // The count is what the list SHOWS without being asked — other tools' devices
+  // and tombstones both have their own line saying how many there are.
+  const headerCount = byRevoked ? ` (${byRevoked.active.length})` : '';
+  const hiddenNote = owlOnly ? hiddenDevicesNote(owlOnly.hidden) : null;
+  const revokedLabel = byRevoked
+    ? revokedDevicesLabel(byRevoked.revoked.length, showRevoked)
+    : null;
+
+  const rows = (list: readonly SyncDeviceEntry[]) => (
+    <ul className="divide-y divide-border">
+      {list.map((d) => (
+        <DeviceRow key={d.id} device={d} onRemoved={fetchDevices} />
+      ))}
+    </ul>
+  );
 
   return (
     <div className="border border-border rounded-md overflow-hidden">
@@ -98,18 +136,41 @@ export function DevicesCard() {
               </div>
             </div>
           )}
-          {phase.kind === 'loaded' &&
-            (phase.devices.length === 0 ? (
-              <div className="px-4 py-6 text-sm text-muted-foreground text-center">
-                未发现任何设备
-              </div>
-            ) : (
-              <ul className="divide-y divide-border">
-                {phase.devices.map((d) => (
-                  <DeviceRow key={d.id} device={d} onRemoved={fetchDevices} />
-                ))}
-              </ul>
-            ))}
+          {byRevoked !== null && (
+            <>
+              {byRevoked.active.length === 0 ? (
+                <div className="px-4 py-6 text-sm text-muted-foreground text-center">
+                  这个账号下还没有 owl 的设备
+                </div>
+              ) : (
+                rows(byRevoked.active)
+              )}
+              {revokedLabel !== null && (
+                <div className="px-2 py-2 border-t border-border">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="text-muted-foreground"
+                    aria-expanded={showRevoked}
+                    onClick={() => setShowRevoked((open) => !open)}
+                  >
+                    {revokedLabel}
+                  </Button>
+                </div>
+              )}
+              {showRevoked && (
+                <>
+                  <p className="px-4 pb-2 text-xs text-muted-foreground">{REVOKED_DEVICES_NOTE}</p>
+                  {rows(byRevoked.revoked)}
+                </>
+              )}
+              {hiddenNote !== null && (
+                <p className="px-4 py-3 text-xs text-muted-foreground border-t border-border">
+                  {hiddenNote}
+                </p>
+              )}
+            </>
+          )}
         </div>
       )}
     </div>
@@ -119,7 +180,8 @@ export function DevicesCard() {
 // P5-d Phase 17 (W9) — a device row. Non-current devices get a「移除」action
 // (inline confirm → `sync.revokeDevice` → re-fetch the list). The CURRENT
 // device has NO remove button: removing your own device is a self-logout, so
-// it's intentionally only reachable via「退出登录」(Q4).
+// it's intentionally only reachable via「退出登录」(Q4). C7: neither does an
+// already-revoked one — revoking a tombstone again would just look broken.
 function DeviceRow({ device, onRemoved }: { device: SyncDeviceEntry; onRemoved: () => void }) {
   const [confirming, setConfirming] = useState(false);
   const [removing, setRemoving] = useState(false);
@@ -147,7 +209,7 @@ function DeviceRow({ device, onRemoved }: { device: SyncDeviceEntry; onRemoved: 
       <span
         aria-hidden
         className={
-          device.is_current
+          device.is_current && device.revoked_at === null
             ? 'mt-1.5 size-2 rounded-full bg-green-500 shrink-0'
             : 'mt-1.5 size-2 rounded-full bg-muted-foreground/40 shrink-0'
         }
@@ -155,9 +217,14 @@ function DeviceRow({ device, onRemoved }: { device: SyncDeviceEntry; onRemoved: 
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2">
           <span className="text-sm font-medium truncate">{device.name}</span>
-          {device.is_current && (
+          {device.is_current && device.revoked_at === null && (
             <span className="text-xs px-1.5 py-0.5 rounded bg-green-500/15 text-green-700 dark:text-green-400 shrink-0">
               当前
+            </span>
+          )}
+          {device.revoked_at !== null && (
+            <span className="text-xs px-1.5 py-0.5 rounded bg-muted text-muted-foreground shrink-0">
+              已撤销
             </span>
           )}
         </div>
@@ -167,7 +234,7 @@ function DeviceRow({ device, onRemoved }: { device: SyncDeviceEntry; onRemoved: 
         </div>
         {error && <div className="text-xs text-destructive mt-1 break-words">{error}</div>}
       </div>
-      {!device.is_current && (
+      {!device.is_current && device.revoked_at === null && (
         <div className="shrink-0">
           {confirming ? (
             <div className="flex items-center gap-1">
