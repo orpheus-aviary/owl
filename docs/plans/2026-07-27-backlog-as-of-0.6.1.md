@@ -238,7 +238,7 @@ UI 一切正常，只有云端这一路默默掉队 —— 2026-08-11 复盘就�
 **真要做时的两条路**：给一条 opt-in 的一次性清理命令（把水位重置为 0，之后由闸 1/3/4 兜底 ——
 对「单 endpoint + 从没换过账号」的库其实成立）；或在升级说明里写清这个地板的存在。
 
-### C7. `DevicesCard` 不折叠已撤销设备（2026-08-27 skybridge 体检新增）
+### ~~C7. `DevicesCard` 不折叠已撤销设备~~ ✅ 2026-08-27 已做（连带工具过滤 + 登录自愈）
 
 **现状**：`GET /devices` 按设计返回全部设备（含 `revoked_at != null`），而
 `packages/gui/src/renderer/src/components/settings/DevicesCard.tsx` 既不区分也不折叠 ——
@@ -258,6 +258,12 @@ UI 一切正常，只有云端这一路默默掉队 —— 2026-08-11 复盘就�
 
 **顺带**：skybridge 0.1.5 修好了 `last_seen_at`（此前只在注册时写一次，
 所以「上次活跃」显示的其实是注册时间）。云端升到 0.1.5 后 owl 这行不用改就会变准确。
+
+**✅ 实施（2026-08-27）**：`shared/sync-devices.ts` 抄 lark 的两条规则（`owl …` 与**未知**都显示、
+被隐藏的数量说出口）+ 折叠已撤销 + 撤销行不再给「移除」按钮。**同一轮还修了登录不自愈**：
+`cloud-login.ts` 的 `resolveDevice` 现在先 `listDevices()`，「已撤销 / 服务器不认识」就重新注册 ——
+此前重新登录也救不回来（`/workspaces` 是 authOnly，登录会成功，然后每次同步 403 DEVICE_FORBIDDEN，
+而 403 不进 401 那套自愈）。`DEVICE_FORBIDDEN` 文案也改成可操作的。
 
 ---
 

@@ -63,6 +63,25 @@ push 轮 `cursor 1023→1023 pushed=1` → 紧接 sse 轮 `cursor_before=1023 pu
 **C6 这次有了具体数字**：冻结 293 行 / 全表 303 行 = 97% 的 outbox 永远裁不掉，
 但它是一次性地板、不再增长。
 
+### 设备列表 + 登录自愈（2026-08-27，未发版）
+
+skybridge 0.1.5/0.1.6 的云端体检牵出的两件 owl 侧的事，一起做了：
+
+- **设备列表按工具过滤 + 折叠已撤销**（backlog C7）。设备是按**账号**注册的，lark 的注册和
+  owl 的混在同一个响应里，而 skybridge 的 `devices` 表**没有 tool 列** → 只能按 `app_version`
+  前缀判定。规则和文案抄 lark 的 `packages/shared/src/sync-devices.ts`，**有意保持一致**：
+  ① `owl …` 显示 ② **未知（`null`）也显示**（无法证明不是自己的，而这个列表正是用来撤销
+  不信任的设备的）③ **被隐藏的数量要说出口**（那些设备也持有本账号凭证）。
+  已撤销的折叠不过滤，且不再给「移除」按钮。落点 `packages/gui/src/shared/sync-devices.ts`。
+- 🔴 **登录不自愈**（同一轮发现）：`cloud-login.ts` 只要本地 profile 库在就复用记住的 device id，
+  **从不问服务器它还有效吗**。而 `/workspaces` 是 authOnly ⇒ 拿着被撤销的 id **登录会成功**，
+  然后每一次 `/changes`、`/events` 都 403 `DEVICE_FORBIDDEN`；403 不是 401，走不进 W3 那套
+  token 自愈，**重新登录也救不回来**。现在 `resolveDevice` 先 `listDevices()`，
+  「已撤销 / 服务器不认识」就重新注册一台（照 lark 的做法：复用等于把用户刚关上的门重新打开）。
+  `DEVICE_FORBIDDEN` 文案同步改成可操作的。
+
+测试：gui 668 → **681**，daemon 509 → **511**（两条新回归用例分别覆盖「被撤销」和「服务器不认识」）。
+
 ### 🎯 下一步 = Stage 2 收尾 → 1.0.0
 
 **A1 TLS/反代**（换 https = 换 endpoint，游标会从 0 重来；迁移做法和它的三条前提见
