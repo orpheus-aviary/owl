@@ -81,5 +81,5 @@ Scope: `db` / `config` / `notes` / `tags` / `daemon` / `gui` / `editor` / `brows
 公网部署✅ + TLS/反代 + soak + P6 GA → 1.0.0；RN 移动 app + 跨 profile 视图 = 1.0.0 后）。
 当前状态 + 下一步**以 `PROCESS.md` 为准**；扩生态总架构 `docs/plans/2026-06-06-mobile-web-ecosystem-arch.md`；
 跨仓路线 `aviary/docs/ROADMAP.md`；P5-d 归档 `docs/history/P5-d-shipped.md`；
-**待办清单（B1/B2/C2/C5 已划掉；C6 + D9 待拍板）= `docs/plans/2026-07-27-backlog-as-of-0.6.1.md`**；0.6 backlog 原始清单 `docs/plans/2026-06-06-0.6.0-plan.md`。
+**待办清单（B1/B2/C2/C5 已划掉；C6 + C7 + D9 待拍板）= `docs/plans/2026-07-27-backlog-as-of-0.6.1.md`**；0.6 backlog 原始清单 `docs/plans/2026-06-06-0.6.0-plan.md`。
 **W2 裁剪体检**：`just sync-retention-report <owl.db>`（判读见脚本头注释 —— 装没装要看 db 不能看日志）。

@@ -67,7 +67,8 @@ push 轮 `cursor 1023→1023 pushed=1` → 紧接 sse 轮 `cursor_before=1023 pu
 
 **A1 TLS/反代**（换 https = 换 endpoint，游标会从 0 重来；迁移做法和它的三条前提见
 0.6.2 计划 §4.1）· 真·24h soak · **A3 P6 多设备 GA**（跨仓）。
-待办清单 `docs/plans/2026-07-27-backlog-as-of-0.6.1.md`（**C6 + D9 待拍板**）；
+待办清单 `docs/plans/2026-07-27-backlog-as-of-0.6.1.md`（**C6 + C7 + D9 待拍板**；
+C7 = `DevicesCard` 不折叠已撤销设备，纯 renderer 改动）；
 路线源 `docs/plans/2026-07-04-road-to-1.0.0.md`。
 
 ---

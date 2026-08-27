@@ -238,6 +238,27 @@ UI 一切正常，只有云端这一路默默掉队 —— 2026-08-11 复盘就�
 **真要做时的两条路**：给一条 opt-in 的一次性清理命令（把水位重置为 0，之后由闸 1/3/4 兜底 ——
 对「单 endpoint + 从没换过账号」的库其实成立）；或在升级说明里写清这个地板的存在。
 
+### C7. `DevicesCard` 不折叠已撤销设备（2026-08-27 skybridge 体检新增）
+
+**现状**：`GET /devices` 按设计返回全部设备（含 `revoked_at != null`），而
+`packages/gui/src/renderer/src/components/settings/DevicesCard.tsx` 既不区分也不折叠 ——
+撤销过的设备会一直平铺在「设备」列表里，且带着一个会再撤销一次的「移除」按钮。
+用得越久列表越脏。
+
+**为什么不在服务端过滤**：lark 依赖看得见撤销条目 ——
+`lark/packages/core/src/portable/coordinator/login.ts:332` 的 `resolveDevice` 用
+`hit.revokedAt` 区分「服务器不认识这个 id」和「被撤销了」；而且 lark **两个端都已经实现了
+折叠 UI**（桌面 `SyncTab.tsx:414` 的 `splitRevokedDevices()`、Android
+`apps/mobile/src/ui/sync-devices.tsx:121`）。服务端一过滤，那套折叠区就成了空壳。
+结论写在 `skybridge/docs/plans/2026-08-27-0.1.5-plan.md` §2.2：**列表清洁是 UI 的职责**。
+
+**做法**：抄 lark 的 `splitRevokedDevices` + `revokedDevicesLabel` 思路，
+撤销的收进「已撤销 (n)」折叠区，并去掉它们的「移除」按钮。**纯 renderer 改动**，
+`revoked_at` 本来就在 `SyncDeviceEntry` 里，无需 daemon / 协议改动。
+
+**顺带**：skybridge 0.1.5 修好了 `last_seen_at`（此前只在注册时写一次，
+所以「上次活跃」显示的其实是注册时间）。云端升到 0.1.5 后 owl 这行不用改就会变准确。
+
 ---
 
 ## D. 1.0.0 之后
