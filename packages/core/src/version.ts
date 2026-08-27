@@ -13,4 +13,4 @@
  * the dmg / electron-builder release. That bumps separately per the
  * release process (see PROCESS.md).
  */
-export const OWL_APP_VERSION = '0.6.3';
+export const OWL_APP_VERSION = '0.6.4';
