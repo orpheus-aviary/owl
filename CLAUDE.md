@@ -67,9 +67,18 @@ Scope: `db` / `config` / `notes` / `tags` / `daemon` / `gui` / `editor` / `brows
 - 测试完成后用户反馈结果，再决定是否继续
 
 ## 当前进度
-**🎉 owl 0.6.3 已发版（2026-08-11）** —— 桌面 dmg + `@orpheus-aviary/owl-server@0.6.3` +
-**`@orpheus-aviary/owl-cli@0.6.3`**（⚠️ CLI 发布名带 scope，别写成 `owl-cli`）。**无 migration**，
-`user_version` 仍 11。桌面 + 云端真机验收全过。
+**🎉 owl 0.6.4 已发版（2026-08-27）** —— 桌面 dmg + `@orpheus-aviary/owl-server@0.6.4` +
+**`@orpheus-aviary/owl-cli@0.6.4`**（⚠️ CLI 发布名带 scope，别写成 `owl-cli`）。**无 migration**，
+`user_version` 仍 11，协议不变、可与 0.6.3 混用。
+0.6.4 = **设备列表按工具过滤 + 折叠已撤销**（设备是按账号注册的，lark 的混在同一个响应里；
+skybridge 的 `devices` 表没有 tool 列 ⇒ 只能按 `app_version` 前缀判，规则/文案与
+lark `packages/shared/src/sync-devices.ts` **有意逐字一致**）+ 🔴 **登录自愈**（此前拿着被撤销的
+device id 登录会「成功」，之后每次同步 403 `DEVICE_FORBIDDEN`，而 403 不进 401 那套自愈 ⇒
+退出重登也救不回来）。说明 `docs/history/0.6.4-release-notes.md`。
+⚠️ **发版时 `OWL_APP_VERSION`（`core/src/version.ts`）必须跟着走** —— 它是 `registerDevice`
+写的 `app_version`，新的设备过滤按这个前缀判；0.6.0 漏过一次。
+
+上一版 **0.6.3（2026-08-11）** —— 无 migration。桌面 + 云端真机验收全过。
 0.6.3 = 0.6.2 长期使用测试复盘挖出的一批同步问题：**游标互相清零**（每次本地写入后全量重放
 整条变更日志）· **轮次 summary 日志**（这个缺失正是前者藏三周的原因）· **pin/reorder 跨设备** ·
 **云端 session watchdog**。计划 + **详细现象记录** + 三轮审阅修订见
